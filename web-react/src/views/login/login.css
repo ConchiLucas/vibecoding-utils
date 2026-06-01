@@ -1,0 +1,109 @@
+/* Page Layout */
+.premium-login-container {
+  width: 100vw;
+  height: 100vh;
+  position: fixed;
+  top: 0;
+  left: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background-color: #0f172a;
+}
+
+/* Beautiful Flowing Gradient Background */
+.animated-bg {
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: linear-gradient(-45deg, #1e1b4b, #0f172a, #172554, #050505);
+  background-size: 400% 400%;
+  animation: gradientBG 15s ease infinite;
+  z-index: 0;
+}
+
+@keyframes gradientBG {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+/* Gentle Floating Shapes */
+.shape {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(100px);
+  z-index: 1;
+  opacity: 0.5;
+  animation: gentleFloat 12s ease-in-out infinite alternate;
+}
+
+.shape-1 {
+  width: 400px;
+  height: 400px;
+  background: #3b82f6; /* Blue */
+  top: 10%;
+  left: 15%;
+  animation-delay: 0s;
+}
+
+.shape-2 {
+  width: 500px;
+  height: 500px;
+  background: #8b5cf6; /* Purple */
+  bottom: 0%;
+  right: 15%;
+  animation-delay: -4s;
+}
+
+@keyframes gentleFloat {
+  0% { transform: translateY(0) scale(1); }
+  100% { transform: translateY(-15px) scale(1.02); }
+}
+
+/* Center Solid White Card Box Placeholder */
+.login-wrapper {
+  position: relative;
+  z-index: 10;
+  width: 100%;
+  max-width: 420px;
+  padding: 20px;
+}
+
+/* Light Theme Inputs using utility classes mostly but keeping shadow logic */
+.light-theme-input {
+  box-shadow: 0 0 0 1px #e5e7eb inset;
+}
+
+/* Buttons */
+.premium-button {
+  background: linear-gradient(135deg, #00f2fe 0%, #4facfe 100%);
+  letter-spacing: 1px;
+  box-shadow: 0 8px 20px rgba(79, 172, 254, 0.4);
+}
+
+.premium-button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 25px rgba(79, 172, 254, 0.6);
+}
+
+.premium-button:active {
+  transform: translateY(0);
+}
+
+.btn-glow {
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(to right, transparent, rgba(255,255,255,0.4), transparent);
+  animation: btnShine 3s infinite;
+}
+
+@keyframes btnShine {
+  0% { left: -100%; }
+  20% { left: 100%; }
+  100% { left: 100%; }
+}

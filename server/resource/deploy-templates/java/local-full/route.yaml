@@ -1,0 +1,6 @@
+routeKey: local_full
+routeName: 本地全量部署
+localExecuteCommand: docker compose up --build -d
+localStopCommand: docker compose down
+buildType: build_image
+scriptType: 0

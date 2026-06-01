@@ -1,0 +1,8 @@
+routeKey: remote_incremental
+routeName: 远程增量部署
+localExecuteCommand: make package-remote-incremental
+localStopCommand: ""
+buildType: build_incremental_image
+scriptType: 0
+fileName: {{ .ImageName }}.tar
+serverExecuteCommand: bash remote-incremental.sh {{ .ImageName }}.tar {{ .ImageName }} {{ .ContainerName }}

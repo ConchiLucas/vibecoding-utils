@@ -1,0 +1,37 @@
+version: "3"
+
+networks:
+  network:
+    ipam:
+      driver: default
+      config:
+        - subnet: '177.7.0.0/16'
+
+services:
+  web:
+    build:
+      context: ./web-react
+      dockerfile: ./Dockerfile
+    container_name: easy-deploy-web
+    restart: always
+    ports:
+      - '5999:80'
+    depends_on:
+      - server
+    networks:
+      network:
+        ipv4_address: 177.7.0.11
+
+  server:
+    build:
+      context: ./server
+      dockerfile: ./Dockerfile
+    container_name: easy-deploy-server
+    restart: always
+    ports:
+      - '9999:8008'
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      network:
+        ipv4_address: 177.7.0.12

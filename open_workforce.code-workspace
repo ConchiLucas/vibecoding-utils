@@ -1,0 +1,54 @@
+{
+  "folders": [
+    {
+      "name": "⚙️ Backend (Go)",
+      "path": "server"
+    },
+    {
+      "name": "⚛️ Frontend (React 新版)",
+      "path": "web-react"
+    },
+    {
+      "name": "📁 Root (文档与全局配置)",
+      "path": "."
+    }
+  ],
+  "settings": {
+    "files.exclude": {
+      "**/.git": true,
+      "**/.DS_Store": true,
+      "**/.idea": true
+    },
+    "go.toolsEnvVars": {
+      "GOPROXY": "https://goproxy.cn,direct",
+      "GONOPROXY": "none;"
+    }
+  },
+  "launch": {
+    "version": "0.2.0",
+    "configurations": [
+      {
+        "type": "go",
+        "request": "launch",
+        "name": "启动后端服务 (Backend)",
+        "cwd": "${workspaceFolder:⚙️ Backend (Go)}",
+        "program": "${workspaceFolder:⚙️ Backend (Go)}/"
+      },
+      {
+        "type": "node",
+        "request": "launch",
+        "cwd": "${workspaceFolder:🎨 Frontend (Vue3)}",
+        "name": "启动前端服务 (Frontend)",
+        "runtimeExecutable": "npm",
+        "runtimeArgs": ["run-script", "serve"]
+      }
+    ],
+    "compounds": [
+      {
+        "name": "一键运行 (后端 + 前端)",
+        "configurations": ["启动后端服务 (Backend)", "启动前端服务 (Frontend)"],
+        "stopAll": true
+      }
+    ]
+  }
+}

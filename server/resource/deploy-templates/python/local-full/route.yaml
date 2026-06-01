@@ -1,0 +1,6 @@
+routeKey: local_full
+routeName: 构建项目镜像
+localExecuteCommand: make build-project
+localStopCommand: ""
+buildType: build_image
+scriptType: 0

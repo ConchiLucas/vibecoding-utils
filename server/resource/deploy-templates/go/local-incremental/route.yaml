@@ -1,0 +1,6 @@
+routeKey: local_incremental
+routeName: 本地增量部署
+localExecuteCommand: make deploy-incremental
+localStopCommand: make stop
+buildType: build_incremental_image
+scriptType: 0

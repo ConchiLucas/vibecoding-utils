@@ -1,0 +1,6 @@
+routeKey: local_incremental_jar
+routeName: 本地增量部署
+localExecuteCommand: bash start.sh incremental
+localStopCommand: docker compose down
+buildType: build_incremental_image
+scriptType: 0

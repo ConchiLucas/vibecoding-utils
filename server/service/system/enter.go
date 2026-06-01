@@ -1,0 +1,39 @@
+package system
+
+type ServiceGroup struct {
+	UserService
+	InitDBService
+	ServerService
+	ProjectService
+	ProjectScriptService
+	ScriptManagerService
+	DeployService
+	ProjectRouteService
+	ProjectGroupService
+	TbDictDataService
+	TbInterfaceServerService
+	TbInterfaceEnvService
+	TbInterfaceService
+	TbConnectionService
+	TbTableService
+	TbTableColumnService
+	TbTableRelateService
+	TbEntityService
+	TbColumnService
+	TbClientService
+	TbInterfaceParamsService
+	TbInterfaceLogService
+	TbAgileRequestService
+	TbAgileTableSampleService
+	TbTablePreferService
+	TbInterfaceServerUserService
+	TbInterfaceProjectService
+	TbGeneratePlaceHolderService
+	TbGenerateProjectService
+	TbGenerateProjectPathService
+	TbGenerateProjectPathModelService
+	TbGenerateProjectPlaceHolderService
+	TbGenerateRecordService
+	AIChatService
+	AIChatHistoryService
+}

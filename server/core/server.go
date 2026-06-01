@@ -1,0 +1,46 @@
+package core
+
+import (
+	"fmt"
+	"github.com/flipped-aurora/easy-deploy/server/global"
+	"github.com/flipped-aurora/easy-deploy/server/initialize"
+	"go.uber.org/zap"
+	"time"
+)
+
+func RunServer() {
+	if global.GVA_CONFIG.System.UseRedis {
+		// 初始化redis服务
+		initialize.Redis()
+		if global.GVA_CONFIG.System.UseMultipoint {
+			initialize.RedisList()
+		}
+	}
+
+	if global.GVA_CONFIG.System.UseMongo {
+		err := initialize.Mongo.Initialization()
+		if err != nil {
+			zap.L().Error(fmt.Sprintf("%+v", err))
+		}
+	}
+
+	Router := initialize.Routers()
+
+	address := fmt.Sprintf(":%d", global.GVA_CONFIG.System.Addr)
+
+	fmt.Printf(`
+	欢迎使用 easy-deploy
+	当前版本:%s
+	加群方式:微信号：shouzi_1994 QQ群：470239250
+	项目地址：https://github.com/flipped-aurora/easy-deploy
+	插件市场:https://plugin.easy-deploy.com
+	GVA讨论社区:https://support.qq.com/products/371961
+	默认前端文件运行地址:http://127.0.0.1%s
+	--------------------------------------版权声明--------------------------------------
+	** 版权所有方：flipped-aurora开源团队 **
+	** 版权持有公司：北京翻转极光科技有限责任公司 **
+	** 剔除授权标识需购买商用授权：https://plugin.easy-deploy.com/license **
+	** 感谢您对easy-deploy的支持与关注 合法授权使用更有利于项目的长久发展**
+`, global.Version, address)
+	initServer(address, Router, 10*time.Minute, 10*time.Minute)
+}

@@ -1,0 +1,49 @@
+{
+  "folders": [
+    {
+      "path": "server",
+      "name": "backend"
+    },
+    {
+      "path": "web-react",
+      "name": "frontend-react"
+    },
+    {
+      "path": ".",
+      "name": "root"
+    }
+  ],
+  "settings": {
+    "go.toolsEnvVars": {
+      "GOPROXY": "https://goproxy.cn,direct",
+      "GONOPROXY": "none;"
+    }
+  },
+  "launch": {
+    "version": "0.2.0",
+    "configurations": [
+      {
+        "type": "go",
+        "request": "launch",
+        "name": "Backend",
+        "cwd": "${workspaceFolder:backend}",
+        "program": "${workspaceFolder:backend}/"
+      },
+      {
+        "type": "node",
+        "request": "launch",
+        "name": "Frontend React",
+        "cwd": "${workspaceFolder:frontend-react}",
+        "runtimeExecutable": "npm",
+        "runtimeArgs": ["run", "dev"]
+      }
+    ],
+    "compounds": [
+      {
+        "name": "Both (Backend & Frontend React)",
+        "configurations": ["Backend", "Frontend React"],
+        "stopAll": true
+      }
+    ]
+  }
+}

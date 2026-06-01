@@ -1,0 +1,6 @@
+routeKey: local_incremental
+routeName: 构建依赖增量镜像
+localExecuteCommand: make build-deps
+localStopCommand: ""
+buildType: build_incremental_image
+scriptType: 0
