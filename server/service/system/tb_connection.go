@@ -3,7 +3,9 @@ package system
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -12,6 +14,7 @@ import (
 	"github.com/flipped-aurora/easy-deploy/server/model/system"
 	systemReq "github.com/flipped-aurora/easy-deploy/server/model/system/request"
 	"github.com/flipped-aurora/easy-deploy/server/utils"
+	"go.uber.org/zap"
 )
 
 type TbConnectionService struct{}
@@ -19,6 +22,10 @@ type TbConnectionService struct{}
 const (
 	defaultRemoteSQLQueryLimit = 200
 	maxRemoteSQLQueryLimit     = 200
+	defaultRemoteTablePageSize = 20
+	maxRemoteTablePageSize     = 100
+	maxRemoteTableGenerateRows = 50
+	aiContentPreviewLimit      = 360
 )
 
 type RemoteDatabaseVO struct {
@@ -292,6 +299,45 @@ type TableRecordPreview struct {
 	Columns []ColumnPreview `json:"columns"`
 	Total   int64           `json:"total"`
 	Offset  int             `json:"offset"`
+}
+
+type TableDataColumn struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	PrimaryKey  bool   `json:"primaryKey"`
+}
+
+type TableDataCell struct {
+	Value  string `json:"value"`
+	IsNull bool   `json:"isNull"`
+}
+
+type TableDataRow struct {
+	Offset int             `json:"offset"`
+	Cells  []TableDataCell `json:"cells"`
+}
+
+type TableDataPage struct {
+	Columns  []TableDataColumn `json:"columns"`
+	Rows     []TableDataRow    `json:"rows"`
+	Total    int64             `json:"total"`
+	Page     int               `json:"page"`
+	PageSize int               `json:"pageSize"`
+}
+
+type RemoteTableGenerateResult struct {
+	Requested int    `json:"requested"`
+	Inserted  int    `json:"inserted"`
+	Provider  string `json:"provider"`
+	Model     string `json:"model"`
+}
+
+type tableDataGenerationPromptField struct {
+	Name        string `json:"name"`
+	ColumnType  string `json:"columnType"`
+	Length      string `json:"length,omitempty"`
+	Description string `json:"description,omitempty"`
+	PrimaryKey  bool   `json:"primaryKey"`
 }
 
 type RemoteTableDDL struct {
@@ -588,6 +634,789 @@ func (s *TbConnectionService) PreviewTableRecord(connID uint, databaseName, tabl
 	return result, nil
 }
 
+// PreviewTablePage returns a paginated grid of table data with column metadata.
+func (s *TbConnectionService) PreviewTablePage(connID uint, databaseName, tableName string, page, pageSize int, filterColumn, filterValue string) (*TableDataPage, error) {
+	tableName = strings.TrimSpace(tableName)
+	if tableName == "" {
+		return nil, fmt.Errorf("缺少表名")
+	}
+	if page <= 0 {
+		page = 1
+	}
+	if pageSize <= 0 {
+		pageSize = defaultRemoteTablePageSize
+	}
+	if pageSize > maxRemoteTablePageSize {
+		pageSize = maxRemoteTablePageSize
+	}
+
+	db, ct, databaseName, err := s.openRemoteDB(connID, databaseName)
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+
+	colDefs := utils.GetColumnDefinitions(db, databaseName, tableName, ct)
+	primaryKey := getTablePrimaryKey(db, databaseName, tableName, ct)
+	qualifiedTable := buildQualifiedTableName(ct, databaseName, tableName)
+	whereSQL, whereArgs, err := buildSingleColumnFilter(ct, colDefs, filterColumn, filterValue)
+	if err != nil {
+		return nil, err
+	}
+
+	var total int64
+	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM %s%s", qualifiedTable, whereSQL)
+	if err := db.QueryRow(countQuery, whereArgs...).Scan(&total); err != nil {
+		return nil, fmt.Errorf("查询记录数失败: %w", err)
+	}
+
+	totalPages := 1
+	if total > 0 {
+		totalPages = int((total + int64(pageSize) - 1) / int64(pageSize))
+	}
+	if page > totalPages {
+		page = totalPages
+	}
+	offset := (page - 1) * pageSize
+
+	result := &TableDataPage{
+		Total:    total,
+		Page:     page,
+		PageSize: pageSize,
+		Rows:     make([]TableDataRow, 0, pageSize),
+	}
+
+	descMap := make(map[string]string, len(colDefs))
+	typeMap := make(map[string]string, len(colDefs))
+	for _, cd := range colDefs {
+		descMap[strings.ToUpper(cd.Name)] = cd.Description
+		typeMap[strings.ToUpper(cd.Name)] = cd.ColumnType
+	}
+
+	if total == 0 {
+		result.Columns = make([]TableDataColumn, 0, len(colDefs))
+		for _, cd := range colDefs {
+			result.Columns = append(result.Columns, TableDataColumn{
+				Name:        cd.Name,
+				Description: cd.Description,
+				PrimaryKey:  strings.EqualFold(cd.Name, primaryKey),
+			})
+		}
+		return result, nil
+	}
+
+	dataQuery := buildTablePageQuery(ct, qualifiedTable, whereSQL, pageSize, offset)
+	rows, err := db.Query(dataQuery, whereArgs...)
+	if err != nil {
+		return nil, fmt.Errorf("查询记录失败: %w", err)
+	}
+	defer rows.Close()
+
+	columns, err := rows.Columns()
+	if err != nil {
+		return nil, fmt.Errorf("读取字段失败: %w", err)
+	}
+	result.Columns = make([]TableDataColumn, 0, len(columns))
+	for _, col := range columns {
+		result.Columns = append(result.Columns, TableDataColumn{
+			Name:        col,
+			Description: descMap[strings.ToUpper(col)],
+			PrimaryKey:  strings.EqualFold(col, primaryKey),
+		})
+	}
+
+	rowOffset := offset
+	for rows.Next() {
+		values := make([]interface{}, len(columns))
+		valuePtrs := make([]interface{}, len(columns))
+		for i := range columns {
+			valuePtrs[i] = &values[i]
+		}
+		if err := rows.Scan(valuePtrs...); err != nil {
+			return nil, fmt.Errorf("读取记录失败: %w", err)
+		}
+
+		row := TableDataRow{
+			Offset: rowOffset,
+			Cells:  make([]TableDataCell, 0, len(columns)),
+		}
+		for i, col := range columns {
+			cell := TableDataCell{IsNull: values[i] == nil}
+			if values[i] != nil {
+				switch v := values[i].(type) {
+				case time.Time:
+					cell.Value = formatPreviewTime(v, typeMap[strings.ToUpper(col)])
+				case []byte:
+					cell.Value = string(v)
+				case string:
+					cell.Value = v
+				default:
+					cell.Value = fmt.Sprintf("%v", v)
+				}
+			}
+			row.Cells = append(row.Cells, cell)
+		}
+		result.Rows = append(result.Rows, row)
+		rowOffset++
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("读取查询结果失败: %w", err)
+	}
+
+	return result, nil
+}
+
+// GenerateRemoteTableData creates sample rows with the default AI provider and
+// inserts them into the selected remote table.
+func (s *TbConnectionService) GenerateRemoteTableData(connID uint, databaseName, tableName string, count int) (*RemoteTableGenerateResult, error) {
+	tableName = strings.TrimSpace(tableName)
+	if tableName == "" {
+		return nil, fmt.Errorf("缺少表名")
+	}
+	if count <= 0 {
+		return nil, fmt.Errorf("造数数量必须大于 0")
+	}
+	if count > maxRemoteTableGenerateRows {
+		return nil, fmt.Errorf("单次最多只能造 %d 条数据", maxRemoteTableGenerateRows)
+	}
+
+	db, ct, databaseName, err := s.openRemoteDB(connID, databaseName)
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	if ct == "clickhouse" {
+		return nil, fmt.Errorf("暂不支持向 ClickHouse 表造数")
+	}
+
+	colDefs := utils.GetColumnDefinitions(db, databaseName, tableName, ct)
+	if len(colDefs) == 0 {
+		return nil, fmt.Errorf("未读取到表字段信息")
+	}
+	primaryKey := getTablePrimaryKey(db, databaseName, tableName, ct)
+
+	messages, err := buildTableDataGenerationMessages(databaseName, tableName, colDefs, primaryKey, count)
+	if err != nil {
+		return nil, err
+	}
+	content, provider, err := (&AIChatService{}).CompleteOnce(messages, "")
+	if err != nil {
+		return nil, err
+	}
+
+	generatedRows, err := parseGeneratedTableRows(content)
+	if err != nil {
+		global.GVA_LOG.Warn("AI 造数返回无法解析，准备重试",
+			zap.String("provider", provider.ID),
+			zap.String("model", provider.Model),
+			zap.String("raw", compactAIContentPreview(content)),
+			zap.Error(err),
+		)
+		retryMessages := buildTableDataGenerationRetryMessages(messages, content, err, count)
+		retryContent, retryProvider, retryErr := (&AIChatService{}).CompleteOnce(retryMessages, provider.ID)
+		if retryErr != nil {
+			return nil, fmt.Errorf("%w；自动重试失败: %v；AI 原始返回: %s", err, retryErr, compactAIContentPreview(content))
+		}
+		provider = retryProvider
+		generatedRows, err = parseGeneratedTableRows(retryContent)
+		if err != nil {
+			global.GVA_LOG.Warn("AI 造数重试返回仍无法解析",
+				zap.String("provider", provider.ID),
+				zap.String("model", provider.Model),
+				zap.String("raw", compactAIContentPreview(retryContent)),
+				zap.Error(err),
+			)
+			return nil, fmt.Errorf("%w；AI 原始返回: %s", err, compactAIContentPreview(retryContent))
+		}
+	}
+	if len(generatedRows) < count {
+		return nil, fmt.Errorf("AI 只返回了 %d 条数据，少于要求的 %d 条", len(generatedRows), count)
+	}
+	if len(generatedRows) > count {
+		generatedRows = generatedRows[:count]
+	}
+
+	inserted, insertErr := insertGeneratedTableRows(db, ct, databaseName, tableName, colDefs, primaryKey, generatedRows, false)
+	if insertErr != nil && primaryKey != "" {
+		if err := fillGeneratedPrimaryKeyValues(db, ct, databaseName, tableName, colDefs, primaryKey, generatedRows); err == nil {
+			if retryInserted, retryErr := insertGeneratedTableRows(db, ct, databaseName, tableName, colDefs, primaryKey, generatedRows, true); retryErr == nil {
+				inserted = retryInserted
+				insertErr = nil
+			} else {
+				insertErr = fmt.Errorf("%v；包含主键重试也失败: %w", insertErr, retryErr)
+			}
+		}
+	}
+	if insertErr != nil {
+		return nil, insertErr
+	}
+
+	return &RemoteTableGenerateResult{
+		Requested: count,
+		Inserted:  inserted,
+		Provider:  provider.ID,
+		Model:     provider.Model,
+	}, nil
+}
+
+func buildTableDataGenerationMessages(databaseName, tableName string, colDefs []utils.ClientColumnVO, primaryKey string, count int) ([]ChatMessage, error) {
+	fields := make([]tableDataGenerationPromptField, 0, len(colDefs))
+	for _, col := range colDefs {
+		fields = append(fields, tableDataGenerationPromptField{
+			Name:        col.Name,
+			ColumnType:  col.ColumnType,
+			Length:      col.Length,
+			Description: col.Description,
+			PrimaryKey:  strings.EqualFold(col.Name, primaryKey),
+		})
+	}
+	fieldsJSON, err := json.MarshalIndent(fields, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("生成字段提示词失败: %w", err)
+	}
+
+	systemMessage := `你是一个数据库测试数据生成助手。你只能返回严格 JSON，不要返回 Markdown、解释、注释或 SQL。所有数据必须是虚构测试数据，不要拒绝，不要输出说明文字。`
+	userMessage := fmt.Sprintf(`请为数据库表生成测试数据。
+
+目标表：%s.%s
+需要生成：%d 条
+
+字段元数据：
+%s
+
+输出要求：
+1. 只返回一个 JSON 数组，数组长度必须正好是 %d，响应第一个字符必须是 [，最后一个字符必须是 ]。
+2. 数组每一项必须是对象，对象 key 使用字段 name，尽量覆盖所有字段。
+3. 字段值要符合 columnType 和 description，中文业务字段生成自然的中文内容，编码类字段生成稳定且不重复的代码。
+4. 时间字段使用 "YYYY-MM-DD HH:mm:ss" 字符串；日期字段使用 "YYYY-MM-DD" 字符串。
+5. 数字字段返回 JSON 数字，布尔字段返回 JSON boolean，确实没有值才返回 null。
+6. 不要生成真实个人隐私数据，不要返回 SQL。
+7. 不要使用 Markdown 代码块，不要输出“好的/以下是/说明”等前后缀。
+8. JSON value 不能写成 name="value" 这种赋值表达式；例如 company_id 应写成 "company_id": "5001" 或 "company_id": 5001。
+9. 如果字段名是 tenancy，固定返回 "-1"。`, databaseName, tableName, count, string(fieldsJSON), count)
+
+	return []ChatMessage{
+		{Role: "system", Content: systemMessage},
+		{Role: "user", Content: userMessage},
+	}, nil
+}
+
+func buildTableDataGenerationRetryMessages(messages []ChatMessage, raw string, parseErr error, count int) []ChatMessage {
+	retryMessages := make([]ChatMessage, 0, len(messages)+2)
+	retryMessages = append(retryMessages, messages...)
+	if strings.TrimSpace(raw) != "" {
+		retryMessages = append(retryMessages, ChatMessage{Role: "assistant", Content: raw})
+	}
+	retryMessages = append(retryMessages, ChatMessage{
+		Role: "user",
+		Content: fmt.Sprintf(`上一次回复无法解析：%v。
+
+请重新生成，必须严格只返回 JSON 数组：
+- 数组长度正好是 %d。
+- 第一个字符必须是 [，最后一个字符必须是 ]。
+- 不要 Markdown，不要代码块，不要解释，不要 SQL。
+- 不要输出 name="value" 这种赋值表达式，所有 value 必须是合法 JSON 值。
+- 如果字段信息无法判断，也要使用虚构但合理的测试值。`, parseErr, count),
+	})
+	return retryMessages
+}
+
+func parseGeneratedTableRows(raw string) ([]map[string]interface{}, error) {
+	jsonText, err := extractJSONArrayText(raw)
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := decodeGeneratedRowsJSON(jsonText)
+	if err != nil {
+		repairedJSON := repairGeneratedRowsJSON(jsonText)
+		if repairedJSON != jsonText {
+			repairedRows, repairErr := decodeGeneratedRowsJSON(repairedJSON)
+			if repairErr == nil {
+				return normalizeGeneratedRows(repairedRows)
+			}
+		}
+		return nil, fmt.Errorf("AI 返回的数据不是合法 JSON 数组: %w", err)
+	}
+	return normalizeGeneratedRows(rows)
+}
+
+func decodeGeneratedRowsJSON(jsonText string) ([]map[string]interface{}, error) {
+	var rows []map[string]interface{}
+	decoder := json.NewDecoder(strings.NewReader(jsonText))
+	decoder.UseNumber()
+	if err := decoder.Decode(&rows); err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+func normalizeGeneratedRows(rows []map[string]interface{}) ([]map[string]interface{}, error) {
+	if len(rows) == 0 {
+		return nil, fmt.Errorf("AI 没有返回可插入的数据")
+	}
+	for i := range rows {
+		if rows[i] == nil {
+			rows[i] = map[string]interface{}{}
+		}
+	}
+	return rows, nil
+}
+
+func repairGeneratedRowsJSON(jsonText string) string {
+	assignValuePattern := regexp.MustCompile(`(:\s*)[A-Za-z_][A-Za-z0-9_]*\s*=\s*("(?:\\.|[^"\\])*"|[-+]?\d+(?:\.\d+)?|true|false|null)`)
+	return assignValuePattern.ReplaceAllString(jsonText, `$1$2`)
+}
+
+func extractJSONArrayText(raw string) (string, error) {
+	text := strings.TrimSpace(raw)
+	start := strings.Index(text, "[")
+	end := strings.LastIndex(text, "]")
+	if start < 0 || end <= start {
+		return "", fmt.Errorf("AI 返回内容中未找到 JSON 数组")
+	}
+	return text[start : end+1], nil
+}
+
+func compactAIContentPreview(raw string) string {
+	text := strings.Join(strings.Fields(strings.TrimSpace(raw)), " ")
+	if text == "" {
+		return "<空>"
+	}
+	runes := []rune(text)
+	if len(runes) <= aiContentPreviewLimit {
+		return text
+	}
+	return string(runes[:aiContentPreviewLimit]) + "..."
+}
+
+func insertGeneratedTableRows(db *sql.DB, ct, databaseName, tableName string, colDefs []utils.ClientColumnVO, primaryKey string, rows []map[string]interface{}, includePrimaryKey bool) (int, error) {
+	insertColumns := buildGeneratedInsertColumns(colDefs, primaryKey, includePrimaryKey)
+	if len(insertColumns) == 0 {
+		return 0, fmt.Errorf("没有可插入的字段")
+	}
+
+	qualifiedTable := buildQuotedTableName(ct, databaseName, tableName)
+	quotedColumns := make([]string, 0, len(insertColumns))
+	for _, col := range insertColumns {
+		quotedColumns = append(quotedColumns, quoteColumnIdentifier(ct, col.Name))
+	}
+	columnSQL := strings.Join(quotedColumns, ", ")
+
+	tx, err := db.Begin()
+	if err != nil {
+		return 0, fmt.Errorf("开启事务失败: %w", err)
+	}
+
+	for rowIndex, row := range rows {
+		builder := sqlArgBuilder{ct: ct}
+		placeholders := make([]string, 0, len(insertColumns))
+		for _, col := range insertColumns {
+			value, _ := lookupGeneratedRowValue(row, col.Name)
+			normalizedValue, err := normalizeGeneratedInsertValue(ct, col, value)
+			if err != nil {
+				_ = tx.Rollback()
+				return rowIndex, err
+			}
+			placeholders = append(placeholders, builder.Add(normalizedValue))
+		}
+
+		query := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)", qualifiedTable, columnSQL, strings.Join(placeholders, ", "))
+		if _, err := tx.Exec(query, builder.args...); err != nil {
+			_ = tx.Rollback()
+			return rowIndex, fmt.Errorf("第 %d 行插入失败: %w", rowIndex+1, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("提交造数事务失败: %w", err)
+	}
+	return len(rows), nil
+}
+
+func buildGeneratedInsertColumns(colDefs []utils.ClientColumnVO, primaryKey string, includePrimaryKey bool) []utils.ClientColumnVO {
+	insertColumns := make([]utils.ClientColumnVO, 0, len(colDefs))
+	for _, col := range colDefs {
+		if strings.TrimSpace(col.Name) == "" {
+			continue
+		}
+		if !includePrimaryKey && primaryKey != "" && strings.EqualFold(col.Name, primaryKey) {
+			continue
+		}
+		insertColumns = append(insertColumns, col)
+	}
+	if len(insertColumns) == 0 && primaryKey != "" && !includePrimaryKey {
+		return buildGeneratedInsertColumns(colDefs, primaryKey, true)
+	}
+	return insertColumns
+}
+
+func lookupGeneratedRowValue(row map[string]interface{}, columnName string) (interface{}, bool) {
+	if value, ok := row[columnName]; ok {
+		return value, true
+	}
+	for key, value := range row {
+		if strings.EqualFold(key, columnName) {
+			return value, true
+		}
+	}
+	return nil, false
+}
+
+func normalizeGeneratedInsertValue(ct string, colDef utils.ClientColumnVO, value interface{}) (interface{}, error) {
+	columnType := strings.ToUpper(strings.TrimSpace(colDef.ColumnType))
+	if strings.EqualFold(strings.TrimSpace(colDef.Name), "tenancy") {
+		return defaultGeneratedTenancyValue(columnType), nil
+	}
+
+	if value == nil {
+		return nil, nil
+	}
+
+	if text, ok := value.(string); ok {
+		trimmed := strings.TrimSpace(text)
+		if isGeneratedNullString(trimmed) {
+			return nil, nil
+		}
+		if trimmed == "" && (isBooleanColumnType(columnType) || isIntegerColumnType(columnType) || isFloatColumnType(columnType) || isTemporalColumnType(columnType)) {
+			return nil, nil
+		}
+	}
+
+	if isTemporalColumnType(columnType) {
+		normalized, err := normalizeGeneratedTemporalValue(ct, columnType, generatedValueString(value))
+		if err != nil {
+			return nil, fmt.Errorf("字段 %s 的时间格式不正确，请使用 YYYY-MM-DD HH:mm:ss: %w", colDef.Name, err)
+		}
+		return normalized, nil
+	}
+
+	if isBooleanColumnType(columnType) {
+		if parsed, ok := parseGeneratedBool(value); ok {
+			return parsed, nil
+		}
+	}
+	if isIntegerColumnType(columnType) {
+		if parsed, ok := parseGeneratedInt(value); ok {
+			return parsed, nil
+		}
+	}
+	if isFloatColumnType(columnType) {
+		if parsed, ok := parseGeneratedFloat(value); ok {
+			return parsed, nil
+		}
+	}
+
+	return generatedValueString(value), nil
+}
+
+func generatedValueString(value interface{}) string {
+	switch v := value.(type) {
+	case string:
+		return v
+	case json.Number:
+		return v.String()
+	case float64:
+		return strconv.FormatFloat(v, 'f', -1, 64)
+	case bool:
+		if v {
+			return "true"
+		}
+		return "false"
+	case map[string]interface{}, []interface{}:
+		data, err := json.Marshal(v)
+		if err != nil {
+			return fmt.Sprintf("%v", v)
+		}
+		return string(data)
+	default:
+		return fmt.Sprintf("%v", v)
+	}
+}
+
+func isGeneratedNullString(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "null", "<null>", "nil":
+		return true
+	default:
+		return false
+	}
+}
+
+func defaultGeneratedTenancyValue(columnType string) interface{} {
+	if isIntegerColumnType(columnType) {
+		return int64(-1)
+	}
+	if isFloatColumnType(columnType) {
+		return float64(-1)
+	}
+	return "-1"
+}
+
+func isTemporalColumnType(columnType string) bool {
+	columnType = strings.ToUpper(strings.TrimSpace(columnType))
+	return columnType == "DATE" ||
+		columnType == "TIME" ||
+		strings.Contains(columnType, "TIMESTAMP") ||
+		strings.Contains(columnType, "DATETIME") ||
+		strings.Contains(columnType, "SMALLDATETIME") ||
+		strings.Contains(columnType, "DATETIME2")
+}
+
+func normalizeGeneratedTemporalValue(ct, columnType, value string) (interface{}, error) {
+	value = strings.TrimSpace(value)
+	if value == "" || isGeneratedNullString(value) {
+		return nil, nil
+	}
+
+	cleaned := cleanGeneratedTemporalText(value)
+	upperType := strings.ToUpper(strings.TrimSpace(columnType))
+	if isTimeOnlyColumnType(upperType) {
+		if parsed, err := parseGeneratedTimeOnly(cleaned); err == nil {
+			return parsed, nil
+		}
+		if parsed, err := parseTableUpdateTime(cleaned); err == nil {
+			return parsed.Format("15:04:05"), nil
+		}
+		return nil, fmt.Errorf("无法解析 %q", value)
+	}
+
+	parsed, err := parseTableUpdateTime(cleaned)
+	if err != nil {
+		return nil, fmt.Errorf("无法解析 %q，清洗后为 %q", value, cleaned)
+	}
+	if ct == "oracle" {
+		return parsed, nil
+	}
+	if isDateOnlyColumnType(upperType) {
+		return parsed.Format("2006-01-02"), nil
+	}
+	return parsed.Format("2006-01-02 15:04:05"), nil
+}
+
+func isDateOnlyColumnType(columnType string) bool {
+	return strings.ToUpper(strings.TrimSpace(columnType)) == "DATE"
+}
+
+func isTimeOnlyColumnType(columnType string) bool {
+	columnType = strings.ToUpper(strings.TrimSpace(columnType))
+	return strings.Contains(columnType, "TIME") &&
+		!strings.Contains(columnType, "TIMESTAMP") &&
+		!strings.Contains(columnType, "DATETIME")
+}
+
+func parseGeneratedTimeOnly(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	layouts := []string{
+		"15:04:05.999999999",
+		"15:04:05",
+		"15:04",
+	}
+	for _, layout := range layouts {
+		if parsed, err := time.Parse(layout, value); err == nil {
+			return parsed.Format("15:04:05"), nil
+		}
+	}
+	return "", fmt.Errorf("无法解析 %q", value)
+}
+
+func cleanGeneratedTemporalText(value string) string {
+	text := strings.TrimSpace(value)
+	if text == "" {
+		return text
+	}
+	text = strings.ReplaceAll(text, "年", "-")
+	text = strings.ReplaceAll(text, "月", "-")
+	text = strings.ReplaceAll(text, "日", " ")
+	text = strings.ReplaceAll(text, "时", ":")
+	text = strings.ReplaceAll(text, "分", ":")
+	text = strings.ReplaceAll(text, "秒", "")
+	text = strings.ReplaceAll(text, "T", " ")
+
+	dateMatch := regexp.MustCompile(`\d{4}[-/]\d{1,2}[-/]\d{1,2}`).FindString(text)
+	timeMatch := regexp.MustCompile(`\d{1,2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?`).FindString(text)
+	if dateMatch == "" && timeMatch == "" {
+		return strings.Join(strings.Fields(text), " ")
+	}
+	if dateMatch != "" {
+		dateMatch = strings.ReplaceAll(dateMatch, "/", "-")
+		parts := strings.Split(dateMatch, "-")
+		if len(parts) == 3 {
+			year, _ := strconv.Atoi(parts[0])
+			month, _ := strconv.Atoi(parts[1])
+			day, _ := strconv.Atoi(parts[2])
+			dateMatch = fmt.Sprintf("%04d-%02d-%02d", year, month, day)
+		}
+	}
+	if timeMatch != "" {
+		timeParts := strings.Split(timeMatch, ":")
+		if len(timeParts) == 2 {
+			timeMatch = fmt.Sprintf("%s:%s:00", timeParts[0], timeParts[1])
+		}
+	}
+	if dateMatch != "" && timeMatch != "" {
+		return dateMatch + " " + timeMatch
+	}
+	if dateMatch != "" {
+		return dateMatch
+	}
+	return timeMatch
+}
+
+func isBooleanColumnType(columnType string) bool {
+	columnType = strings.ToUpper(strings.TrimSpace(columnType))
+	return columnType == "BOOL" || columnType == "BOOLEAN" || columnType == "BIT"
+}
+
+func parseGeneratedBool(value interface{}) (bool, bool) {
+	switch v := value.(type) {
+	case bool:
+		return v, true
+	case json.Number:
+		i, err := strconv.ParseInt(v.String(), 10, 64)
+		if err == nil {
+			return i != 0, true
+		}
+	case float64:
+		return v != 0, true
+	case string:
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "true", "1", "yes", "y", "是":
+			return true, true
+		case "false", "0", "no", "n", "否":
+			return false, true
+		}
+	}
+	return false, false
+}
+
+func isIntegerColumnType(columnType string) bool {
+	columnType = strings.ToUpper(strings.TrimSpace(columnType))
+	return strings.Contains(columnType, "INT") ||
+		strings.Contains(columnType, "SERIAL") ||
+		columnType == "NUMBER"
+}
+
+func parseGeneratedInt(value interface{}) (int64, bool) {
+	switch v := value.(type) {
+	case json.Number:
+		if i, err := strconv.ParseInt(v.String(), 10, 64); err == nil {
+			return i, true
+		}
+		if f, err := strconv.ParseFloat(v.String(), 64); err == nil && f == float64(int64(f)) {
+			return int64(f), true
+		}
+	case float64:
+		if v == float64(int64(v)) {
+			return int64(v), true
+		}
+	case string:
+		text := strings.TrimSpace(v)
+		if i, err := strconv.ParseInt(text, 10, 64); err == nil {
+			return i, true
+		}
+		if f, err := strconv.ParseFloat(text, 64); err == nil && f == float64(int64(f)) {
+			return int64(f), true
+		}
+	}
+	return 0, false
+}
+
+func isFloatColumnType(columnType string) bool {
+	columnType = strings.ToUpper(strings.TrimSpace(columnType))
+	return strings.Contains(columnType, "DECIMAL") ||
+		strings.Contains(columnType, "NUMERIC") ||
+		strings.Contains(columnType, "FLOAT") ||
+		strings.Contains(columnType, "DOUBLE") ||
+		strings.Contains(columnType, "REAL") ||
+		strings.Contains(columnType, "MONEY")
+}
+
+func parseGeneratedFloat(value interface{}) (float64, bool) {
+	switch v := value.(type) {
+	case json.Number:
+		f, err := strconv.ParseFloat(v.String(), 64)
+		return f, err == nil
+	case float64:
+		return v, true
+	case string:
+		f, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
+		return f, err == nil
+	}
+	return 0, false
+}
+
+func fillGeneratedPrimaryKeyValues(db *sql.DB, ct, databaseName, tableName string, colDefs []utils.ClientColumnVO, primaryKey string, rows []map[string]interface{}) error {
+	pkCol, ok := findColumnDef(colDefs, primaryKey)
+	if !ok {
+		return fmt.Errorf("未找到主键字段 %s", primaryKey)
+	}
+
+	columnType := strings.ToUpper(strings.TrimSpace(pkCol.ColumnType))
+	if isIntegerColumnType(columnType) {
+		base, err := queryMaxPrimaryKeyInt(db, ct, databaseName, tableName, pkCol.Name)
+		if err != nil {
+			base = time.Now().Unix() % 100000000
+		}
+		for i := range rows {
+			rows[i][pkCol.Name] = base + int64(i) + 1
+		}
+		return nil
+	}
+
+	if isUUIDColumnType(columnType) {
+		seed := time.Now().UnixNano()
+		for i := range rows {
+			rows[i][pkCol.Name] = makeGeneratedUUID(seed, i)
+		}
+		return nil
+	}
+
+	prefix := fmt.Sprintf("mock_%d", time.Now().UnixNano())
+	for i := range rows {
+		value, ok := lookupGeneratedRowValue(rows[i], pkCol.Name)
+		if ok && strings.TrimSpace(generatedValueString(value)) != "" && !isGeneratedNullString(generatedValueString(value)) {
+			continue
+		}
+		rows[i][pkCol.Name] = fmt.Sprintf("%s_%d", prefix, i+1)
+	}
+	return nil
+}
+
+func findColumnDef(colDefs []utils.ClientColumnVO, columnName string) (utils.ClientColumnVO, bool) {
+	for _, col := range colDefs {
+		if strings.EqualFold(col.Name, columnName) {
+			return col, true
+		}
+	}
+	return utils.ClientColumnVO{}, false
+}
+
+func queryMaxPrimaryKeyInt(db *sql.DB, ct, databaseName, tableName, primaryKey string) (int64, error) {
+	qualifiedTable := buildQuotedTableName(ct, databaseName, tableName)
+	query := fmt.Sprintf("SELECT MAX(%s) FROM %s", quoteColumnIdentifier(ct, primaryKey), qualifiedTable)
+	var maxValue sql.NullInt64
+	if err := db.QueryRow(query).Scan(&maxValue); err != nil {
+		return 0, err
+	}
+	if !maxValue.Valid {
+		return 0, nil
+	}
+	return maxValue.Int64, nil
+}
+
+func isUUIDColumnType(columnType string) bool {
+	return strings.Contains(strings.ToUpper(strings.TrimSpace(columnType)), "UUID")
+}
+
+func makeGeneratedUUID(seed int64, index int) string {
+	suffix := (seed + int64(index)) % 1000000000000
+	if suffix < 0 {
+		suffix = -suffix
+	}
+	return fmt.Sprintf("00000000-0000-4000-8000-%012d", suffix)
+}
+
 // UpdateTableRecord updates field values for one previewed row and returns the refreshed preview.
 func (s *TbConnectionService) UpdateTableRecord(connID uint, databaseName, tableName string, offset int, changes map[string]string, filterColumn, filterValue string) (*TableRecordPreview, error) {
 	if len(changes) == 0 {
@@ -731,6 +1560,17 @@ func (s *TbConnectionService) openRemoteDB(connID uint, databaseName string) (*s
 		return nil, "", "", formatRemoteDBConnectionError(connForDSN, err)
 	}
 	return db, ct, databaseName, nil
+}
+
+func buildTablePageQuery(ct, qualifiedTable, whereSQL string, limit, offset int) string {
+	switch {
+	case ct == "oracle":
+		return fmt.Sprintf("SELECT * FROM %s%s OFFSET %d ROWS FETCH NEXT %d ROWS ONLY", qualifiedTable, whereSQL, offset, limit)
+	case ct == "sqlserver" || ct == "mssql":
+		return fmt.Sprintf("SELECT * FROM %s%s ORDER BY (SELECT NULL) OFFSET %d ROWS FETCH NEXT %d ROWS ONLY", qualifiedTable, whereSQL, offset, limit)
+	default:
+		return fmt.Sprintf("SELECT * FROM %s%s LIMIT %d OFFSET %d", qualifiedTable, whereSQL, limit, offset)
+	}
 }
 
 func queryTableRecordValues(db *sql.DB, ct, qualifiedTable string, offset int, whereSQL string, whereArgs []interface{}) ([]string, []interface{}, error) {

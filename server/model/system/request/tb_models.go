@@ -40,6 +40,13 @@ type UpdateRemoteTableRecordReq struct {
 	Changes      []TableRecordUpdateChange `json:"changes"`
 }
 
+type GenerateRemoteTableDataReq struct {
+	ID           uint   `json:"ID"`
+	DatabaseName string `json:"databaseName"`
+	TableName    string `json:"tableName"`
+	Count        int    `json:"count"`
+}
+
 type RemoteSQLQueryReq struct {
 	ID           uint   `json:"ID"`
 	DatabaseName string `json:"databaseName"`

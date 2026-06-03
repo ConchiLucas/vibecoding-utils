@@ -39,6 +39,7 @@ export interface AIProviderConfigItem {
   api_key: string;
   model: string;
   max_tokens: number;
+  active?: boolean;
 }
 
 export interface AIConfigResponse {
@@ -125,6 +126,10 @@ export const getAIConfig = () => {
 
 export const saveAIConfig = (data: AIConfigResponse) => {
   return service.post<any, ApiResponse<AIProvider[]>>('/ai/config', data);
+};
+
+export const saveAIActiveProvider = (active: string) => {
+  return service.post<any, ApiResponse<AIProvider[]>>('/ai/config/active', { active });
 };
 
 export async function getAIChatHistoryList(limit = 20): Promise<AIChatHistoryListResponse> {

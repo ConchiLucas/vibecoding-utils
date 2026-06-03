@@ -21,34 +21,13 @@ ai:
             api-key: ""
             model: qwen3-coder-plus
             max-tokens: 4096
-        aliyun-qwen3-max-2026-01-23:
-            label: 阿里 qwen3-max-2026-01-23
-            type: anthropic-compatible
-            base-url: https://coding.dashscope.aliyuncs.com/apps/anthropic
-            api-key: sk-sp-b1a85f4621664ceb914a083f2a9c4318
-            model: qwen3-max-2026-01-23
-            max-tokens: 8192
-        aliyun-qwen3-coder-next:
-            label: 阿里 qwen3-coder-next
-            type: anthropic-compatible
-            base-url: https://coding.dashscope.aliyuncs.com/apps/anthropic
-            api-key: sk-sp-b1a85f4621664ceb914a083f2a9c4318
-            model: qwen3-coder-next
-            max-tokens: 8192
-        aliyun-glm-5:
-            label: 阿里 glm-5
-            type: anthropic-compatible
-            base-url: https://coding.dashscope.aliyuncs.com/apps/anthropic
-            api-key: sk-sp-b1a85f4621664ceb914a083f2a9c4318
-            model: glm-5
-            max-tokens: 8192
-        aliyun-kimi-k2-5:
-            label: 阿里 kimi-k2.5
-            type: anthropic-compatible
-            base-url: https://coding.dashscope.aliyuncs.com/apps/anthropic
-            api-key: sk-sp-b1a85f4621664ceb914a083f2a9c4318
-            model: kimi-k2.5
-            max-tokens: 8192
+        aliyun-deepseek:
+            label: Aliyun DeepSeek V3.2
+            type: openai-compatible
+            base-url: https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
+            api-key: sk-sp-D.IMEIH.EcoR.MEUCIQDo3lhbJ9CENBmlJ3DHXifo6Nkz0fk4nHM1wta9cMNBgAIgf2rZh1fqXRzYWKU1EFWMfx4DYxdBFLSUjv/qmYcsP7E=
+            model: deepseek-v3.2
+            max-tokens: 4096
 aws-s3:
     bucket: xxxxx-10005608
     region: ap-shanghai

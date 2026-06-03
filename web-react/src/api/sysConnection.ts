@@ -93,6 +93,45 @@ export const getRemoteTablePreview = (params: { ID: number; databaseName?: strin
   return service.get<any, ApiResponse<TableRecordPreview>>('/connection/getRemoteTablePreview', { params });
 };
 
+export interface TableDataColumn {
+  name: string;
+  description: string;
+  primaryKey?: boolean;
+}
+
+export interface TableDataCell {
+  value: string;
+  isNull?: boolean;
+}
+
+export interface TableDataRow {
+  offset: number;
+  cells: TableDataCell[];
+}
+
+export interface TableDataPage {
+  columns: TableDataColumn[];
+  rows: TableDataRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export const getRemoteTablePage = (params: { ID: number; databaseName?: string; tableName: string; page?: number; pageSize?: number; filterColumn?: string; filterValue?: string }) => {
+  return service.get<any, ApiResponse<TableDataPage>>('/connection/getRemoteTablePage', { params });
+};
+
+export interface RemoteTableGenerateResult {
+  requested: number;
+  inserted: number;
+  provider: string;
+  model: string;
+}
+
+export const generateRemoteTableData = (data: { ID: number; databaseName?: string; tableName: string; count: number }) => {
+  return service.post<any, ApiResponse<RemoteTableGenerateResult>>('/connection/generateRemoteTableData', data);
+};
+
 export interface RemoteSQLQueryResult {
   columns: string[];
   rows: unknown[][];

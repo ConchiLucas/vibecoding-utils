@@ -28,11 +28,16 @@ type AIProviderConfigItem struct {
 	ApiKey    string `json:"api_key"`
 	Model     string `json:"model"`
 	MaxTokens int    `json:"max_tokens"`
+	Active    bool   `json:"active"`
 }
 
 type AIConfigRequest struct {
 	Active    string                 `json:"active"`
 	Providers []AIProviderConfigItem `json:"providers"`
+}
+
+type AIActiveConfigRequest struct {
+	Active string `json:"active"`
 }
 
 // ChatStream AI 对话流式接口
@@ -90,11 +95,12 @@ func (a *AIChatApi) GetModels(c *gin.Context) {
 
 // GetProviders 获取 YAML 中配置的 AI 厂商列表
 func (a *AIChatApi) GetProviders(c *gin.Context) {
+	providers := global.GVA_CONFIG.AI.ListProviders()
 	c.JSON(200, gin.H{
 		"code": 0,
 		"data": gin.H{
-			"active":    global.GVA_CONFIG.AI.Active,
-			"providers": global.GVA_CONFIG.AI.ListProviders(),
+			"active":    effectiveAIProviderID(providers, global.GVA_CONFIG.AI.Active),
+			"providers": providers,
 		},
 		"msg": "获取成功",
 	})
@@ -102,8 +108,9 @@ func (a *AIChatApi) GetProviders(c *gin.Context) {
 
 // GetConfig 获取完整 AI 配置，供配置管理页编辑使用。
 func (a *AIChatApi) GetConfig(c *gin.Context) {
-	providers := make([]AIProviderConfigItem, 0, len(global.GVA_CONFIG.AI.Providers))
-	for _, provider := range global.GVA_CONFIG.AI.ListProviders() {
+	listProviders := global.GVA_CONFIG.AI.ListProviders()
+	providers := make([]AIProviderConfigItem, 0, len(listProviders))
+	for _, provider := range listProviders {
 		raw := global.GVA_CONFIG.AI.Providers[provider.ID]
 		providers = append(providers, AIProviderConfigItem{
 			ID:        provider.ID,
@@ -113,13 +120,14 @@ func (a *AIChatApi) GetConfig(c *gin.Context) {
 			ApiKey:    raw.ApiKey,
 			Model:     provider.Model,
 			MaxTokens: provider.MaxTokens,
+			Active:    provider.Active,
 		})
 	}
 
 	c.JSON(200, gin.H{
 		"code": 0,
 		"data": AIConfigRequest{
-			Active:    global.GVA_CONFIG.AI.Active,
+			Active:    effectiveAIProviderID(listProviders, global.GVA_CONFIG.AI.Active),
 			Providers: providers,
 		},
 		"msg": "获取成功",
@@ -150,6 +158,35 @@ func (a *AIChatApi) SaveConfig(c *gin.Context) {
 
 	global.GVA_CONFIG.AI = aiConfig
 	c.JSON(200, gin.H{"code": 0, "data": aiConfig.ListProviders(), "msg": "保存成功"})
+}
+
+// SaveActiveConfig 只保存默认 AI 配置，不影响正在编辑但尚未保存的 provider 内容。
+func (a *AIChatApi) SaveActiveConfig(c *gin.Context) {
+	var req AIActiveConfigRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		responseError(c, "参数错误: "+err.Error())
+		return
+	}
+
+	active := strings.TrimSpace(req.Active)
+	if active == "" {
+		responseError(c, "请选择默认 AI 配置")
+		return
+	}
+	if _, err := global.GVA_CONFIG.AI.ResolveProvider(active); err != nil {
+		responseError(c, err.Error())
+		return
+	}
+
+	global.GVA_VP.Set("ai.active", active)
+	if err := global.GVA_VP.WriteConfig(); err != nil {
+		global.GVA_LOG.Error("保存默认 AI 配置失败", zap.Error(err))
+		responseError(c, "保存失败: "+err.Error())
+		return
+	}
+
+	global.GVA_CONFIG.AI.Active = active
+	c.JSON(200, gin.H{"code": 0, "data": global.GVA_CONFIG.AI.ListProviders(), "msg": "保存成功"})
 }
 
 func normalizeAIConfig(req AIConfigRequest) (config.AI, error) {
@@ -214,6 +251,15 @@ func firstAIProviderID(providers map[string]config.AIProvider) string {
 		return ""
 	}
 	return ids[0]
+}
+
+func effectiveAIProviderID(providers []config.ResolvedAIProvider, fallback string) string {
+	for _, provider := range providers {
+		if provider.Active {
+			return provider.ID
+		}
+	}
+	return strings.TrimSpace(fallback)
 }
 
 func responseError(c *gin.Context, msg string) {

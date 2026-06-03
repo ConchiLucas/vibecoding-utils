@@ -234,6 +234,45 @@ func (a *TbConnectionApi) GetRemoteTablePreview(c *gin.Context) {
 	response.OkWithData(preview, c)
 }
 
+// GetRemoteTablePage returns paginated rows from a table for full-screen browsing.
+func (a *TbConnectionApi) GetRemoteTablePage(c *gin.Context) {
+	connIDStr := c.Query("ID")
+	databaseName := c.Query("databaseName")
+	tableName := c.Query("tableName")
+	pageStr := c.DefaultQuery("page", "1")
+	pageSizeStr := c.DefaultQuery("pageSize", "20")
+	filterColumn := c.Query("filterColumn")
+	filterValue := c.Query("filterValue")
+
+	if connIDStr == "" || tableName == "" {
+		response.FailWithMessage("缺少必要参数 ID 或 tableName", c)
+		return
+	}
+
+	var connID uint
+	if _, err := fmt.Sscanf(connIDStr, "%d", &connID); err != nil {
+		response.FailWithMessage("ID 参数格式错误", c)
+		return
+	}
+
+	var page int
+	if _, err := fmt.Sscanf(pageStr, "%d", &page); err != nil {
+		page = 1
+	}
+	var pageSize int
+	if _, err := fmt.Sscanf(pageSizeStr, "%d", &pageSize); err != nil {
+		pageSize = 20
+	}
+
+	result, err := tbConnectionService.PreviewTablePage(connID, databaseName, tableName, page, pageSize, filterColumn, filterValue)
+	if err != nil {
+		global.GVA_LOG.Error("分页预览表数据失败!", zap.Error(err))
+		response.FailWithMessage("预览失败: "+err.Error(), c)
+		return
+	}
+	response.OkWithData(result, c)
+}
+
 // GetRemoteTableDDL returns a CREATE TABLE statement for the selected table.
 func (a *TbConnectionApi) GetRemoteTableDDL(c *gin.Context) {
 	connIDStr := c.Query("ID")
@@ -302,6 +341,32 @@ func (a *TbConnectionApi) QueryRemoteSQL(c *gin.Context) {
 		return
 	}
 	response.OkWithData(result, c)
+}
+
+// GenerateRemoteTableData uses the default AI provider to create sample rows
+// and writes them into the selected remote table.
+func (a *TbConnectionApi) GenerateRemoteTableData(c *gin.Context) {
+	var req systemReq.GenerateRemoteTableDataReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.FailWithMessage(err.Error(), c)
+		return
+	}
+	if req.ID == 0 || req.TableName == "" {
+		response.FailWithMessage("缺少必要参数 ID 或 tableName", c)
+		return
+	}
+	if req.Count <= 0 {
+		response.FailWithMessage("造数数量必须大于 0", c)
+		return
+	}
+
+	result, err := tbConnectionService.GenerateRemoteTableData(req.ID, req.DatabaseName, req.TableName, req.Count)
+	if err != nil {
+		global.GVA_LOG.Error("AI 造数失败!", zap.Error(err))
+		response.FailWithMessage("造数失败: "+err.Error(), c)
+		return
+	}
+	response.OkWithDetailed(result, fmt.Sprintf("造数成功，已插入 %d 条", result.Inserted), c)
 }
 
 // GetRemoteSQLHistory returns successful SQL query snapshots scoped by project

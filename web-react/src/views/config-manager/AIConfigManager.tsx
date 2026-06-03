@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Bot, CheckCircle2, Hash, KeyRound, Link, Plus, Save, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { getAIConfig, saveAIConfig, AIProviderConfigItem } from '../../api/aiChat';
+import { getAIConfig, saveAIConfig, saveAIActiveProvider, AIProviderConfigItem } from '../../api/aiChat';
 import { useConfirm } from '../../hooks/useConfirm';
 import ConfirmDialog from '../../components/ConfirmDialog';
 
@@ -23,6 +23,7 @@ export default function AIConfigManager() {
   const [selectedId, setSelectedId] = useState('');
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [savingActiveId, setSavingActiveId] = useState('');
   const { confirm, dialogProps } = useConfirm();
 
   const selectedProvider = useMemo(
@@ -36,9 +37,10 @@ export default function AIConfigManager() {
       const res: any = await getAIConfig();
       if (res.code === 0) {
         const nextProviders = res.data?.providers || [];
-        setActive(res.data?.active || nextProviders[0]?.id || '');
+        const nextActive = res.data?.active || nextProviders.find(provider => provider.active)?.id || nextProviders[0]?.id || '';
+        setActive(nextActive);
         setProviders(nextProviders);
-        setSelectedId(res.data?.active || nextProviders[0]?.id || '');
+        setSelectedId(nextActive);
       } else {
         toast.error(res.msg || 'AI 配置加载失败');
       }
@@ -88,9 +90,29 @@ export default function AIConfigManager() {
     });
   };
 
-  const handleSetActive = (id: string) => {
+  const handleSetActive = async (id: string) => {
+    if (savingActiveId || active === id) {
+      setSelectedId(id);
+      return;
+    }
+    const previousActive = active;
     setActive(id);
     setSelectedId(id);
+    setSavingActiveId(id);
+    try {
+      const res: any = await saveAIActiveProvider(id);
+      if (res.code === 0) {
+        toast.success('默认 AI 已保存');
+      } else {
+        setActive(previousActive);
+        toast.error(res.msg || '设置默认失败');
+      }
+    } catch {
+      setActive(previousActive);
+      toast.error('设置默认 AI 异常');
+    } finally {
+      setSavingActiveId('');
+    }
   };
 
   const validateConfig = () => {
@@ -219,9 +241,10 @@ export default function AIConfigManager() {
                     <button
                       type="button"
                       onClick={() => handleSetActive(selectedProvider.id)}
-                      className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-indigo-100 bg-indigo-50 px-3 text-xs font-medium text-indigo-700 hover:bg-indigo-100"
+                      disabled={!!savingActiveId}
+                      className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-indigo-100 bg-indigo-50 px-3 text-xs font-medium text-indigo-700 hover:bg-indigo-100 disabled:opacity-50"
                     >
-                      <CheckCircle2 size={14} /> 设为默认
+                      <CheckCircle2 size={14} /> {savingActiveId === selectedProvider.id ? '保存中...' : '设为默认'}
                     </button>
                     <button
                       type="button"

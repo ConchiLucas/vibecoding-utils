@@ -597,6 +597,120 @@ func appendAIEndpoint(baseURL string, suffix string) string {
 	return base + suffix
 }
 
+// CompleteOnce calls the configured AI provider once and returns the final text.
+func (s *AIChatService) CompleteOnce(messages []ChatMessage, providerID string) (string, config.ResolvedAIProvider, error) {
+	provider, err := global.GVA_CONFIG.AI.ResolveProvider(providerID)
+	if err != nil {
+		return "", config.ResolvedAIProvider{}, err
+	}
+
+	if provider.Type == config.AIProviderTypeAnthropicCompatible {
+		content, err := s.completeAnthropicOnce(provider, messages)
+		return content, provider, err
+	}
+
+	content, err := s.completeOpenAIOnce(provider, messages)
+	return content, provider, err
+}
+
+func (s *AIChatService) completeOpenAIOnce(provider config.ResolvedAIProvider, messages []ChatMessage) (string, error) {
+	req := ChatRequest{
+		Model:     provider.Model,
+		Messages:  messages,
+		Stream:    false,
+		MaxTokens: normalizedAIProviderMaxTokens(provider),
+	}
+	reqBody, _ := json.Marshal(req)
+	resp, err := s.doAIRequest(provider, reqBody)
+	if err != nil {
+		return "", fmt.Errorf("请求 AI 模型失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("AI 模型返回错误 (HTTP %d): %s", resp.StatusCode, string(body))
+	}
+
+	var chatResp ChatResponse
+	if err := json.NewDecoder(resp.Body).Decode(&chatResp); err != nil {
+		return "", fmt.Errorf("解析 AI 响应失败: %w", err)
+	}
+	if len(chatResp.Choices) == 0 {
+		return "", fmt.Errorf("AI 模型没有返回内容")
+	}
+	content := strings.TrimSpace(chatResp.Choices[0].Message.Content)
+	if content == "" {
+		return "", fmt.Errorf("AI 模型返回空内容")
+	}
+	return content, nil
+}
+
+func (s *AIChatService) completeAnthropicOnce(provider config.ResolvedAIProvider, messages []ChatMessage) (string, error) {
+	systemText, nonSystemMessages := splitSystemMessages(messages)
+	req := AnthropicRequest{
+		Model:     provider.Model,
+		System:    systemText,
+		Messages:  openAIToAnthropicMessages(nonSystemMessages),
+		Stream:    false,
+		MaxTokens: normalizedAIProviderMaxTokens(provider),
+	}
+	reqBody, _ := json.Marshal(req)
+	resp, err := s.doAIRequest(provider, reqBody)
+	if err != nil {
+		return "", fmt.Errorf("请求 AI 模型失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("AI 模型返回错误 (HTTP %d): %s", resp.StatusCode, string(body))
+	}
+
+	var anthropicResp struct {
+		Content []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"content"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&anthropicResp); err != nil {
+		return "", fmt.Errorf("解析 AI 响应失败: %w", err)
+	}
+	var builder strings.Builder
+	for _, block := range anthropicResp.Content {
+		if block.Type == "text" || block.Type == "" {
+			builder.WriteString(block.Text)
+		}
+	}
+	content := strings.TrimSpace(builder.String())
+	if content == "" {
+		return "", fmt.Errorf("AI 模型返回空内容")
+	}
+	return content, nil
+}
+
+func normalizedAIProviderMaxTokens(provider config.ResolvedAIProvider) int {
+	if provider.MaxTokens > 0 {
+		return provider.MaxTokens
+	}
+	return 4096
+}
+
+func splitSystemMessages(messages []ChatMessage) (string, []ChatMessage) {
+	var systemParts []string
+	nonSystemMessages := make([]ChatMessage, 0, len(messages))
+	for _, message := range messages {
+		if message.Role == "system" {
+			if strings.TrimSpace(message.Content) != "" {
+				systemParts = append(systemParts, message.Content)
+			}
+			continue
+		}
+		nonSystemMessages = append(nonSystemMessages, message)
+	}
+	return strings.Join(systemParts, "\n\n"), nonSystemMessages
+}
+
 // doAIRequest 发送请求到 AI 模型
 func (s *AIChatService) doAIRequest(provider config.ResolvedAIProvider, body []byte) (*http.Response, error) {
 	req, err := http.NewRequest("POST", aiProviderEndpoint(provider), bytes.NewReader(body))

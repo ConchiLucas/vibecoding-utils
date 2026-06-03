@@ -35,7 +35,8 @@ func (r *AIChatRouter) InitAIProviderRouter(Router *gin.RouterGroup) {
 func (r *AIChatRouter) InitAIConfigRouter(Router *gin.RouterGroup) {
 	aiChatRouter := Router.Group("ai")
 	{
-		aiChatRouter.GET("config", aiChatApi.GetConfig)   // 获取完整 AI 配置
-		aiChatRouter.POST("config", aiChatApi.SaveConfig) // 保存完整 AI 配置
+		aiChatRouter.GET("config", aiChatApi.GetConfig)                // 获取完整 AI 配置
+		aiChatRouter.POST("config", aiChatApi.SaveConfig)              // 保存完整 AI 配置
+		aiChatRouter.POST("config/active", aiChatApi.SaveActiveConfig) // 保存默认 AI 配置
 	}
 }
