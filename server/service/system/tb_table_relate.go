@@ -1,6 +1,7 @@
 package system
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -18,10 +19,88 @@ import (
 
 type TbTableRelateService struct{}
 
+type ImportTableRelationsResult struct {
+	ProjectConfigID uint                         `json:"projectConfigId"`
+	Created         int                          `json:"created"`
+	Skipped         int                          `json:"skipped"`
+	Failed          []ImportTableRelationFailure `json:"failed"`
+	Items           []system.TbTableRelate       `json:"items"`
+}
+
+type ImportTableRelationFailure struct {
+	Index    int                           `json:"index"`
+	Reason   string                        `json:"reason"`
+	Relation systemReq.ImportTableRelation `json:"relation"`
+}
+
 func (s *TbTableRelateService) CreateTbTableRelate(tr system.TbTableRelate) (err error) {
 	normalizeTbTableRelate(&tr)
 	err = global.GVA_DB.Create(&tr).Error
 	return err
+}
+
+func (s *TbTableRelateService) ImportTableRelations(req systemReq.ImportTableRelationsRequest, defaultUser string) (ImportTableRelationsResult, error) {
+	result := ImportTableRelationsResult{
+		ProjectConfigID: req.ProjectConfigID,
+		Failed:          []ImportTableRelationFailure{},
+		Items:           []system.TbTableRelate{},
+	}
+	if global.GVA_DB == nil {
+		return result, errors.New("数据库未初始化")
+	}
+	if req.ProjectConfigID == 0 {
+		return result, errors.New("projectConfigId 不能为空")
+	}
+	if len(req.Relations) == 0 {
+		return result, errors.New("relations 不能为空")
+	}
+
+	userName := strings.TrimSpace(req.UserName)
+	if userName == "" {
+		userName = strings.TrimSpace(defaultUser)
+	}
+	if userName == "" {
+		userName = "ai"
+	}
+
+	for idx, relation := range req.Relations {
+		record, err := buildImportedTableRelate(req.ProjectConfigID, relation, userName)
+		if err != nil {
+			result.Failed = append(result.Failed, ImportTableRelationFailure{
+				Index:    idx,
+				Reason:   err.Error(),
+				Relation: relation,
+			})
+			continue
+		}
+
+		exists, err := s.tableRelationExists(record)
+		if err != nil {
+			result.Failed = append(result.Failed, ImportTableRelationFailure{
+				Index:    idx,
+				Reason:   err.Error(),
+				Relation: relation,
+			})
+			continue
+		}
+		if exists {
+			result.Skipped++
+			continue
+		}
+
+		if err := global.GVA_DB.Create(&record).Error; err != nil {
+			result.Failed = append(result.Failed, ImportTableRelationFailure{
+				Index:    idx,
+				Reason:   err.Error(),
+				Relation: relation,
+			})
+			continue
+		}
+		result.Created++
+		result.Items = append(result.Items, record)
+	}
+
+	return result, nil
 }
 
 func (s *TbTableRelateService) DeleteTbTableRelate(tr system.TbTableRelate) (err error) {
@@ -96,6 +175,53 @@ func normalizeTbTableRelate(tr *system.TbTableRelate) {
 	}
 	tr.DatabaseName, tr.TbName = normalizeDbTableFields(tr.DatabaseName, tr.TbName)
 	tr.RelateDatabaseName, tr.RelateTableName = normalizeDbTableFields(tr.RelateDatabaseName, tr.RelateTableName)
+}
+
+func buildImportedTableRelate(projectConfigID uint, relation systemReq.ImportTableRelation, userName string) (system.TbTableRelate, error) {
+	record := system.TbTableRelate{
+		ProjectConfigID:    projectConfigID,
+		DatabaseName:       strings.TrimSpace(relation.Source.DatabaseName),
+		TbName:             strings.TrimSpace(relation.Source.TableName),
+		ColumnName:         strings.TrimSpace(relation.Source.ColumnName),
+		ColumnType:         strings.TrimSpace(relation.Source.ColumnType),
+		RelateDatabaseName: strings.TrimSpace(relation.Target.DatabaseName),
+		RelateTableName:    strings.TrimSpace(relation.Target.TableName),
+		RelateColumnName:   strings.TrimSpace(relation.Target.ColumnName),
+		RelateColumnType:   strings.TrimSpace(relation.Target.ColumnType),
+		UserName:           userName,
+	}
+	normalizeTbTableRelate(&record)
+
+	switch {
+	case record.DatabaseName == "":
+		return system.TbTableRelate{}, errors.New("source.databaseName 不能为空")
+	case record.TbName == "":
+		return system.TbTableRelate{}, errors.New("source.tableName 不能为空")
+	case record.ColumnName == "":
+		return system.TbTableRelate{}, errors.New("source.columnName 不能为空")
+	case record.RelateDatabaseName == "":
+		return system.TbTableRelate{}, errors.New("target.databaseName 不能为空")
+	case record.RelateTableName == "":
+		return system.TbTableRelate{}, errors.New("target.tableName 不能为空")
+	case record.RelateColumnName == "":
+		return system.TbTableRelate{}, errors.New("target.columnName 不能为空")
+	}
+
+	return record, nil
+}
+
+func (s *TbTableRelateService) tableRelationExists(record system.TbTableRelate) (bool, error) {
+	var total int64
+	err := global.GVA_DB.Model(&system.TbTableRelate{}).
+		Where("project_config_id = ?", record.ProjectConfigID).
+		Where("database_name = ?", record.DatabaseName).
+		Where("table_name = ?", record.TbName).
+		Where("column_name = ?", record.ColumnName).
+		Where("relate_database_name = ?", record.RelateDatabaseName).
+		Where("relate_table_name = ?", record.RelateTableName).
+		Where("relate_column_name = ?", record.RelateColumnName).
+		Count(&total).Error
+	return total > 0, err
 }
 
 func normalizeDbTableFields(dbName, tableName string) (string, string) {

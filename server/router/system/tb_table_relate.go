@@ -10,12 +10,15 @@ type TbTableRelateRouter struct{}
 func (s *TbTableRelateRouter) InitTbTableRelateRouter(Router *gin.RouterGroup) {
 	trRouter := Router.Group("tableRelate")
 	trRouterWithoutRecord := Router.Group("tableRelate")
+	aiToolRouter := Router.Group("ai-tools/table-relations")
 	var trApi = v1.ApiGroupApp.SystemApiGroup.TbTableRelateApi
 	{
 		trRouter.POST("createTbTableRelate", trApi.CreateTbTableRelate)
 		trRouter.DELETE("deleteTbTableRelate", trApi.DeleteTbTableRelate)
 		trRouter.DELETE("deleteTbTableRelateByIds", trApi.DeleteTbTableRelateByIds)
 		trRouter.PUT("updateTbTableRelate", trApi.UpdateTbTableRelate)
+		trRouter.POST("importTableRelations", trApi.ImportTableRelations)
+		aiToolRouter.POST("import", trApi.ImportTableRelations)
 	}
 	{
 		trRouterWithoutRecord.GET("getTbTableRelate", trApi.GetTbTableRelate)

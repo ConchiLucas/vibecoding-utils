@@ -12,6 +12,7 @@ import (
 
 	"github.com/flipped-aurora/easy-deploy/server/config"
 	"github.com/flipped-aurora/easy-deploy/server/global"
+	systemReq "github.com/flipped-aurora/easy-deploy/server/model/system/request"
 	"go.uber.org/zap"
 )
 
@@ -149,9 +150,11 @@ const systemPrompt = `你是 VibeDeploy 部署管理平台的 AI 助手。你可
 1. 识别本地目录的可部署项目类型（Vue、React、Python、Java、Go、前后端 docker-compose、未知）
 2. 根据用户提供的本地项目目录自动创建模板化部署项目（含路由和脚本）
 3. 查询现有项目列表
-4. 回答部署相关的问题
+4. 导入 AI 整理出的表字段血缘/关联关系
+5. 回答部署相关的问题
 
 当用户请求涉及系统操作时，请使用提供的工具来执行。
+当用户整理出表之间的关联关系、血缘关系、外键映射并要求写入系统时，优先调用 import_table_relations。调用时只需要按标准格式填 projectConfigId 和 relations；source 表示当前主表字段，target 表示被关联的目标表字段。不要把关系推理过程传入工具，只传结构化参数。
 当用户选择“生成部署信息”或说“生成部署配置/生成部署信息”时，优先调用 generate_deploy_info。调用时必须把用户输入中的本地目录提取到 local_path，只保留真实目录路径，不要把“生成部署信息/放在某组里”等自然语言拼进路径；如果用户指定项目组，提取到 group_name，组名由你根据自然语言完整识别，像“AI数据库组”这类以“组”结尾的名称要完整保留“组”字；同时必须识别 group_action：用户要新建/创建项目组时为 create，用户要放入/复用/使用已有项目组时为 reuse，语义不明确时为 auto；如果用户说再生成一份、compare/对比，allow_duplicate_path=true。input 保留用户原始文本用于后端兜底。
 如果用户一次提供多个本地目录并要求放入同一个项目组，请为每个目录分别调用一次 generate_deploy_info；第一条如果是新建/创建某组，group_action=create，后续放入同名组的调用 group_action=reuse，并继续完整传入同一个 group_name。
 当用户说“在某个目录生成部署信息”、“给某个目录创建部署项目”、“自动生成部署脚本”、“加全量部署”这类需求时，优先调用 auto_create_deploy_project；用户只需要提供目录路径，不需要手动填写项目名、框架语言或端口。
@@ -373,6 +376,83 @@ func getToolDefinitions() []ToolDef {
 		{
 			Type: "function",
 			Function: ToolFunctionDef{
+				Name:        "import_table_relations",
+				Description: "批量导入表字段血缘/关联关系到 tb_table_relate。source 表示当前主表字段，target 表示被关联的目标表字段。适合 AI 从其他项目整理出表关系后一次性写入系统。",
+				Parameters: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"projectConfigId": map[string]interface{}{
+							"type":        "integer",
+							"description": "当前项目配置 ID，用于区分要写入哪个项目下的血缘关系",
+						},
+						"userName": map[string]interface{}{
+							"type":        "string",
+							"description": "可选操作人标识；未传时后端使用当前用户或 ai",
+						},
+						"relations": map[string]interface{}{
+							"type":        "array",
+							"description": "要批量导入的表字段关联关系列表",
+							"items": map[string]interface{}{
+								"type": "object",
+								"properties": map[string]interface{}{
+									"source": map[string]interface{}{
+										"type":        "object",
+										"description": "源字段，即当前主表上的字段",
+										"properties": map[string]interface{}{
+											"databaseName": map[string]interface{}{
+												"type":        "string",
+												"description": "源表所在数据库名",
+											},
+											"tableName": map[string]interface{}{
+												"type":        "string",
+												"description": "源表名",
+											},
+											"columnName": map[string]interface{}{
+												"type":        "string",
+												"description": "源表字段名",
+											},
+											"columnType": map[string]interface{}{
+												"type":        "string",
+												"description": "可选源字段类型，例如 bigint、varchar、int",
+											},
+										},
+										"required": []string{"databaseName", "tableName", "columnName"},
+									},
+									"target": map[string]interface{}{
+										"type":        "object",
+										"description": "目标字段，即 source 关联到的表字段",
+										"properties": map[string]interface{}{
+											"databaseName": map[string]interface{}{
+												"type":        "string",
+												"description": "目标表所在数据库名",
+											},
+											"tableName": map[string]interface{}{
+												"type":        "string",
+												"description": "目标表名",
+											},
+											"columnName": map[string]interface{}{
+												"type":        "string",
+												"description": "目标表字段名",
+											},
+											"columnType": map[string]interface{}{
+												"type":        "string",
+												"description": "可选目标字段类型，例如 bigint、varchar、int",
+											},
+										},
+										"required": []string{"databaseName", "tableName", "columnName"},
+									},
+								},
+								"required": []string{"source", "target"},
+							},
+						},
+					},
+					"required": []string{"projectConfigId", "relations"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: ToolFunctionDef{
 				Name:        "list_projects",
 				Description: "获取所有已创建的部署项目列表，包含项目名称、语言、路由等信息",
 				Parameters: map[string]interface{}{
@@ -543,6 +623,18 @@ func (s *AIChatService) executeToolCall(tc ToolCall) (string, error) {
 			return "", fmt.Errorf("参数解析失败: %w", err)
 		}
 		result, err := ProjectServiceApp.GetNextDeployPort(args.ProjectType)
+		if err != nil {
+			return "", err
+		}
+		b, _ := json.Marshal(result)
+		return string(b), nil
+
+	case "import_table_relations":
+		var args systemReq.ImportTableRelationsRequest
+		if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
+			return "", fmt.Errorf("参数解析失败: %w", err)
+		}
+		result, err := (&TbTableRelateService{}).ImportTableRelations(args, "ai")
 		if err != nil {
 			return "", err
 		}

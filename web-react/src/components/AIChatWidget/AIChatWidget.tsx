@@ -20,6 +20,7 @@ import {
   inferAIChatMode,
   AIChatMode,
 } from './AIChatWidgetIntent';
+import { useProjectStore } from '../../stores/useProjectStore';
 import './AIChatWidget.css';
 
 // ─── Types ──────────────────────────────────────────
@@ -49,6 +50,12 @@ function formatTime(date: Date) {
   return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
 }
 
+function addProjectContext(text: string, activeProjectId: number | null, activeProject: string, activeConnectionId: number | null) {
+  if (!activeProjectId) return text;
+  const connectionText = activeConnectionId ? `activeConnectionId=${activeConnectionId}` : 'activeConnectionId=未选择';
+  return `当前项目上下文：projectConfigId=${activeProjectId}，projectName=${activeProject || '未命名'}，${connectionText}。\n${text}`;
+}
+
 const TOOL_NAME_MAP: Record<string, string> = {
   scan_project: '📂 扫描项目目录',
   create_deploy_project: '🚀 创建部署项目',
@@ -56,6 +63,7 @@ const TOOL_NAME_MAP: Record<string, string> = {
   create_project_group: '📁 创建项目组',
   auto_create_deploy_project: '🚀 创建部署项目',
   list_projects: '📋 获取项目列表',
+  import_table_relations: '🔗 导入表血缘关系',
 };
 
 // ═════════════════════════════════════════════════════
@@ -74,6 +82,7 @@ export default function AIChatWidget() {
   const [isHistoryView, setIsHistoryView] = useState(false);
   const [historyItems, setHistoryItems] = useState<AIChatHistoryItem[]>([]);
   const [historyError, setHistoryError] = useState('');
+  const { activeProject, activeProjectId, activeConnectionId } = useProjectStore();
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -167,8 +176,11 @@ export default function AIChatWidget() {
     if (!rawText || isLoading) return;
 
     const contextPrompt = requestContext.mode === 'deploy_info' ? requestContext.prompt : undefined;
-    const text = overrideText ? rawText : buildAIChatRequestTextWithContext(rawText, activeMode, contextPrompt);
+    const baseText = overrideText ? rawText : buildAIChatRequestTextWithContext(rawText, activeMode, contextPrompt);
     const messageMode = inferAIChatMode(contextPrompt ? `${contextPrompt}\n${rawText}` : rawText, activeMode);
+    const text = messageMode === 'deploy_info'
+      ? baseText
+      : addProjectContext(baseText, activeProjectId, activeProject, activeConnectionId);
     const userContent = displayText || rawText;
 
     // Add user message to display
@@ -292,7 +304,7 @@ export default function AIChatWidget() {
 
     setIsLoading(false);
     abortRef.current = null;
-  }, [inputValue, isLoading, requestContext, selectedProvider, activeMode, displayMessages, refreshHistoryItems]);
+  }, [inputValue, isLoading, requestContext, selectedProvider, activeMode, displayMessages, refreshHistoryItems, activeProjectId, activeProject, activeConnectionId]);
 
   const handleProviderChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const providerID = e.target.value;

@@ -79,6 +79,24 @@ type TableRelateSearch struct {
 	request.PageInfo
 }
 
+type ImportTableRelationEndpoint struct {
+	DatabaseName string `json:"databaseName"`
+	TableName    string `json:"tableName"`
+	ColumnName   string `json:"columnName"`
+	ColumnType   string `json:"columnType"`
+}
+
+type ImportTableRelation struct {
+	Source ImportTableRelationEndpoint `json:"source"`
+	Target ImportTableRelationEndpoint `json:"target"`
+}
+
+type ImportTableRelationsRequest struct {
+	ProjectConfigID uint                  `json:"projectConfigId"`
+	Relations       []ImportTableRelation `json:"relations"`
+	UserName        string                `json:"userName"`
+}
+
 type EntitySearch struct {
 	system.TbEntity
 	request.PageInfo

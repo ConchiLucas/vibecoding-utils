@@ -119,6 +119,23 @@ func (a *TbTableRelateApi) GetTbTableRelateList(c *gin.Context) {
 	}
 }
 
+func (a *TbTableRelateApi) ImportTableRelations(c *gin.Context) {
+	var req systemReq.ImportTableRelationsRequest
+	err := c.ShouldBindJSON(&req)
+	if err != nil {
+		response.FailWithMessage(err.Error(), c)
+		return
+	}
+	userName := utils.GetUserName(c)
+	result, err := tbTableRelateService.ImportTableRelations(req, userName)
+	if err != nil {
+		global.GVA_LOG.Error("AI导入表字段关联关系失败!", zap.Error(err))
+		response.FailWithMessage("AI导入表字段关联关系失败: "+err.Error(), c)
+	} else {
+		response.OkWithDetailed(result, "导入成功", c)
+	}
+}
+
 func (a *TbTableRelateApi) GetClientData(c *gin.Context) {
 	var query systemReq.ClientQueryModel
 	err := c.ShouldBindJSON(&query)
