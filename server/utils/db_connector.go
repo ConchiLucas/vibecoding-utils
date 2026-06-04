@@ -18,11 +18,15 @@ import (
 
 // ClientColumnVO represents column data
 type ClientColumnVO struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Value       string `json:"value"`
-	ColumnType  string `json:"columnType"`
-	Length      string `json:"length"`
+	Name          string `json:"name"`
+	Description   string `json:"description"`
+	Value         string `json:"value"`
+	ColumnType    string `json:"columnType"`
+	Length        string `json:"length"`
+	NotNull       bool   `json:"notNull"`
+	HasDefault    bool   `json:"hasDefault"`
+	DefaultValue  string `json:"defaultValue,omitempty"`
+	AutoIncrement bool   `json:"autoIncrement"`
 }
 
 // ClientDatabaseVO represents table metadata and column data
@@ -272,13 +276,25 @@ func GetColumnDefinitions(db *sql.DB, dbName, tableName, ct string) []ClientColu
 						colType = colType[:idx]
 					}
 				}
-				cols = append(cols, ClientColumnVO{Name: field.String, Description: comment.String, ColumnType: colType, Length: length})
+				defaultText := strings.TrimSpace(defaultVal.String)
+				cols = append(cols, ClientColumnVO{
+					Name:          field.String,
+					Description:   comment.String,
+					ColumnType:    colType,
+					Length:        length,
+					NotNull:       strings.EqualFold(null.String, "NO"),
+					HasDefault:    defaultVal.Valid,
+					DefaultValue:  defaultText,
+					AutoIncrement: strings.Contains(strings.ToLower(extra.String), "auto_increment"),
+				})
 			}
 		}
 	} else if ct == "postgresql" || ct == "pgsql" {
 		// PostgreSQL: the DSN is already connected to the correct database.
 		// Always use the 'public' schema (standard default schema for user tables).
-		query := `SELECT c.column_name, pgd.description, c.data_type, c.character_maximum_length, c.numeric_precision, c.numeric_scale FROM information_schema.columns c
+		query := `SELECT c.column_name, pgd.description, c.data_type, c.character_maximum_length, c.numeric_precision, c.numeric_scale,
+       c.is_nullable, c.column_default, c.is_identity
+FROM information_schema.columns c
 LEFT JOIN pg_catalog.pg_statio_all_tables st ON c.table_schema = st.schemaname AND c.table_name = st.relname
 LEFT JOIN pg_catalog.pg_description pgd ON pgd.objoid = st.relid AND pgd.objsubid = c.ordinal_position
 WHERE c.table_name = $1 AND c.table_schema = 'public'`
@@ -289,9 +305,9 @@ WHERE c.table_name = $1 AND c.table_schema = 'public'`
 		defer rows.Close()
 
 		for rows.Next() {
-			var field, comment, dataType sql.NullString
+			var field, comment, dataType, nullable, defaultVal, isIdentity sql.NullString
 			var maxLen, precision, scale sql.NullInt64
-			if err = rows.Scan(&field, &comment, &dataType, &maxLen, &precision, &scale); err == nil {
+			if err = rows.Scan(&field, &comment, &dataType, &maxLen, &precision, &scale, &nullable, &defaultVal, &isIdentity); err == nil {
 				length := "-"
 				if maxLen.Valid {
 					length = strconv.FormatInt(maxLen.Int64, 10)
@@ -300,7 +316,17 @@ WHERE c.table_name = $1 AND c.table_schema = 'public'`
 				} else if precision.Valid {
 					length = strconv.FormatInt(precision.Int64, 10)
 				}
-				cols = append(cols, ClientColumnVO{Name: field.String, Description: comment.String, ColumnType: dataType.String, Length: length})
+				defaultText := strings.TrimSpace(defaultVal.String)
+				cols = append(cols, ClientColumnVO{
+					Name:          field.String,
+					Description:   comment.String,
+					ColumnType:    dataType.String,
+					Length:        length,
+					NotNull:       strings.EqualFold(nullable.String, "NO"),
+					HasDefault:    defaultVal.Valid && defaultText != "",
+					DefaultValue:  defaultText,
+					AutoIncrement: strings.EqualFold(isIdentity.String, "YES") || strings.Contains(strings.ToLower(defaultText), "nextval("),
+				})
 			}
 		}
 	} else if ct == "sqlserver" || ct == "mssql" {
@@ -311,11 +337,12 @@ WHERE c.table_name = $1 AND c.table_schema = 'public'`
 		} else {
 			tableRef = tableName
 		}
-		query := fmt.Sprintf(`SELECT c.name, t.name as type_name, c.max_length, CAST(p.value AS VARCHAR(MAX)) FROM [%s].sys.columns c
+		query := fmt.Sprintf(`SELECT c.name, t.name as type_name, c.max_length, CAST(p.value AS VARCHAR(MAX)), c.is_nullable, dc.definition, c.is_identity FROM [%s].sys.columns c
 JOIN [%s].sys.types t ON c.user_type_id = t.user_type_id
 LEFT JOIN [%s].sys.extended_properties p ON p.major_id = c.object_id AND p.minor_id = c.column_id AND p.name = 'MS_Description'
+LEFT JOIN [%s].sys.default_constraints dc ON c.default_object_id = dc.object_id
 WHERE c.object_id = OBJECT_ID(@p1)`,
-			dbName, dbName, dbName)
+			dbName, dbName, dbName, dbName)
 		rows, err := db.Query(query, tableRef)
 		if err != nil {
 			return cols
@@ -326,12 +353,24 @@ WHERE c.object_id = OBJECT_ID(@p1)`,
 			var field, typeName sql.NullString
 			var maxLen sql.NullInt64
 			var comment sql.NullString
-			if err = rows.Scan(&field, &typeName, &maxLen, &comment); err == nil {
+			var nullable, identity bool
+			var defaultVal sql.NullString
+			if err = rows.Scan(&field, &typeName, &maxLen, &comment, &nullable, &defaultVal, &identity); err == nil {
 				length := "-"
 				if maxLen.Valid {
 					length = strconv.FormatInt(maxLen.Int64, 10)
 				}
-				cols = append(cols, ClientColumnVO{Name: field.String, Description: comment.String, ColumnType: typeName.String, Length: length})
+				defaultText := strings.TrimSpace(defaultVal.String)
+				cols = append(cols, ClientColumnVO{
+					Name:          field.String,
+					Description:   comment.String,
+					ColumnType:    typeName.String,
+					Length:        length,
+					NotNull:       !nullable,
+					HasDefault:    defaultVal.Valid && defaultText != "",
+					DefaultValue:  defaultText,
+					AutoIncrement: identity,
+				})
 			}
 		}
 	} else if ct == "oracle" {
@@ -344,14 +383,23 @@ WHERE c.object_id = OBJECT_ID(@p1)`,
 		defer rows.Close()
 
 		for rows.Next() {
-			var field, dataType, comment sql.NullString
+			var field, dataType, comment, nullable, defaultVal sql.NullString
 			var maxLen sql.NullInt64
-			if err = rows.Scan(&field, &dataType, &maxLen, &comment); err == nil {
+			if err = rows.Scan(&field, &dataType, &maxLen, &comment, &nullable, &defaultVal); err == nil {
 				length := "-"
 				if maxLen.Valid {
 					length = strconv.FormatInt(maxLen.Int64, 10)
 				}
-				cols = append(cols, ClientColumnVO{Name: field.String, Description: comment.String, ColumnType: dataType.String, Length: length})
+				defaultText := strings.TrimSpace(defaultVal.String)
+				cols = append(cols, ClientColumnVO{
+					Name:         field.String,
+					Description:  comment.String,
+					ColumnType:   dataType.String,
+					Length:       length,
+					NotNull:      strings.EqualFold(nullable.String, "N"),
+					HasDefault:   defaultVal.Valid && defaultText != "",
+					DefaultValue: defaultText,
+				})
 			}
 		}
 	} else if ct == "sqlite" {
@@ -377,7 +425,17 @@ WHERE c.object_id = OBJECT_ID(@p1)`,
 						colType = colType[:idx]
 					}
 				}
-				cols = append(cols, ClientColumnVO{Name: name, Description: "", ColumnType: colType, Length: length})
+				defaultText := strings.TrimSpace(dflt.String)
+				cols = append(cols, ClientColumnVO{
+					Name:          name,
+					Description:   "",
+					ColumnType:    colType,
+					Length:        length,
+					NotNull:       notnull.Valid && notnull.Int64 == 1,
+					HasDefault:    dflt.Valid && defaultText != "",
+					DefaultValue:  defaultText,
+					AutoIncrement: ispk > 0 && strings.Contains(strings.ToUpper(colType), "INT"),
+				})
 			}
 		}
 	} else if ct == "clickhouse" {
@@ -399,7 +457,7 @@ WHERE c.object_id = OBJECT_ID(@p1)`,
 }
 
 func OracleColumnDefinitionsQuery(owner, tableName string) (string, []any) {
-	baseQuery := `SELECT c.COLUMN_NAME, c.DATA_TYPE, c.DATA_LENGTH, cc.COMMENTS FROM ALL_TAB_COLUMNS c 
+	baseQuery := `SELECT c.COLUMN_NAME, c.DATA_TYPE, c.DATA_LENGTH, cc.COMMENTS, c.NULLABLE, c.DATA_DEFAULT FROM ALL_TAB_COLUMNS c 
 LEFT JOIN ALL_COL_COMMENTS cc ON c.TABLE_NAME = cc.TABLE_NAME AND c.COLUMN_NAME = cc.COLUMN_NAME AND c.OWNER = cc.OWNER`
 	owner = strings.ToUpper(strings.TrimSpace(owner))
 	tableName = strings.ToUpper(strings.TrimSpace(tableName))

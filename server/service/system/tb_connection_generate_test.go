@@ -2,6 +2,7 @@ package system
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/flipped-aurora/easy-deploy/server/utils"
@@ -56,6 +57,62 @@ func TestNormalizeGeneratedInsertValueRejectsBadInteger(t *testing.T) {
 	}
 }
 
+func TestNormalizeGeneratedInsertColumnValueFillsRequiredTemporalNull(t *testing.T) {
+	got, useColumn, err := normalizeGeneratedInsertColumnValue("pgsql", utils.ClientColumnVO{
+		Name:       "ship_date",
+		ColumnType: "timestamp without time zone",
+		NotNull:    true,
+	}, nil, true, 4)
+	if err != nil {
+		t.Fatalf("normalizeGeneratedInsertColumnValue returned error: %v", err)
+	}
+	if !useColumn {
+		t.Fatal("useColumn = false, want true")
+	}
+	text, ok := got.(string)
+	if !ok || strings.TrimSpace(text) == "" {
+		t.Fatalf("generated fallback = %#v, want non-empty timestamp string", got)
+	}
+	if _, err := parseTableUpdateTime(text); err != nil {
+		t.Fatalf("fallback timestamp %q is not parseable: %v", text, err)
+	}
+}
+
+func TestNormalizeGeneratedInsertColumnValueOmitsDefaultNull(t *testing.T) {
+	got, useColumn, err := normalizeGeneratedInsertColumnValue("pgsql", utils.ClientColumnVO{
+		Name:         "created_at",
+		ColumnType:   "timestamp without time zone",
+		NotNull:      true,
+		HasDefault:   true,
+		DefaultValue: "now()",
+	}, nil, true, 0)
+	if err != nil {
+		t.Fatalf("normalizeGeneratedInsertColumnValue returned error: %v", err)
+	}
+	if useColumn {
+		t.Fatalf("useColumn = true, want false; value = %#v", got)
+	}
+}
+
+func TestParseGeneratedIntAcceptsQuotedNumberText(t *testing.T) {
+	tests := []interface{}{`"2"`, `'2'`, "`2`", "“2”", "1,234"}
+	for _, value := range tests {
+		got, ok := parseGeneratedInt(value)
+		if !ok {
+			t.Fatalf("parseGeneratedInt(%#v) ok = false, want true", value)
+		}
+		if value == "1,234" {
+			if got != 1234 {
+				t.Fatalf("parseGeneratedInt(%#v) = %d, want 1234", value, got)
+			}
+			continue
+		}
+		if got != 2 {
+			t.Fatalf("parseGeneratedInt(%#v) = %d, want 2", value, got)
+		}
+	}
+}
+
 func TestParseGeneratedTableRowsRepairsParenthesizedValues(t *testing.T) {
 	rows, err := parseGeneratedTableRows(`[
 		{
@@ -104,5 +161,46 @@ func TestParseGeneratedTableRowsRepairsBarePseudoNumbers(t *testing.T) {
 	}
 	if rows[0]["est_price"] != json.Number("24.50") {
 		t.Fatalf("est_price = %#v, want json.Number(24.50)", rows[0]["est_price"])
+	}
+}
+
+func TestParseGeneratedTableRowsAcceptsRowsObject(t *testing.T) {
+	rows, err := parseGeneratedTableRows(`这是前缀，会被忽略。
+{
+  "rows": [
+    {
+      "id": 1,
+      "route_name": "京沪线",
+      "remark": "包含 ] 和 } 的普通字符串"
+    }
+  ]
+}
+这是后缀，也会被忽略。`)
+	if err != nil {
+		t.Fatalf("parseGeneratedTableRows returned error: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("row count = %d, want 1", len(rows))
+	}
+	if rows[0]["id"] != json.Number("1") {
+		t.Fatalf("id = %#v, want json.Number(1)", rows[0]["id"])
+	}
+	if rows[0]["route_name"] != "京沪线" {
+		t.Fatalf("route_name = %#v, want 京沪线", rows[0]["route_name"])
+	}
+}
+
+func TestParseGeneratedTableRowsRejectsBareChineseValue(t *testing.T) {
+	_, err := parseGeneratedTableRows(`[
+		{
+			"id":在我们输入第一笔资料时发生错误。首先我们对数据进行一些规范：1,
+			"demand_no": "DEM20241128001"
+		}
+	]`)
+	if err == nil {
+		t.Fatal("parseGeneratedTableRows error = nil, want invalid JSON error")
+	}
+	if !strings.Contains(err.Error(), "AI 返回的数据不是合法 JSON 数组") {
+		t.Fatalf("error = %q, want invalid JSON array message", err.Error())
 	}
 }

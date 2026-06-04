@@ -76,7 +76,8 @@ func (a *AIChatApi) ChatStream(c *gin.Context) {
 
 // GetModels 获取当前 AI 配置信息
 func (a *AIChatApi) GetModels(c *gin.Context) {
-	provider, err := global.GVA_CONFIG.AI.ResolveProvider(c.Query("provider"))
+	aiConfig := aiChatService.CurrentAIConfig()
+	provider, err := aiConfig.ResolveProvider(c.Query("provider"))
 	if err != nil {
 		c.JSON(500, gin.H{"code": 7, "msg": err.Error()})
 		return
@@ -93,13 +94,14 @@ func (a *AIChatApi) GetModels(c *gin.Context) {
 	})
 }
 
-// GetProviders 获取 YAML 中配置的 AI 厂商列表
+// GetProviders 获取数据库中配置的 AI 厂商列表
 func (a *AIChatApi) GetProviders(c *gin.Context) {
-	providers := global.GVA_CONFIG.AI.ListProviders()
+	aiConfig := aiChatService.CurrentAIConfig()
+	providers := aiConfig.ListProviders()
 	c.JSON(200, gin.H{
 		"code": 0,
 		"data": gin.H{
-			"active":    effectiveAIProviderID(providers, global.GVA_CONFIG.AI.Active),
+			"active":    effectiveAIProviderID(providers, aiConfig.Active),
 			"providers": providers,
 		},
 		"msg": "获取成功",
@@ -108,10 +110,11 @@ func (a *AIChatApi) GetProviders(c *gin.Context) {
 
 // GetConfig 获取完整 AI 配置，供配置管理页编辑使用。
 func (a *AIChatApi) GetConfig(c *gin.Context) {
-	listProviders := global.GVA_CONFIG.AI.ListProviders()
+	aiConfig := aiChatService.CurrentAIConfig()
+	listProviders := aiConfig.ListProviders()
 	providers := make([]AIProviderConfigItem, 0, len(listProviders))
 	for _, provider := range listProviders {
-		raw := global.GVA_CONFIG.AI.Providers[provider.ID]
+		raw := aiConfig.Providers[provider.ID]
 		providers = append(providers, AIProviderConfigItem{
 			ID:        provider.ID,
 			Label:     provider.Label,
@@ -127,14 +130,14 @@ func (a *AIChatApi) GetConfig(c *gin.Context) {
 	c.JSON(200, gin.H{
 		"code": 0,
 		"data": AIConfigRequest{
-			Active:    effectiveAIProviderID(listProviders, global.GVA_CONFIG.AI.Active),
+			Active:    effectiveAIProviderID(listProviders, aiConfig.Active),
 			Providers: providers,
 		},
 		"msg": "获取成功",
 	})
 }
 
-// SaveConfig 保存 AI 配置到 config.yaml，并同步刷新当前进程内存配置。
+// SaveConfig 保存 AI 配置到数据库，并同步刷新当前进程内存配置。
 func (a *AIChatApi) SaveConfig(c *gin.Context) {
 	var req AIConfigRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -148,15 +151,12 @@ func (a *AIChatApi) SaveConfig(c *gin.Context) {
 		return
 	}
 
-	global.GVA_VP.Set("ai.active", aiConfig.Active)
-	global.GVA_VP.Set("ai.providers", aiConfig.Providers)
-	if err := global.GVA_VP.WriteConfig(); err != nil {
+	if err := aiChatService.SaveAIConfig(aiConfig); err != nil {
 		global.GVA_LOG.Error("保存 AI 配置失败", zap.Error(err))
 		responseError(c, "保存失败: "+err.Error())
 		return
 	}
 
-	global.GVA_CONFIG.AI = aiConfig
 	c.JSON(200, gin.H{"code": 0, "data": aiConfig.ListProviders(), "msg": "保存成功"})
 }
 
@@ -173,20 +173,14 @@ func (a *AIChatApi) SaveActiveConfig(c *gin.Context) {
 		responseError(c, "请选择默认 AI 配置")
 		return
 	}
-	if _, err := global.GVA_CONFIG.AI.ResolveProvider(active); err != nil {
-		responseError(c, err.Error())
-		return
-	}
-
-	global.GVA_VP.Set("ai.active", active)
-	if err := global.GVA_VP.WriteConfig(); err != nil {
+	if err := aiChatService.SaveActiveAIConfig(active); err != nil {
 		global.GVA_LOG.Error("保存默认 AI 配置失败", zap.Error(err))
 		responseError(c, "保存失败: "+err.Error())
 		return
 	}
 
-	global.GVA_CONFIG.AI.Active = active
-	c.JSON(200, gin.H{"code": 0, "data": global.GVA_CONFIG.AI.ListProviders(), "msg": "保存成功"})
+	aiConfig := aiChatService.CurrentAIConfig()
+	c.JSON(200, gin.H{"code": 0, "data": aiConfig.ListProviders(), "msg": "保存成功"})
 }
 
 func normalizeAIConfig(req AIConfigRequest) (config.AI, error) {

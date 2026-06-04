@@ -49,12 +49,17 @@ type ToolFunctionDef struct {
 	Parameters  interface{} `json:"parameters"`
 }
 
+type ChatResponseFormat struct {
+	Type string `json:"type"`
+}
+
 type ChatRequest struct {
-	Model     string        `json:"model"`
-	Messages  []ChatMessage `json:"messages"`
-	Tools     []ToolDef     `json:"tools,omitempty"`
-	Stream    bool          `json:"stream"`
-	MaxTokens int           `json:"max_tokens,omitempty"`
+	Model          string              `json:"model"`
+	Messages       []ChatMessage       `json:"messages"`
+	Tools          []ToolDef           `json:"tools,omitempty"`
+	Stream         bool                `json:"stream"`
+	MaxTokens      int                 `json:"max_tokens,omitempty"`
+	ResponseFormat *ChatResponseFormat `json:"response_format,omitempty"`
 }
 
 type ChatChoice struct {
@@ -691,7 +696,8 @@ func appendAIEndpoint(baseURL string, suffix string) string {
 
 // CompleteOnce calls the configured AI provider once and returns the final text.
 func (s *AIChatService) CompleteOnce(messages []ChatMessage, providerID string) (string, config.ResolvedAIProvider, error) {
-	provider, err := global.GVA_CONFIG.AI.ResolveProvider(providerID)
+	aiConfig := s.CurrentAIConfig()
+	provider, err := aiConfig.ResolveProvider(providerID)
 	if err != nil {
 		return "", config.ResolvedAIProvider{}, err
 	}
@@ -705,12 +711,50 @@ func (s *AIChatService) CompleteOnce(messages []ChatMessage, providerID string) 
 	return content, provider, err
 }
 
+// CompleteJSONOnce requests a strict JSON object from OpenAI-compatible
+// providers when supported, falling back to the normal completion path.
+func (s *AIChatService) CompleteJSONOnce(messages []ChatMessage, providerID string) (string, config.ResolvedAIProvider, error) {
+	aiConfig := s.CurrentAIConfig()
+	provider, err := aiConfig.ResolveProvider(providerID)
+	if err != nil {
+		return "", config.ResolvedAIProvider{}, err
+	}
+
+	if provider.Type == config.AIProviderTypeAnthropicCompatible {
+		content, err := s.completeAnthropicOnce(provider, messages)
+		return content, provider, err
+	}
+
+	jsonContent, jsonErr := s.completeOpenAIOnceWithResponseFormat(provider, messages, &ChatResponseFormat{Type: "json_object"})
+	if jsonErr == nil {
+		return jsonContent, provider, nil
+	}
+	if global.GVA_LOG != nil {
+		global.GVA_LOG.Warn("AI JSON 模式请求失败，回退普通完成",
+			zap.String("provider", provider.ID),
+			zap.String("model", provider.Model),
+			zap.Error(jsonErr),
+		)
+	}
+
+	content, fallbackErr := s.completeOpenAIOnce(provider, messages)
+	if fallbackErr != nil {
+		return "", provider, fmt.Errorf("JSON 模式请求失败: %v；普通模式也失败: %w", jsonErr, fallbackErr)
+	}
+	return content, provider, nil
+}
+
 func (s *AIChatService) completeOpenAIOnce(provider config.ResolvedAIProvider, messages []ChatMessage) (string, error) {
+	return s.completeOpenAIOnceWithResponseFormat(provider, messages, nil)
+}
+
+func (s *AIChatService) completeOpenAIOnceWithResponseFormat(provider config.ResolvedAIProvider, messages []ChatMessage, responseFormat *ChatResponseFormat) (string, error) {
 	req := ChatRequest{
-		Model:     provider.Model,
-		Messages:  messages,
-		Stream:    false,
-		MaxTokens: normalizedAIProviderMaxTokens(provider),
+		Model:          provider.Model,
+		Messages:       messages,
+		Stream:         false,
+		MaxTokens:      normalizedAIProviderMaxTokens(provider),
+		ResponseFormat: responseFormat,
 	}
 	reqBody, _ := json.Marshal(req)
 	resp, err := s.doAIRequest(provider, reqBody)
@@ -826,7 +870,8 @@ func (s *AIChatService) doAIRequest(provider config.ResolvedAIProvider, body []b
 // 始终使用流式请求，实时输出内容。如果 LLM 要调用工具，则从流中收集 tool_calls，
 // 执行后把结果发回，再流式输出最终回复。
 func (s *AIChatService) ChatStreamHandler(messages []ChatMessage, providerID string, onEvent func(eventType, data string)) error {
-	provider, err := global.GVA_CONFIG.AI.ResolveProvider(providerID)
+	aiConfig := s.CurrentAIConfig()
+	provider, err := aiConfig.ResolveProvider(providerID)
 	if err != nil {
 		return err
 	}

@@ -1,260 +1,260 @@
+ai:
+    active: aliyun-deepseek
+    providers:
+        aliyun-deepseek:
+            api-key: sk-sp-D.IMEIH.EcoR.MEUCIQDo3lhbJ9CENBmlJ3DHXifo6Nkz0fk4nHM1wta9cMNBgAIgf2rZh1fqXRzYWKU1EFWMfx4DYxdBFLSUjv/qmYcsP7E=
+            base-url: https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
+            label: Aliyun DeepSeek V3.2
+            max-tokens: 4096
+            model: deepseek-v3.2
+            type: openai-compatible
+        omlx:
+            api-key: ""
+            base-url: http://localhost:11434
+            label: oMLX 本地
+            max-tokens: 4096
+            model: qwen3-coder-plus
+            type: openai-compatible
 aliyun-oss:
-    endpoint: yourEndpoint
     access-key-id: yourAccessKeyId
     access-key-secret: yourAccessKeySecret
+    base-path: yourBasePath
     bucket-name: yourBucketName
     bucket-url: yourBucketUrl
-    base-path: yourBasePath
+    endpoint: yourEndpoint
 autocode:
-    web: web/src
+    ai-path: ""
+    module: github.com/flipped-aurora/easy-deploy/server
     root: /Users/conchi/workforce/go_workforce/easy-deploy-main
     server: server
-    module: github.com/flipped-aurora/easy-deploy/server
-    ai-path: ""
-ai:
-    active: omlx
-    providers:
-        omlx:
-            label: oMLX 本地
-            type: openai-compatible
-            base-url: http://localhost:11434
-            api-key: ""
-            model: qwen3-coder-plus
-            max-tokens: 4096
-        aliyun-deepseek:
-            label: Aliyun DeepSeek V3.2
-            type: openai-compatible
-            base-url: https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
-            api-key: sk-sp-D.IMEIH.EcoR.MEUCIQDo3lhbJ9CENBmlJ3DHXifo6Nkz0fk4nHM1wta9cMNBgAIgf2rZh1fqXRzYWKU1EFWMfx4DYxdBFLSUjv/qmYcsP7E=
-            model: deepseek-v3.2
-            max-tokens: 4096
+    web: web/src
 aws-s3:
+    base-url: https://gin.vue.admin
     bucket: xxxxx-10005608
-    region: ap-shanghai
+    disable-ssl: false
     endpoint: ""
+    path-prefix: github.com/flipped-aurora/easy-deploy/server
+    region: ap-shanghai
+    s3-force-path-style: false
     secret-id: your-secret-id
     secret-key: your-secret-key
-    base-url: https://gin.vue.admin
-    path-prefix: github.com/flipped-aurora/easy-deploy/server
-    s3-force-path-style: false
-    disable-ssl: false
 captcha:
-    key-long: 6
-    img-width: 240
     img-height: 80
+    img-width: 240
+    key-long: 6
     open-captcha: 0
     open-captcha-timeout: 3600
 cloudflare-r2:
-    bucket: xxxx0bucket
-    base-url: https://gin.vue.admin.com
-    path: uploads
-    account-id: xxx_account_id
     access-key-id: xxx_key_id
+    account-id: xxx_account_id
+    base-url: https://gin.vue.admin.com
+    bucket: xxxx0bucket
+    path: uploads
     secret-access-key: xxx_secret_key
 cors:
     mode: allow-all
     whitelist:
-        - allow-origin: example1.com
-          allow-methods: POST, GET
+        - allow-credentials: true
           allow-headers: Content-Type,AccessToken,X-CSRF-Token, Authorization, Token,X-Token,X-User-Id
+          allow-methods: POST, GET
+          allow-origin: example1.com
           expose-headers: Content-Length, Access-Control-Allow-Origin, Access-Control-Allow-Headers, Content-Type
-          allow-credentials: true
-        - allow-origin: example2.com
-          allow-methods: GET, POST
+        - allow-credentials: true
           allow-headers: content-type
+          allow-methods: GET, POST
+          allow-origin: example2.com
           expose-headers: Content-Length, Access-Control-Allow-Origin, Access-Control-Allow-Headers, Content-Type
-          allow-credentials: true
 db-list:
-    - type: ""
-      alias-name: ""
-      prefix: ""
-      port: ""
+    - alias-name: ""
       config: ""
       db-name: ""
-      username: ""
-      password: ""
-      path: ""
+      disable: true
       engine: ""
       log-mode: ""
+      log-zap: false
       max-idle-conns: 10
       max-open-conns: 100
+      password: ""
+      path: ""
+      port: ""
+      prefix: ""
       singular: false
-      log-zap: false
-      disable: true
+      type: ""
+      username: ""
 disk-list:
     - mount-point: /
 email:
-    to: xxx@qq.com
     from: xxx@163.com
     host: smtp.163.com
-    secret: xxx
+    is-loginauth: false
+    is-ssl: true
     nickname: test
     port: 465
-    is-ssl: true
-    is-loginauth: false
+    secret: xxx
+    to: xxx@qq.com
 excel:
     dir: ./resource/excel/
 hua-wei-obs:
-    path: you-path
+    access-key: you-access-key
     bucket: you-bucket
     endpoint: you-endpoint
-    access-key: you-access-key
+    path: you-path
     secret-key: you-secret-key
 jwt:
-    signing-key: 5ec42360-0483-4d44-9dee-b0a9e66c1340
-    expires-time: 7d
     buffer-time: 1d
+    expires-time: 7d
     issuer: qmPlus
+    signing-key: 5ec42360-0483-4d44-9dee-b0a9e66c1340
 local:
     path: uploads/file
     store-path: uploads/file
 minio:
-    endpoint: 127.0.0.1:9000
     access-key-id: conchi
     access-key-secret: conchi123456
-    bucket-name: easy-deploy
-    use-ssl: false
     base-path: ""
+    bucket-name: easy-deploy
     bucket-url: http://127.0.0.1:9000/easy-deploy
+    endpoint: 127.0.0.1:9000
+    use-ssl: false
 mongo:
-    coll: ""
-    options: ""
-    database: ""
-    username: ""
-    password: ""
     auth-source: ""
-    min-pool-size: 0
-    max-pool-size: 100
-    socket-timeout-ms: 0
+    coll: ""
     connect-timeout-ms: 0
-    is-zap: false
+    database: ""
     hosts:
         - host: ""
           port: ""
+    is-zap: false
+    max-pool-size: 100
+    min-pool-size: 0
+    options: ""
+    password: ""
+    socket-timeout-ms: 0
+    username: ""
 mssql:
-    prefix: ""
-    port: ""
     config: ""
     db-name: ""
-    username: ""
-    password: ""
-    path: ""
     engine: ""
     log-mode: ""
+    log-zap: false
     max-idle-conns: 10
     max-open-conns: 100
+    password: ""
+    path: ""
+    port: ""
+    prefix: ""
     singular: false
-    log-zap: false
+    username: ""
 mysql:
-    prefix: ""
-    port: ""
     config: ""
     db-name: ""
-    username: ""
-    password: ""
-    path: ""
     engine: ""
     log-mode: ""
+    log-zap: false
     max-idle-conns: 10
     max-open-conns: 100
+    password: ""
+    path: ""
+    port: ""
+    prefix: ""
     singular: false
-    log-zap: false
+    username: ""
 oracle:
-    prefix: ""
-    port: ""
     config: ""
     db-name: ""
-    username: ""
-    password: ""
-    path: ""
     engine: ""
     log-mode: ""
+    log-zap: false
     max-idle-conns: 10
     max-open-conns: 100
-    singular: false
-    log-zap: false
-pgsql:
+    password: ""
+    path: ""
+    port: ""
     prefix: ""
-    port: "5432"
+    singular: false
+    username: ""
+pgsql:
     config: sslmode=disable TimeZone=Asia/Shanghai
     db-name: easy_deploy
-    username: conchi
-    password: conchi123456
-    path: 127.0.0.1
     engine: ""
     log-mode: error
+    log-zap: false
     max-idle-conns: 10
     max-open-conns: 100
+    password: conchi123456
+    path: 127.0.0.1
+    port: "5432"
+    prefix: ""
     singular: false
-    log-zap: false
+    username: conchi
 qiniu:
-    zone: ZoneHuaDong
+    access-key: ""
     bucket: ""
     img-path: ""
-    access-key: ""
     secret-key: ""
-    use-https: false
     use-cdn-domains: false
+    use-https: false
+    zone: ZoneHuaDong
 redis:
-    name: ""
     addr: 127.0.0.1:6379
-    password: ""
+    clusteraddrs:
+        - 172.21.0.3:7000
+        - 172.21.0.4:7001
+        - 172.21.0.2:7002
     db: 0
-    useCluster: false
-    clusterAddrs:
-        - 172.21.0.3:7000
-        - 172.21.0.4:7001
-        - 172.21.0.2:7002
+    name: ""
+    password: ""
+    usecluster: false
 redis-list:
-    - name: cache
-      addr: 127.0.0.1:6379
-      password: ""
-      db: 0
-      useCluster: false
-      clusterAddrs:
+    - addr: 127.0.0.1:6379
+      clusteraddrs:
         - 172.21.0.3:7000
         - 172.21.0.4:7001
         - 172.21.0.2:7002
+      db: 0
+      name: cache
+      password: ""
+      usecluster: false
 sqlite:
-    prefix: ""
-    port: ""
     config: ""
     db-name: ""
-    username: ""
-    password: ""
-    path: ""
     engine: ""
     log-mode: ""
+    log-zap: false
     max-idle-conns: 10
     max-open-conns: 100
+    password: ""
+    path: ""
+    port: ""
+    prefix: ""
     singular: false
-    log-zap: false
+    username: ""
 system:
-    db-type: pgsql
-    oss-type: local
-    router-prefix: ""
     addr: 8008
+    db-type: pgsql
+    disable-auto-migrate: false
     iplimit-count: 15000
     iplimit-time: 3600
+    oss-type: local
+    router-prefix: ""
+    use-mongo: false
     use-multipoint: false
     use-redis: false
-    use-mongo: false
     use-strict-auth: false
-    disable-auto-migrate: false
 tencent-cos:
+    base-url: https://gin.vue.admin
     bucket: xxxxx-10005608
+    path-prefix: github.com/flipped-aurora/easy-deploy/server
     region: ap-shanghai
     secret-id: your-secret-id
     secret-key: your-secret-key
-    base-url: https://gin.vue.admin
-    path-prefix: github.com/flipped-aurora/easy-deploy/server
 zap:
-    level: info
-    prefix: '[github.com/flipped-aurora/easy-deploy/server]'
-    format: console
     director: log
     encode-level: LowercaseColorLevelEncoder
-    stacktrace-key: stacktrace
-    show-line: true
+    format: console
+    level: info
     log-in-console: true
+    prefix: '[github.com/flipped-aurora/easy-deploy/server]'
     retention-day: -1
+    show-line: true
+    stacktrace-key: stacktrace

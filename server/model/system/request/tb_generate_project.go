@@ -13,3 +13,11 @@ type GenerateCodeModel struct {
 	TableStructure string `json:"tableStructure"`
 	DbType         string `json:"dbType"`
 }
+
+type PublicGenerateCodeModel struct {
+	ProjectId      int    `json:"projectId"`
+	ModuleName     string `json:"moduleName"`
+	ModuleComment  string `json:"moduleComment"`
+	TableStructure string `json:"tableStructure"`
+	DbType         string `json:"dbType"`
+}

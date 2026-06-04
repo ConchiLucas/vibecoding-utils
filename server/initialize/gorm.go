@@ -77,6 +77,7 @@ func RegisterTables() {
 		system.TbGenerateProjectPathModel{},
 		system.TbGenerateRecord{},
 		system.TbGenerateProjectPlaceHolder{},
+		system.TbAIConfig{},
 	)
 
 	// User requests that we physically clean up the orphaned legacy columns that are no longer in Go models.

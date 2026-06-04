@@ -27,6 +27,7 @@ const (
 	maxRemoteTablePageSize     = 100
 	maxRemoteTableGenerateRows = 50
 	aiContentPreviewLimit      = 360
+	aiRepairRawLimit           = 12000
 )
 
 type RemoteDatabaseVO struct {
@@ -334,11 +335,15 @@ type RemoteTableGenerateResult struct {
 }
 
 type tableDataGenerationPromptField struct {
-	Name        string `json:"name"`
-	ColumnType  string `json:"columnType"`
-	Length      string `json:"length,omitempty"`
-	Description string `json:"description,omitempty"`
-	PrimaryKey  bool   `json:"primaryKey"`
+	Name          string `json:"name"`
+	ColumnType    string `json:"columnType"`
+	Length        string `json:"length,omitempty"`
+	Description   string `json:"description,omitempty"`
+	PrimaryKey    bool   `json:"primaryKey"`
+	NotNull       bool   `json:"notNull"`
+	HasDefault    bool   `json:"hasDefault"`
+	DefaultValue  string `json:"defaultValue,omitempty"`
+	AutoIncrement bool   `json:"autoIncrement"`
 }
 
 type RemoteTableDDL struct {
@@ -800,7 +805,8 @@ func (s *TbConnectionService) GenerateRemoteTableData(connID uint, databaseName,
 	if err != nil {
 		return nil, err
 	}
-	content, provider, err := (&AIChatService{}).CompleteOnce(messages, "")
+	aiService := &AIChatService{}
+	content, provider, err := aiService.CompleteJSONOnce(messages, "")
 	if err != nil {
 		return nil, err
 	}
@@ -813,8 +819,37 @@ func (s *TbConnectionService) GenerateRemoteTableData(connID uint, databaseName,
 			zap.String("raw", compactAIContentPreview(content)),
 			zap.Error(err),
 		)
-		retryMessages := buildTableDataGenerationRetryMessages(messages, content, err, count)
-		retryContent, retryProvider, retryErr := (&AIChatService{}).CompleteOnce(retryMessages, provider.ID)
+
+		repairMessages := buildTableDataGenerationRepairMessages(content, err, count)
+		repairContent, repairProvider, repairErr := aiService.CompleteJSONOnce(repairMessages, provider.ID)
+		if repairErr == nil {
+			repairRows, repairParseErr := parseGeneratedTableRows(repairContent)
+			if repairParseErr == nil {
+				generatedRows = repairRows
+				provider = repairProvider
+				err = nil
+			} else {
+				global.GVA_LOG.Warn("AI 造数修复返回仍无法解析",
+					zap.String("provider", repairProvider.ID),
+					zap.String("model", repairProvider.Model),
+					zap.String("raw", compactAIContentPreview(repairContent)),
+					zap.Error(repairParseErr),
+				)
+				content = repairContent
+				provider = repairProvider
+				err = repairParseErr
+			}
+		} else {
+			global.GVA_LOG.Warn("AI 造数修复请求失败",
+				zap.String("provider", provider.ID),
+				zap.String("model", provider.Model),
+				zap.Error(repairErr),
+			)
+		}
+	}
+	if err != nil {
+		retryMessages := buildTableDataGenerationRetryMessages(messages, err, count)
+		retryContent, retryProvider, retryErr := aiService.CompleteJSONOnce(retryMessages, provider.ID)
 		if retryErr != nil {
 			return nil, fmt.Errorf("%w；自动重试失败: %v；AI 原始返回: %s", err, retryErr, compactAIContentPreview(content))
 		}
@@ -864,11 +899,15 @@ func buildTableDataGenerationMessages(databaseName, tableName string, colDefs []
 	fields := make([]tableDataGenerationPromptField, 0, len(colDefs))
 	for _, col := range colDefs {
 		fields = append(fields, tableDataGenerationPromptField{
-			Name:        col.Name,
-			ColumnType:  col.ColumnType,
-			Length:      col.Length,
-			Description: col.Description,
-			PrimaryKey:  strings.EqualFold(col.Name, primaryKey),
+			Name:          col.Name,
+			ColumnType:    col.ColumnType,
+			Length:        col.Length,
+			Description:   col.Description,
+			PrimaryKey:    strings.EqualFold(col.Name, primaryKey),
+			NotNull:       col.NotNull,
+			HasDefault:    col.HasDefault,
+			DefaultValue:  col.DefaultValue,
+			AutoIncrement: col.AutoIncrement,
 		})
 	}
 	fieldsJSON, err := json.MarshalIndent(fields, "", "  ")
@@ -876,7 +915,7 @@ func buildTableDataGenerationMessages(databaseName, tableName string, colDefs []
 		return nil, fmt.Errorf("生成字段提示词失败: %w", err)
 	}
 
-	systemMessage := `你是一个数据库测试数据生成助手。你只能返回严格 JSON，不要返回 Markdown、解释、注释或 SQL。所有数据必须是虚构测试数据，不要拒绝，不要输出说明文字。`
+	systemMessage := `你是一个数据库测试数据生成助手。你只能返回严格 JSON 对象，不要返回 Markdown、解释、注释或 SQL。所有数据必须是虚构测试数据，不要拒绝，不要输出说明文字。`
 	userMessage := fmt.Sprintf(`请为数据库表生成测试数据。
 
 目标表：%s.%s
@@ -886,17 +925,26 @@ func buildTableDataGenerationMessages(databaseName, tableName string, colDefs []
 %s
 
 输出要求：
-1. 只返回一个 JSON 数组，数组长度必须正好是 %d，响应第一个字符必须是 [，最后一个字符必须是 ]。
-2. 数组每一项必须是对象，对象 key 使用字段 name，尽量覆盖所有字段。
-3. 字段值要符合 columnType 和 description，中文业务字段生成自然的中文内容，编码类字段生成稳定且不重复的代码。
-4. 时间字段使用 "YYYY-MM-DD HH:mm:ss" 字符串；日期字段使用 "YYYY-MM-DD" 字符串。
-5. 数字字段返回 JSON 数字；integer/int/bigint/smallint/serial 等整数字段必须返回整数，不要返回 219.1 这类小数；布尔字段返回 JSON boolean，确实没有值才返回 null。
-6. 不要生成真实个人隐私数据，不要返回 SQL。
-7. 不要使用 Markdown 代码块，不要输出“好的/以下是/说明”等前后缀。
-8. JSON value 不能写成 name="value" 这种赋值表达式；例如 company_id 应写成 "company_id": "5001" 或 "company_id": 5001。
-9. JSON value 不能添加括号；例如 id 应写成 "id": 1，不能写成 "id": (1)。
-10. 不要输出 pi、NaN、Infinity 或 waste24.50 这类非 JSON 数值；所有数值必须是普通 JSON number。
-11. 如果字段名是 tenancy，固定返回 "-1"。`, databaseName, tableName, count, string(fieldsJSON), count)
+1. 只返回一个 JSON 对象，响应第一个字符必须是 {，最后一个字符必须是 }。
+2. JSON 对象必须且只能包含 rows 字段，格式固定为 {"rows":[...]}。
+3. rows 必须是数组，数组长度必须正好是 %d。
+4. rows 数组每一项必须是对象，对象 key 使用字段 name，尽量覆盖所有字段。
+5. 字段值位置只能放合法 JSON value：字符串必须加双引号，数字不能加引号，null/true/false 必须小写。
+6. 绝对不要把解释、思考过程、错误说明、中文说明文字放进字段值位置；不确定的字段使用 null 或合理测试值。
+7. 字段值要符合 columnType 和 description，中文业务字段生成自然的中文内容，编码类字段生成稳定且不重复的代码。
+8. 时间字段使用 "YYYY-MM-DD HH:mm:ss" 字符串；日期字段使用 "YYYY-MM-DD" 字符串。
+9. 数字字段返回 JSON 数字；integer/int/bigint/smallint/serial 等整数字段必须返回整数，不要返回 219.1 这类小数；布尔字段返回 JSON boolean，确实没有值才返回 null。
+10. 字段 notNull=true 且 hasDefault=false 且 autoIncrement=false 时，必须生成非 null 的合法测试值；例如 ship_date 这类非空时间字段不能返回 null。
+11. 字段 hasDefault=true 或 autoIncrement=true 时，可以省略该字段或返回合理值，不要返回 null。
+12. 不要生成真实个人隐私数据，不要返回 SQL。
+13. 不要使用 Markdown 代码块，不要输出“好的/以下是/说明”等前后缀。
+14. JSON value 不能写成 name="value" 这种赋值表达式；例如 company_id 应写成 "company_id": "5001" 或 "company_id": 5001。
+15. JSON value 不能添加括号；例如 id 应写成 "id": 1，不能写成 "id": (1)。
+16. 不要输出 pi、NaN、Infinity 或 waste24.50 这类非 JSON 数值；所有数值必须是普通 JSON number。
+17. 如果字段名是 tenancy，固定返回 "-1"。
+
+合法输出示例：
+{"rows":[{"id":1,"name":"测试数据"}]}`, databaseName, tableName, count, string(fieldsJSON), count)
 
 	return []ChatMessage{
 		{Role: "system", Content: systemMessage},
@@ -904,20 +952,19 @@ func buildTableDataGenerationMessages(databaseName, tableName string, colDefs []
 	}, nil
 }
 
-func buildTableDataGenerationRetryMessages(messages []ChatMessage, raw string, parseErr error, count int) []ChatMessage {
+func buildTableDataGenerationRetryMessages(messages []ChatMessage, parseErr error, count int) []ChatMessage {
 	retryMessages := make([]ChatMessage, 0, len(messages)+2)
 	retryMessages = append(retryMessages, messages...)
-	if strings.TrimSpace(raw) != "" {
-		retryMessages = append(retryMessages, ChatMessage{Role: "assistant", Content: raw})
-	}
 	retryMessages = append(retryMessages, ChatMessage{
 		Role: "user",
 		Content: fmt.Sprintf(`上一次回复无法解析：%v。
 
-请重新生成，必须严格只返回 JSON 数组：
-- 数组长度正好是 %d。
-- 第一个字符必须是 [，最后一个字符必须是 ]。
+请完全丢弃上一次回复，重新生成，必须严格只返回 JSON 对象：
+- 固定格式是 {"rows":[...]}。
+- rows 数组长度正好是 %d。
+- 第一个字符必须是 {，最后一个字符必须是 }。
 - 不要 Markdown，不要代码块，不要解释，不要 SQL。
+- 不要把“发生错误/首先/规范/说明”等说明性文字放到任何字段值里。
 - 不要输出 name="value" 这种赋值表达式，所有 value 必须是合法 JSON 值。
 - 不要给 value 添加括号，例如 "id": 1，不能写成 "id": (1)。
 - 不要输出 pi、NaN、Infinity 或字母加数字的伪数值。
@@ -926,7 +973,45 @@ func buildTableDataGenerationRetryMessages(messages []ChatMessage, raw string, p
 	return retryMessages
 }
 
+func buildTableDataGenerationRepairMessages(raw string, parseErr error, count int) []ChatMessage {
+	systemMessage := `你是 JSON 修复器。你只能返回严格 JSON 对象，不要解释，不要 Markdown，不要代码块。`
+	userMessage := fmt.Sprintf(`下面是一次 AI 造数返回，但不是合法 JSON。
+
+解析错误：
+%v
+
+请把它修复成合法 JSON 对象，固定格式为 {"rows":[...]}。
+要求：
+- rows 数组长度必须正好是 %d。
+- 保留原字段名，尽量保留原测试数据含义。
+- 如果字段值位置出现说明文字、错误说明或不可判断内容，替换成合理测试值或 null。
+- 只输出 JSON 对象，第一个字符必须是 {，最后一个字符必须是 }。
+- 不要 Markdown，不要解释，不要 SQL。
+
+待修复内容：
+%s`, parseErr, count, aiContentForRepair(raw))
+
+	return []ChatMessage{
+		{Role: "system", Content: systemMessage},
+		{Role: "user", Content: userMessage},
+	}
+}
+
 func parseGeneratedTableRows(raw string) ([]map[string]interface{}, error) {
+	if objectText, objectErr := extractJSONObjectText(raw); objectErr == nil {
+		rows, err := decodeGeneratedRowsObjectJSON(objectText)
+		if err == nil {
+			return normalizeGeneratedRows(rows)
+		}
+		repairedJSON := repairGeneratedRowsJSON(objectText)
+		if repairedJSON != objectText {
+			repairedRows, repairErr := decodeGeneratedRowsObjectJSON(repairedJSON)
+			if repairErr == nil {
+				return normalizeGeneratedRows(repairedRows)
+			}
+		}
+	}
+
 	jsonText, err := extractJSONArrayText(raw)
 	if err != nil {
 		return nil, err
@@ -944,6 +1029,21 @@ func parseGeneratedTableRows(raw string) ([]map[string]interface{}, error) {
 		return nil, fmt.Errorf("AI 返回的数据不是合法 JSON 数组: %w", err)
 	}
 	return normalizeGeneratedRows(rows)
+}
+
+func decodeGeneratedRowsObjectJSON(jsonText string) ([]map[string]interface{}, error) {
+	var payload struct {
+		Rows []map[string]interface{} `json:"rows"`
+	}
+	decoder := json.NewDecoder(strings.NewReader(jsonText))
+	decoder.UseNumber()
+	if err := decoder.Decode(&payload); err != nil {
+		return nil, err
+	}
+	if payload.Rows == nil {
+		return nil, fmt.Errorf("AI JSON 对象缺少 rows 数组")
+	}
+	return payload.Rows, nil
 }
 
 func decodeGeneratedRowsJSON(jsonText string) ([]map[string]interface{}, error) {
@@ -984,13 +1084,53 @@ func repairGeneratedRowsJSON(jsonText string) string {
 }
 
 func extractJSONArrayText(raw string) (string, error) {
+	return extractJSONValueText(raw, '[', ']', "AI 返回内容中未找到 JSON 数组")
+}
+
+func extractJSONObjectText(raw string) (string, error) {
+	return extractJSONValueText(raw, '{', '}', "AI 返回内容中未找到 JSON 对象")
+}
+
+func extractJSONValueText(raw string, open byte, close byte, missingErr string) (string, error) {
 	text := strings.TrimSpace(raw)
-	start := strings.Index(text, "[")
-	end := strings.LastIndex(text, "]")
-	if start < 0 || end <= start {
-		return "", fmt.Errorf("AI 返回内容中未找到 JSON 数组")
+	start := strings.IndexByte(text, open)
+	if start < 0 {
+		return "", fmt.Errorf("%s", missingErr)
 	}
-	return text[start : end+1], nil
+
+	depth := 0
+	inString := false
+	escaped := false
+	for i := start; i < len(text); i++ {
+		ch := text[i]
+		if inString {
+			if escaped {
+				escaped = false
+				continue
+			}
+			if ch == '\\' {
+				escaped = true
+				continue
+			}
+			if ch == '"' {
+				inString = false
+			}
+			continue
+		}
+		switch ch {
+		case '"':
+			inString = true
+		case open:
+			depth++
+		case close:
+			depth--
+			if depth == 0 {
+				return text[start : i+1], nil
+			}
+		}
+	}
+
+	return "", fmt.Errorf("AI 返回内容中的 JSON 结构不完整")
 }
 
 func compactAIContentPreview(raw string) string {
@@ -1005,6 +1145,15 @@ func compactAIContentPreview(raw string) string {
 	return string(runes[:aiContentPreviewLimit]) + "..."
 }
 
+func aiContentForRepair(raw string) string {
+	text := strings.TrimSpace(raw)
+	runes := []rune(text)
+	if len(runes) <= aiRepairRawLimit {
+		return text
+	}
+	return string(runes[:aiRepairRawLimit]) + "\n...<内容过长，已截断>"
+}
+
 func insertGeneratedTableRows(db *sql.DB, ct, databaseName, tableName string, colDefs []utils.ClientColumnVO, primaryKey string, rows []map[string]interface{}, includePrimaryKey bool) (int, error) {
 	insertColumns := buildGeneratedInsertColumns(colDefs, primaryKey, includePrimaryKey)
 	if len(insertColumns) == 0 {
@@ -1012,11 +1161,6 @@ func insertGeneratedTableRows(db *sql.DB, ct, databaseName, tableName string, co
 	}
 
 	qualifiedTable := buildQuotedTableName(ct, databaseName, tableName)
-	quotedColumns := make([]string, 0, len(insertColumns))
-	for _, col := range insertColumns {
-		quotedColumns = append(quotedColumns, quoteColumnIdentifier(ct, col.Name))
-	}
-	columnSQL := strings.Join(quotedColumns, ", ")
 
 	tx, err := db.Begin()
 	if err != nil {
@@ -1025,18 +1169,23 @@ func insertGeneratedTableRows(db *sql.DB, ct, databaseName, tableName string, co
 
 	for rowIndex, row := range rows {
 		builder := sqlArgBuilder{ct: ct}
+		quotedColumns := make([]string, 0, len(insertColumns))
 		placeholders := make([]string, 0, len(insertColumns))
 		for _, col := range insertColumns {
-			value, _ := lookupGeneratedRowValue(row, col.Name)
-			normalizedValue, err := normalizeGeneratedInsertValue(ct, col, value)
+			value, hasValue := lookupGeneratedRowValue(row, col.Name)
+			normalizedValue, useColumn, err := normalizeGeneratedInsertColumnValue(ct, col, value, hasValue, rowIndex)
 			if err != nil {
 				_ = tx.Rollback()
 				return rowIndex, err
 			}
+			if !useColumn {
+				continue
+			}
+			quotedColumns = append(quotedColumns, quoteColumnIdentifier(ct, col.Name))
 			placeholders = append(placeholders, builder.Add(normalizedValue))
 		}
 
-		query := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)", qualifiedTable, columnSQL, strings.Join(placeholders, ", "))
+		query := buildGeneratedInsertSQL(ct, qualifiedTable, quotedColumns, placeholders)
 		if _, err := tx.Exec(query, builder.args...); err != nil {
 			_ = tx.Rollback()
 			return rowIndex, fmt.Errorf("第 %d 行插入失败: %w", rowIndex+1, err)
@@ -1047,6 +1196,16 @@ func insertGeneratedTableRows(db *sql.DB, ct, databaseName, tableName string, co
 		return 0, fmt.Errorf("提交造数事务失败: %w", err)
 	}
 	return len(rows), nil
+}
+
+func buildGeneratedInsertSQL(ct, qualifiedTable string, quotedColumns, placeholders []string) string {
+	if len(quotedColumns) == 0 {
+		if ct == "mysql" {
+			return fmt.Sprintf("INSERT INTO %s () VALUES ()", qualifiedTable)
+		}
+		return fmt.Sprintf("INSERT INTO %s DEFAULT VALUES", qualifiedTable)
+	}
+	return fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)", qualifiedTable, strings.Join(quotedColumns, ", "), strings.Join(placeholders, ", "))
 }
 
 func buildGeneratedInsertColumns(colDefs []utils.ClientColumnVO, primaryKey string, includePrimaryKey bool) []utils.ClientColumnVO {
@@ -1126,6 +1285,78 @@ func normalizeGeneratedInsertValue(ct string, colDef utils.ClientColumnVO, value
 	return generatedValueString(value), nil
 }
 
+func normalizeGeneratedInsertColumnValue(ct string, colDef utils.ClientColumnVO, value interface{}, hasValue bool, rowIndex int) (interface{}, bool, error) {
+	if !hasValue || isGeneratedNullValue(value) {
+		if shouldOmitGeneratedNullColumn(colDef) {
+			return nil, false, nil
+		}
+		if fallback, ok := defaultGeneratedRequiredColumnValue(ct, colDef, rowIndex); ok {
+			return fallback, true, nil
+		}
+		return nil, false, nil
+	}
+
+	normalizedValue, err := normalizeGeneratedInsertValue(ct, colDef, value)
+	if err != nil {
+		return nil, false, err
+	}
+	if normalizedValue == nil {
+		if shouldOmitGeneratedNullColumn(colDef) {
+			return nil, false, nil
+		}
+		if fallback, ok := defaultGeneratedRequiredColumnValue(ct, colDef, rowIndex); ok {
+			return fallback, true, nil
+		}
+		return nil, false, nil
+	}
+	return normalizedValue, true, nil
+}
+
+func shouldOmitGeneratedNullColumn(colDef utils.ClientColumnVO) bool {
+	return colDef.HasDefault || colDef.AutoIncrement
+}
+
+func defaultGeneratedRequiredColumnValue(ct string, colDef utils.ClientColumnVO, rowIndex int) (interface{}, bool) {
+	if !colDef.NotNull || colDef.HasDefault || colDef.AutoIncrement {
+		return nil, false
+	}
+
+	columnType := strings.ToUpper(strings.TrimSpace(colDef.ColumnType))
+	if strings.EqualFold(strings.TrimSpace(colDef.Name), "tenancy") {
+		return defaultGeneratedTenancyValue(columnType), true
+	}
+	if isTemporalColumnType(columnType) {
+		return defaultGeneratedTemporalValue(ct, columnType, rowIndex), true
+	}
+	if isBooleanColumnType(columnType) {
+		return false, true
+	}
+	if isIntegerColumnType(columnType) {
+		return int64(rowIndex + 1), true
+	}
+	if isFloatColumnType(columnType) {
+		return float64(rowIndex + 1), true
+	}
+	if isJSONColumnType(columnType) {
+		return "{}", true
+	}
+	return fmt.Sprintf("测试%s%d", strings.TrimSpace(colDef.Name), rowIndex+1), true
+}
+
+func defaultGeneratedTemporalValue(ct, columnType string, rowIndex int) interface{} {
+	now := time.Now().Add(time.Duration(rowIndex) * time.Minute)
+	if ct == "oracle" {
+		return now
+	}
+	if isDateOnlyColumnType(columnType) {
+		return now.Format("2006-01-02")
+	}
+	if isTimeOnlyColumnType(columnType) {
+		return now.Format("15:04:05")
+	}
+	return now.Format("2006-01-02 15:04:05")
+}
+
 func generatedValueString(value interface{}) string {
 	switch v := value.(type) {
 	case string:
@@ -1157,6 +1388,18 @@ func isGeneratedNullString(value string) bool {
 	default:
 		return false
 	}
+}
+
+func isGeneratedNullValue(value interface{}) bool {
+	if value == nil {
+		return true
+	}
+	text, ok := value.(string)
+	if !ok {
+		return false
+	}
+	trimmed := strings.TrimSpace(text)
+	return trimmed == "" || isGeneratedNullString(trimmed)
 }
 
 func defaultGeneratedTenancyValue(columnType string) interface{} {
@@ -1296,7 +1539,7 @@ func parseGeneratedBool(value interface{}) (bool, bool) {
 	case float64:
 		return v != 0, true
 	case string:
-		switch strings.ToLower(strings.TrimSpace(v)) {
+		switch strings.ToLower(cleanGeneratedScalarText(v)) {
 		case "true", "1", "yes", "y", "是":
 			return true, true
 		case "false", "0", "no", "n", "否":
@@ -1316,16 +1559,17 @@ func isIntegerColumnType(columnType string) bool {
 func parseGeneratedInt(value interface{}) (int64, bool) {
 	switch v := value.(type) {
 	case json.Number:
-		if i, err := strconv.ParseInt(v.String(), 10, 64); err == nil {
+		text := cleanGeneratedNumberText(v.String())
+		if i, err := strconv.ParseInt(text, 10, 64); err == nil {
 			return i, true
 		}
-		if f, err := strconv.ParseFloat(v.String(), 64); err == nil {
+		if f, err := strconv.ParseFloat(text, 64); err == nil {
 			return roundGeneratedFloatToInt(f)
 		}
 	case float64:
 		return roundGeneratedFloatToInt(v)
 	case string:
-		text := strings.TrimSpace(v)
+		text := cleanGeneratedNumberText(v)
 		if i, err := strconv.ParseInt(text, 10, 64); err == nil {
 			return i, true
 		}
@@ -1359,18 +1603,43 @@ func isFloatColumnType(columnType string) bool {
 		strings.Contains(columnType, "MONEY")
 }
 
+func isJSONColumnType(columnType string) bool {
+	columnType = strings.ToUpper(strings.TrimSpace(columnType))
+	return strings.Contains(columnType, "JSON")
+}
+
 func parseGeneratedFloat(value interface{}) (float64, bool) {
 	switch v := value.(type) {
 	case json.Number:
-		f, err := strconv.ParseFloat(v.String(), 64)
+		f, err := strconv.ParseFloat(cleanGeneratedNumberText(v.String()), 64)
 		return f, err == nil
 	case float64:
 		return v, true
 	case string:
-		f, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
+		f, err := strconv.ParseFloat(cleanGeneratedNumberText(v), 64)
 		return f, err == nil
 	}
 	return 0, false
+}
+
+func cleanGeneratedNumberText(value string) string {
+	text := cleanGeneratedScalarText(value)
+	text = strings.ReplaceAll(text, ",", "")
+	text = strings.ReplaceAll(text, "，", "")
+	return text
+}
+
+func cleanGeneratedScalarText(value string) string {
+	text := strings.TrimSpace(value)
+	for text != "" {
+		cleaned := strings.Trim(text, "\"'`“”‘’")
+		if cleaned == text {
+			break
+		}
+		text = strings.TrimSpace(cleaned)
+	}
+	text = strings.TrimPrefix(text, "\uFEFF")
+	return strings.TrimSpace(text)
 }
 
 func fillGeneratedPrimaryKeyValues(db *sql.DB, ct, databaseName, tableName string, colDefs []utils.ClientColumnVO, primaryKey string, rows []map[string]interface{}) error {

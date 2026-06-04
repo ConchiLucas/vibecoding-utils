@@ -235,7 +235,7 @@ export default function AIConfigManager() {
                 <div className="flex items-start justify-between gap-4">
                   <div>
                     <h2 className="text-lg font-bold text-gray-900">{selectedProvider.label || selectedProvider.id || '未命名 AI'}</h2>
-                    <p className="text-sm text-gray-500 mt-1">保存后会同步写入后端配置文件。</p>
+                    <p className="text-sm text-gray-500 mt-1">保存后会同步写入后端数据库。</p>
                   </div>
                   <div className="flex gap-2">
                     <button

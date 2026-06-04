@@ -9,6 +9,7 @@ import (
 	"github.com/flipped-aurora/easy-deploy/server/model/common/response"
 	"github.com/flipped-aurora/easy-deploy/server/model/system"
 	"github.com/flipped-aurora/easy-deploy/server/model/system/request"
+	systemRes "github.com/flipped-aurora/easy-deploy/server/model/system/response"
 	"github.com/flipped-aurora/easy-deploy/server/utils"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -121,20 +122,87 @@ func (a *TbGenerateProjectApi) GenerateCode(c *gin.Context) {
 	}
 
 	userId := getGenerateRecordUserKey(c)
+	results, err := executeGenerateCode(req, userId)
+	if err != nil {
+		global.GVA_LOG.Error("生成失败", zap.Error(err))
+		response.FailWithMessage(fmt.Sprintf("生成失败: %v", err), c)
+		return
+	}
 
-	genProj := utils.GenerateProjectInfo{
-		ID:             req.Id,
+	response.OkWithDetailed(results, "生成成功", c)
+}
+
+func (a *TbGenerateProjectApi) GenerateCodePublic(c *gin.Context) {
+	var req request.PublicGenerateCodeModel
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.FailWithMessage(err.Error(), c)
+		return
+	}
+	if req.ProjectId <= 0 {
+		response.FailWithMessage("projectId 必填", c)
+		return
+	}
+	if strings.TrimSpace(req.ModuleName) == "" {
+		response.FailWithMessage("moduleName 必填", c)
+		return
+	}
+	if strings.TrimSpace(req.ModuleComment) == "" {
+		response.FailWithMessage("moduleComment 必填", c)
+		return
+	}
+	if strings.TrimSpace(req.TableStructure) == "" {
+		response.FailWithMessage("tableStructure 必填", c)
+		return
+	}
+
+	results, err := executeGenerateCode(request.GenerateCodeModel{
+		Id:             strconv.Itoa(req.ProjectId),
 		ModuleName:     req.ModuleName,
 		ModuleComment:  req.ModuleComment,
 		TableStructure: req.TableStructure,
 		DbType:         req.DbType,
+	}, "")
+	if err != nil {
+		global.GVA_LOG.Error("公开生成失败", zap.Error(err))
+		response.FailWithMessage(fmt.Sprintf("生成失败: %v", err), c)
+		return
+	}
+	if len(results) == 0 {
+		response.FailWithMessage("生成失败: 未找到生成结果", c)
+		return
 	}
 
-	var generatedProjectIds []int
+	response.OkWithDetailed(results[0], "生成成功", c)
+}
+
+func executeGenerateCode(req request.GenerateCodeModel, userId string) ([]systemRes.GenerateCodeProjectResult, error) {
+	if strings.TrimSpace(req.Id) == "" {
+		return nil, fmt.Errorf("项目ID不能为空")
+	}
+
+	var results []systemRes.GenerateCodeProjectResult
 	for _, idStr := range strings.Split(req.Id, ",") {
-		projectId, _ := strconv.Atoi(strings.TrimSpace(idStr))
+		idStr = strings.TrimSpace(idStr)
+		if idStr == "" {
+			continue
+		}
+		projectId, err := strconv.Atoi(idStr)
+		if err != nil || projectId <= 0 {
+			return nil, fmt.Errorf("项目ID无效: %s", idStr)
+		}
+
+		var proj system.TbGenerateProject
+		if err := global.GVA_DB.Where("id = ?", projectId).First(&proj).Error; err != nil {
+			return nil, fmt.Errorf("项目不存在: %d", projectId)
+		}
+		if strings.TrimSpace(proj.DiskPath) == "" {
+			return nil, fmt.Errorf("项目未配置磁盘输出路径: %d", projectId)
+		}
+
 		var paths []system.TbGenerateProjectPath
-		global.GVA_DB.Where("project_id = ? AND enabled = 1", idStr).Find(&paths)
+		if err := global.GVA_DB.Where("project_id = ? AND enabled = 1", projectId).Find(&paths).Error; err != nil {
+			return nil, err
+		}
 
 		var pathIds []int
 		for _, p := range paths {
@@ -143,36 +211,45 @@ func (a *TbGenerateProjectApi) GenerateCode(c *gin.Context) {
 
 		var models []system.TbGenerateProjectPathModel
 		if len(pathIds) > 0 {
-			global.GVA_DB.Where("path_id IN ?", pathIds).Find(&models)
+			if err := global.GVA_DB.Where("path_id IN ?", pathIds).Find(&models).Error; err != nil {
+				return nil, err
+			}
 		}
 
 		var holders []system.TbGenerateProjectPlaceHolder
-		global.GVA_DB.Where("project_id = ?", idStr).Find(&holders)
+		if err := global.GVA_DB.Where("project_id = ?", projectId).Find(&holders).Error; err != nil {
+			return nil, err
+		}
+
+		recordUser := strings.TrimSpace(userId)
+		if recordUser == "" || recordUser == "anonymous" || recordUser == "codex" {
+			recordUser = strings.TrimSpace(proj.UserName)
+		}
+		if recordUser == "" {
+			recordUser = "codex"
+		}
 
 		var baseHolders []system.TbGeneratePlaceHolder
-		global.GVA_DB.Where("user_name = ?", userId).Find(&baseHolders)
+		if err := global.GVA_DB.Where("user_name = ?", recordUser).Find(&baseHolders).Error; err != nil {
+			return nil, err
+		}
 
-		var proj system.TbGenerateProject
-		global.GVA_DB.Where("id = ?", idStr).First(&proj)
+		genProj := utils.GenerateProjectInfo{
+			ID:             idStr,
+			ModuleName:     req.ModuleName,
+			ModuleComment:  req.ModuleComment,
+			TableStructure: req.TableStructure,
+			DbType:         req.DbType,
+		}
 
-		err := utils.GenerateCode(genProj, paths, models, holders, baseHolders, proj.DiskPath)
+		generatedFiles, err := utils.GenerateCode(genProj, paths, models, holders, baseHolders, proj.DiskPath)
 		if err != nil {
-			response.FailWithMessage(fmt.Sprintf("生成失败: %v", err), c)
-			return
+			return nil, err
 		}
-		if projectId > 0 {
-			generatedProjectIds = append(generatedProjectIds, projectId)
-		}
-	}
 
-	// Add record
-	if len(generatedProjectIds) == 0 {
-		generatedProjectIds = append(generatedProjectIds, 0)
-	}
-	for _, projectId := range generatedProjectIds {
 		record := system.TbGenerateRecord{
 			ProjectId:      projectId,
-			UserName:       userId,
+			UserName:       recordUser,
 			ModuleName:     req.ModuleName,
 			ModuleComment:  req.ModuleComment,
 			TableStructure: req.TableStructure,
@@ -180,13 +257,27 @@ func (a *TbGenerateProjectApi) GenerateCode(c *gin.Context) {
 		}
 
 		var exist system.TbGenerateRecord
-		if err := global.GVA_DB.Where("user_name = ? AND project_id = ?", userId, projectId).First(&exist).Error; err == nil {
+		if err := global.GVA_DB.Where("user_name = ? AND project_id = ?", recordUser, projectId).First(&exist).Error; err == nil {
 			record.ID = exist.ID
-			global.GVA_DB.Updates(&record)
+			if err := global.GVA_DB.Updates(&record).Error; err != nil {
+				return nil, err
+			}
 		} else {
-			global.GVA_DB.Create(&record)
+			if err := global.GVA_DB.Create(&record).Error; err != nil {
+				return nil, err
+			}
 		}
+
+		results = append(results, systemRes.GenerateCodeProjectResult{
+			ProjectId:      projectId,
+			ProjectName:    proj.ProjectName,
+			DiskPath:       proj.DiskPath,
+			GeneratedFiles: generatedFiles,
+		})
 	}
 
-	response.OkWithMessage("生成成功", c)
+	if len(results) == 0 {
+		return nil, fmt.Errorf("项目ID不能为空")
+	}
+	return results, nil
 }

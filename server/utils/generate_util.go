@@ -37,6 +37,41 @@ type ExtractedField struct {
 	PythonVoType     string // Python vo类型
 }
 
+func codeGenTemplateFuncs() template.FuncMap {
+	return template.FuncMap{
+		"upper":          strings.ToUpper,
+		"lower":          strings.ToLower,
+		"contains":       strings.Contains,
+		"hasSuffix":      strings.HasSuffix,
+		"isCodeField":    isCodeField,
+		"leafRuleName":   leafRuleName,
+		"leafRulePrefix": leafRulePrefix,
+	}
+}
+
+func isCodeField(field ExtractedField) bool {
+	originalName := strings.ToLower(field.OriginalName)
+	javaField := strings.ToLower(field.JavaField)
+	comment := field.Comment
+	return originalName == "code" ||
+		strings.HasSuffix(originalName, "_code") ||
+		strings.Contains(originalName, "_code_") ||
+		strings.HasSuffix(javaField, "code") ||
+		strings.Contains(comment, "编码")
+}
+
+func leafRuleName(field ExtractedField) string {
+	return strings.ToUpper(field.OriginalName)
+}
+
+func leafRulePrefix(moduleName string, field ExtractedField) string {
+	prefix := strings.TrimSuffix(strings.ToUpper(field.OriginalName), "_CODE")
+	if prefix == "" || prefix == strings.ToUpper(field.OriginalName) {
+		prefix = strings.ToUpper(moduleName)
+	}
+	return prefix
+}
+
 type RenderContext struct {
 	ModuleName      string
 	ModuleNameUpper string
@@ -155,26 +190,26 @@ func SqlToJava(sql string, dbType string) (RenderContext, error) {
 
 func parseMySQLAst(sql string) (RenderContext, error) {
 	var ctx RenderContext
-	
+
 	stmt, err := sqlparser.ParseStrictDDL(sql)
 	if err != nil {
 		return ctx, fmt.Errorf("解析 DDL 失败: %w", err)
 	}
-	
+
 	ddl, ok := stmt.(*sqlparser.DDL)
 	if !ok {
 		return ctx, fmt.Errorf("SQL 不是 CREATE TABLE 结构")
 	}
-	
+
 	entireTable := ddl.NewName.Name.String()
 	entireTableName := Capitalize(SnakeToCamel(entireTable))
-	
+
 	firstUnderscore := strings.Index(entireTable, "_")
 	tableNameRaw := ""
 	TABLE_NAME := ""
 	urlTableName := ""
 	vueTableName := ""
-	
+
 	if firstUnderscore != -1 {
 		tableNameRaw = entireTable[firstUnderscore+1:]
 		urlTableName = strings.ReplaceAll(tableNameRaw, "_", "/")
@@ -188,7 +223,7 @@ func parseMySQLAst(sql string) (RenderContext, error) {
 		tableNameLower = strings.ToLower(string(TableNameStr[0])) + TableNameStr[1:]
 	}
 	TABLENAME_UPPER := strings.ToUpper(tableNameLower)
-	
+
 	tableComment := ""
 	if ddl.TableSpec != nil && ddl.TableSpec.Options != "" {
 		reComment := regexp.MustCompile(`(?i)COMMENT\s*=\s*'([^']+)'`)
@@ -197,33 +232,33 @@ func parseMySQLAst(sql string) (RenderContext, error) {
 			tableComment = cMatch[1]
 		}
 	}
-	
+
 	var fields []ExtractedField
 	if ddl.TableSpec != nil {
 		for _, col := range ddl.TableSpec.Columns {
 			orig := col.Name.String()
 			dbType := col.Type.Type
-			
+
 			rawLen := ""
 			lenInfo := ""
 			if col.Type.Length != nil {
 				rawLen = string(col.Type.Length.Val)
 				lenInfo = "(" + rawLen + ")"
 			}
-			
+
 			comment := ""
 			if col.Type.Comment != nil {
 				comment = string(col.Type.Comment.Val)
 			}
-			
+
 			javaType := ConvertDataType(dbType)
 			pyType := SqlToPyType(dbType)
 			voType := SqlToPyVoType(dbType)
 			vueType := ConvertVueType(dbType)
-			
+
 			javaField := SnakeToCamel(orig)
 			capField := Capitalize(javaField)
-			
+
 			fields = append(fields, ExtractedField{
 				OriginalName:     orig,
 				JavaDataType:     javaType,
@@ -238,7 +273,7 @@ func parseMySQLAst(sql string) (RenderContext, error) {
 			})
 		}
 	}
-	
+
 	ctx = RenderContext{
 		RawTableName:    entireTable,
 		EntireTableName: entireTableName,
@@ -257,23 +292,23 @@ func parseMySQLAst(sql string) (RenderContext, error) {
 
 func parseGenericDDL(sql string, dbType string) (RenderContext, error) {
 	var ctx RenderContext
-	
+
 	sql = strings.ReplaceAll(sql, "\r\n", "\n")
-	
+
 	reTable := regexp.MustCompile(`(?i)CREATE\s+TABLE\s+(?:[a-zA-Z0-9_\-"'\[\]]+\.)?["\[` + "`" + `]?([a-zA-Z0-9_]+)["\]` + "`" + `]?`)
 	matches := reTable.FindStringSubmatch(sql)
 	if len(matches) < 2 {
 		return ctx, fmt.Errorf("通用解析失败: 无法定位 CREATE TABLE 表名")
 	}
 	entireTable := matches[1]
-	
+
 	entireTableName := Capitalize(SnakeToCamel(entireTable))
 	firstUnderscore := strings.Index(entireTable, "_")
 	tableNameRaw := entireTable
 	if firstUnderscore != -1 {
 		tableNameRaw = entireTable[firstUnderscore+1:]
 	}
-	
+
 	urlTableName := strings.ReplaceAll(tableNameRaw, "_", "/")
 	vueTableName := strings.ReplaceAll(tableNameRaw, "_", "-")
 	TABLE_NAME := strings.ToUpper(tableNameRaw)
@@ -283,14 +318,14 @@ func parseGenericDDL(sql string, dbType string) (RenderContext, error) {
 		tableNameLower = strings.ToLower(string(TableNameStr[0])) + TableNameStr[1:]
 	}
 	TABLENAME_UPPER := strings.ToUpper(tableNameLower)
-	
+
 	tableComment := ""
 	if dbType == "mssql" || dbType == "sqlserver" {
 		// MS SQL extension property naive extraction
 		reTabCom := regexp.MustCompile(`(?i)@value\s*=\s*N'([^']+)'\s*,[^@]*@level1type\s*=\s*N'TABLE'\s*,[^@]*@level1name\s*=\s*N'([^']+)'`)
 		subs := reTabCom.FindAllStringSubmatch(sql, -1)
 		for _, s := range subs {
-			if len(s) >= 3 && !strings.Contains(s[0], "@level2type") { 
+			if len(s) >= 3 && !strings.Contains(s[0], "@level2type") {
 				tableComment = s[1]
 			}
 		}
@@ -307,9 +342,9 @@ func parseGenericDDL(sql string, dbType string) (RenderContext, error) {
 	if startIdx == -1 || endIdx == -1 || startIdx >= endIdx {
 		return ctx, fmt.Errorf("通用解析失败: 找不到列定义括号区块")
 	}
-	
+
 	colsBlock := sql[startIdx+1 : endIdx]
-	
+
 	lines := strings.Split(colsBlock, "\n")
 	var fields []ExtractedField
 	for _, l := range lines {
@@ -317,7 +352,7 @@ func parseGenericDDL(sql string, dbType string) (RenderContext, error) {
 		if l == "" || strings.HasPrefix(strings.ToUpper(l), "PRIMARY KEY") || strings.HasPrefix(strings.ToUpper(l), "CONSTRAINT") {
 			continue
 		}
-		
+
 		reCol := regexp.MustCompile(`^["\[` + "`" + `]?([a-zA-Z0-9_]+)["\]` + "`" + `]?\s+([a-zA-Z0-9_]+)(\([0-9,]+\))?`)
 		cMatch := reCol.FindStringSubmatch(l)
 		if len(cMatch) < 3 {
@@ -330,7 +365,7 @@ func parseGenericDDL(sql string, dbType string) (RenderContext, error) {
 			lenInfo = cMatch[3]
 		}
 		rawLen := strings.Trim(lenInfo, "()")
-		
+
 		comment := ""
 		if dbType == "mssql" || dbType == "sqlserver" {
 			reColCom := regexp.MustCompile(`(?i)@value\s*=\s*N'([^']+)'\s*,[^@]*@level2type\s*=\s*N'COLUMN'\s*,[^@]*@level2name\s*=\s*N'` + orig + `'`)
@@ -345,15 +380,15 @@ func parseGenericDDL(sql string, dbType string) (RenderContext, error) {
 				comment = ccMatch[1]
 			}
 		}
-		
+
 		javaType := ConvertDataType(dbTypeRaw)
 		pyType := SqlToPyType(dbTypeRaw)
 		voType := SqlToPyVoType(dbTypeRaw)
 		vueType := ConvertVueType(dbTypeRaw)
-		
+
 		javaField := SnakeToCamel(orig)
 		capField := Capitalize(javaField)
-		
+
 		fields = append(fields, ExtractedField{
 			OriginalName:     orig,
 			JavaDataType:     javaType,
@@ -367,7 +402,7 @@ func parseGenericDDL(sql string, dbType string) (RenderContext, error) {
 			PythonVoType:     voType,
 		})
 	}
-	
+
 	ctx = RenderContext{
 		RawTableName:    entireTable,
 		EntireTableName: entireTableName,
@@ -397,18 +432,18 @@ func CustomFormat(pathTpl string, ctx map[string]string) string {
 	})
 }
 
-func GenerateCode(genProject GenerateProjectInfo, paths []system.TbGenerateProjectPath, models []system.TbGenerateProjectPathModel, holders []system.TbGenerateProjectPlaceHolder, baseHolders []system.TbGeneratePlaceHolder, diskPath string) error {
+func GenerateCode(genProject GenerateProjectInfo, paths []system.TbGenerateProjectPath, models []system.TbGenerateProjectPathModel, holders []system.TbGenerateProjectPlaceHolder, baseHolders []system.TbGeneratePlaceHolder, diskPath string) ([]string, error) {
 	ctx, err := SqlToJava(genProject.TableStructure, genProject.DbType)
 	if err != nil {
 		global.GVA_LOG.Error("SQL解析失败", zap.Error(err))
-		return err
+		return nil, err
 	}
-	
+
 	ctx.ModuleName = genProject.ModuleName
 	ctx.ModuleNameUpper = Capitalize(genProject.ModuleName)
 	ctx.ModuleComment = genProject.ModuleComment
 	ctx.Date = time.Now().Format("2006-01-02 15:04:05")
-	
+
 	holderDict := make(map[string]string)
 	for _, bh := range baseHolders {
 		k := strings.ReplaceAll(bh.HolderKey, "{[<", "")
@@ -436,6 +471,9 @@ func GenerateCode(genProject GenerateProjectInfo, paths []system.TbGenerateProje
 		"vueTableName":    ctx.VueTableName,
 	}
 
+	generatedFiles := make([]string, 0)
+	generatedFileSet := make(map[string]struct{})
+
 	for _, p := range paths {
 		var relModels []system.TbGenerateProjectPathModel
 		for _, m := range models {
@@ -446,19 +484,19 @@ func GenerateCode(genProject GenerateProjectInfo, paths []system.TbGenerateProje
 		if len(relModels) == 0 {
 			continue
 		}
-		
+
 		writeFlag := p.Incremented == 0
-		
+
 		fileUrl := CustomFormat(p.FileUrl, formatCtx)
 		fileName := CustomFormat(p.FileName, formatCtx)
-		
+
 		fullPath := filepath.Join(diskPath, fileUrl, fileName)
-		
+
 		for _, m := range relModels {
 			// Template rendering!
-			tmpl := template.New("model")
+			tmpl := template.New("model").Funcs(codeGenTemplateFuncs())
 			tmpl.Delims("{[<", ">]}")
-			
+
 			// Map some missing variables that used to be passed flatly in jinja:
 			t, err := tmpl.Parse(m.Content)
 			if err != nil {
@@ -466,7 +504,7 @@ func GenerateCode(genProject GenerateProjectInfo, paths []system.TbGenerateProje
 				continue
 			}
 			var buf bytes.Buffer
-			
+
 			// Since text/template expects . Field, we wrap in a map for easy indexing
 			wrapper := map[string]interface{}{
 				"moduleName":        ctx.ModuleName,
@@ -489,46 +527,74 @@ func GenerateCode(genProject GenerateProjectInfo, paths []system.TbGenerateProje
 			for k, v := range holderDict {
 				wrapper[k] = v
 			}
-			
+
 			if err := t.Execute(&buf, wrapper); err != nil {
 				global.GVA_LOG.Error("模板执行失败", zap.Error(err))
 				continue
 			}
-			
-			generateAndWriteFile(fullPath, buf.String(), writeFlag)
+
+			if err := generateAndWriteFile(fullPath, buf.String(), writeFlag); err != nil {
+				global.GVA_LOG.Error("文件写入失败", zap.String("path", fullPath), zap.Error(err))
+				return generatedFiles, err
+			}
+			if _, ok := generatedFileSet[fullPath]; !ok {
+				generatedFiles = append(generatedFiles, fullPath)
+				generatedFileSet[fullPath] = struct{}{}
+			}
 		}
 	}
-	return nil
+	return generatedFiles, nil
 }
 
-func generateAndWriteFile(path string, content string, writeFlag bool) {
+func generateAndWriteFile(path string, content string, writeFlag bool) error {
 	dir := filepath.Dir(path)
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
-		os.MkdirAll(dir, os.ModePerm)
+		if err := os.MkdirAll(dir, os.ModePerm); err != nil {
+			return err
+		}
+	} else if err != nil {
+		return err
 	}
-	
+
 	if _, err := os.Stat(path); os.IsNotExist(err) || writeFlag {
-		os.WriteFile(path, []byte(content), os.ModePerm)
+		return os.WriteFile(path, []byte(content), os.ModePerm)
+	} else if err != nil {
+		return err
 	} else {
 		// 追加内容
 		ext := filepath.Ext(path)
-		data, _ := os.ReadFile(path)
-		
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+
 		if ext == ".java" {
 			txt := string(data)
 			lastBrace := strings.LastIndex(txt, "}")
 			if lastBrace != -1 {
 				newTxt := txt[:lastBrace] + content + txt[lastBrace:]
-				os.WriteFile(path, []byte(newTxt), os.ModePerm)
+				return os.WriteFile(path, []byte(newTxt), os.ModePerm)
 			} else {
-				f, _ := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0644)
-				f.WriteString(content)
-				f.Close()
+				f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0644)
+				if err != nil {
+					return err
+				}
+				if _, err := f.WriteString(content); err != nil {
+					f.Close()
+					return err
+				}
+				return f.Close()
 			}
 		} else {
-			f, _ := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0644)
-			f.WriteString(content)
-			f.Close()
+			f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0644)
+			if err != nil {
+				return err
+			}
+			if _, err := f.WriteString(content); err != nil {
+				f.Close()
+				return err
+			}
+			return f.Close()
 		}
 	}
 }

@@ -4,6 +4,7 @@ import { X, Trash2, Send, Sparkles, Bot, User, Wrench, Cpu, History, MessageSqua
 import {
   sendAIChatStream,
   getAIProviders,
+  saveAIActiveProvider,
   getAIChatHistoryList,
   saveAIChatHistory,
   AIChatMessage,
@@ -77,6 +78,7 @@ export default function AIChatWidget() {
   const [isLoading, setIsLoading] = useState(false);
   const [providers, setProviders] = useState<AIProvider[]>([]);
   const [selectedProvider, setSelectedProvider] = useState('');
+  const [savingProvider, setSavingProvider] = useState(false);
   const [providerError, setProviderError] = useState('');
   const [activeMode, setActiveMode] = useState<AIChatMode>('chat');
   const [isHistoryView, setIsHistoryView] = useState(false);
@@ -134,10 +136,7 @@ export default function AIChatWidget() {
       .then((data) => {
         if (cancelled) return;
         const nextProviders = data.providers || [];
-        const savedProvider = localStorage.getItem('ai-chat-provider') || '';
-        const activeProvider = nextProviders.find(provider => provider.id === savedProvider)
-          ? savedProvider
-          : nextProviders.find(provider => provider.active)?.id || data.active || nextProviders[0]?.id || '';
+        const activeProvider = nextProviders.find(provider => provider.active)?.id || data.active || nextProviders[0]?.id || '';
 
         setProviders(nextProviders);
         setSelectedProvider(activeProvider);
@@ -306,10 +305,24 @@ export default function AIChatWidget() {
     abortRef.current = null;
   }, [inputValue, isLoading, requestContext, selectedProvider, activeMode, displayMessages, refreshHistoryItems, activeProjectId, activeProject, activeConnectionId]);
 
-  const handleProviderChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+  const handleProviderChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
     const providerID = e.target.value;
+    const previousProvider = selectedProvider;
     setSelectedProvider(providerID);
-    localStorage.setItem('ai-chat-provider', providerID);
+    setSavingProvider(true);
+    try {
+      const res: any = await saveAIActiveProvider(providerID);
+      if (res.code !== 0) {
+        throw new Error(res.msg || '默认 AI 保存失败');
+      }
+      setProviders(prev => prev.map(provider => ({ ...provider, active: provider.id === providerID })));
+      setProviderError('');
+    } catch (err: any) {
+      setSelectedProvider(previousProvider);
+      setProviderError(err?.message || '默认 AI 保存失败');
+    } finally {
+      setSavingProvider(false);
+    }
   };
 
   const currentProvider = providers.find(provider => provider.id === selectedProvider);
@@ -418,7 +431,7 @@ export default function AIChatWidget() {
                   <select
                     value={selectedProvider}
                     onChange={handleProviderChange}
-                    disabled={isLoading || providers.length === 0}
+                    disabled={isLoading || savingProvider || providers.length === 0}
                     aria-label="选择 AI 厂商"
                   >
                     {providers.length === 0 ? (
