@@ -407,9 +407,9 @@
   position: sticky;
   right: 0;
   z-index: 3;
-  width: 118px;
-  min-width: 118px !important;
-  max-width: 118px !important;
+  width: 188px;
+  min-width: 188px !important;
+  max-width: 188px !important;
   text-align: center !important;
   box-shadow: -10px 0 18px rgba(15, 23, 42, 0.06);
 }
@@ -498,6 +498,14 @@
   font-size: 13px;
 }
 
+.tdp-row-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
 .tdp-row-action-btn {
   min-height: 32px;
   border-radius: 9px;
@@ -519,6 +527,35 @@
   background: #4f46e5;
   border-color: #4f46e5;
   color: #ffffff;
+}
+
+.tdp-row-action-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.tdp-row-action-btn:disabled:hover {
+  background: #eef2ff;
+  border-color: #c7d2fe;
+  color: #4f46e5;
+}
+
+.tdp-row-action-danger {
+  border-color: #fecaca;
+  background: #fff1f2;
+  color: #e11d48;
+}
+
+.tdp-row-action-danger:hover:not(:disabled) {
+  background: #e11d48;
+  border-color: #e11d48;
+  color: #ffffff;
+}
+
+.tdp-row-action-danger:disabled:hover {
+  border-color: #fecaca;
+  background: #fff1f2;
+  color: #e11d48;
 }
 
 .tdp-pagination {
@@ -882,6 +919,41 @@
   width: 460px;
 }
 
+.tdp-delete-confirm {
+  width: 520px;
+}
+
+.tdp-delete-record {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.tdp-delete-record-item {
+  display: grid;
+  grid-template-columns: 160px minmax(0, 1fr);
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid #f1f5f9;
+  background: #ffffff;
+}
+
+.tdp-delete-record-item:last-child {
+  border-bottom: none;
+}
+
+.tdp-delete-record-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #334155;
+  font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+  font-size: 12px;
+}
+
 .tdp-generate-icon {
   background: #eef2ff;
   color: #4f46e5;
@@ -1144,6 +1216,30 @@
   border-color: #dc2626;
 }
 
+.dark .tdp-row-action-btn {
+  background: #272b42;
+  border-color: #3c415b;
+  color: #c4b5fd;
+}
+
+.dark .tdp-row-action-btn:hover:not(:disabled) {
+  background: #6d5dfc;
+  border-color: #6d5dfc;
+  color: #ffffff;
+}
+
+.dark .tdp-row-action-danger {
+  background: #3b1d29;
+  border-color: #7f1d1d;
+  color: #fda4af;
+}
+
+.dark .tdp-row-action-danger:hover:not(:disabled) {
+  background: #e11d48;
+  border-color: #e11d48;
+  color: #ffffff;
+}
+
 .dark .tdp-nav-btn {
   background: #1e293b;
   border-color: #475569;
@@ -1260,6 +1356,19 @@
 .dark .tdp-change-more {
   background: #0f172a;
   color: #94a3b8;
+}
+
+.dark .tdp-delete-record {
+  border-color: #334155;
+}
+
+.dark .tdp-delete-record-item {
+  background: #111827;
+  border-color: #1e293b;
+}
+
+.dark .tdp-delete-record-value {
+  color: #e2e8f0;
 }
 
 .dark .tdp-ddl {

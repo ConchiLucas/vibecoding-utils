@@ -17,6 +17,7 @@ func (s *TbConnectionRouter) InitTbConnectionRouter(Router *gin.RouterGroup) {
 		connectionRouter.DELETE("deleteTbConnectionByIds", connectionApi.DeleteTbConnectionByIds)
 		connectionRouter.PUT("updateTbConnection", connectionApi.UpdateTbConnection)
 		connectionRouter.POST("updateRemoteTableRecord", connectionApi.UpdateRemoteTableRecord)
+		connectionRouter.DELETE("deleteRemoteTableRecord", connectionApi.DeleteRemoteTableRecord)
 		connectionRouter.POST("generateRemoteTableData", connectionApi.GenerateRemoteTableData)
 		connectionRouter.POST("saveRemoteSQLHistory", connectionApi.SaveRemoteSQLHistory)
 		connectionRouter.DELETE("deleteRemoteSQLHistory", connectionApi.DeleteRemoteSQLHistory)

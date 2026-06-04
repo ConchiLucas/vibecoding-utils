@@ -197,3 +197,14 @@ export const updateRemoteTableRecord = (data: {
 }) => {
   return service.post<any, ApiResponse<TableRecordPreview>>('/connection/updateRemoteTableRecord', data);
 };
+
+export const deleteRemoteTableRecord = (data: {
+  ID: number;
+  databaseName?: string;
+  tableName: string;
+  offset: number;
+  filterColumn?: string;
+  filterValue?: string;
+}) => {
+  return service.delete<any, ApiResponse>('/connection/deleteRemoteTableRecord', { data });
+};

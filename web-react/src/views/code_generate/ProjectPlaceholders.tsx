@@ -85,7 +85,7 @@ export default function ProjectPlaceholders() {
       {/* Top Banner */}
       <div className="bg-gradient-to-r from-slate-800 to-slate-900 text-white px-6 py-4 flex items-center justify-between shadow-md z-20">
          <div className="flex items-center gap-4">
-             <button onClick={() => navigate('/projects')} className="p-2 hover:bg-white/10 rounded-xl transition-colors flex items-center gap-1 text-sm font-medium border border-slate-700">
+             <button onClick={() => navigate('/code-generate')} className="p-2 hover:bg-white/10 rounded-xl transition-colors flex items-center gap-1 text-sm font-medium border border-slate-700">
                  <ArrowLeft size={16} /> 返回主版
              </button>
              <div className="h-6 w-px bg-slate-700"></div>

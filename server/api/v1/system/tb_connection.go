@@ -472,3 +472,23 @@ func (a *TbConnectionApi) UpdateRemoteTableRecord(c *gin.Context) {
 	}
 	response.OkWithDetailed(preview, "修改成功", c)
 }
+
+// DeleteRemoteTableRecord deletes the currently previewed row after the UI confirmation.
+func (a *TbConnectionApi) DeleteRemoteTableRecord(c *gin.Context) {
+	var req systemReq.DeleteRemoteTableRecordReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.FailWithMessage(err.Error(), c)
+		return
+	}
+	if req.ID == 0 || req.TableName == "" {
+		response.FailWithMessage("缺少必要参数 ID 或 tableName", c)
+		return
+	}
+
+	if err := tbConnectionService.DeleteTableRecord(req.ID, req.DatabaseName, req.TableName, req.Offset, req.FilterColumn, req.FilterValue); err != nil {
+		global.GVA_LOG.Error("删除表记录失败!", zap.Error(err))
+		response.FailWithMessage("删除失败: "+err.Error(), c)
+		return
+	}
+	response.OkWithMessage("删除成功", c)
+}

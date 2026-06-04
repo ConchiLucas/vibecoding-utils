@@ -19,12 +19,14 @@ import {
   Code2,
   Copy,
   Eye,
+  Trash2,
   Sparkles,
 } from 'lucide-react';
 import {
   getRemoteTablePreview,
   getRemoteTablePage,
   updateRemoteTableRecord,
+  deleteRemoteTableRecord,
   getRemoteTableDDL,
   generateRemoteTableData,
   ColumnPreview,
@@ -71,6 +73,12 @@ function getRequestErrorMessage(error: unknown, fallback: string) {
   return fallback;
 }
 
+function renderCellValue(cell?: TableDataCell) {
+  if (!cell || cell.isNull) return 'NULL';
+  if (cell.value === '') return "''";
+  return cell.value;
+}
+
 export default function TableDataPreview({
   open,
   onClose,
@@ -93,6 +101,9 @@ export default function TableDataPreview({
   const [saving, setSaving] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [draftValues, setDraftValues] = useState<Record<string, string>>({});
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<TableDataRow | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const [activeFilterColumn, setActiveFilterColumn] = useState('');
   const [filterValue, setFilterValue] = useState('');
@@ -184,6 +195,9 @@ export default function TableDataPreview({
       setOffset(0);
       setEditing(false);
       setConfirmOpen(false);
+      setDeleteConfirmOpen(false);
+      setDeleteTarget(null);
+      setDeleting(false);
       setDraftValues({});
       setActiveFilterColumn('');
       setFilterValue('');
@@ -220,6 +234,15 @@ export default function TableDataPreview({
 
   const hasChanges = pendingChanges.length > 0;
 
+  const deletePreviewCells = useMemo(() => {
+    if (!deleteTarget) return [];
+    return tableColumns.slice(0, 5).map((col, index) => ({
+      name: col.name,
+      value: renderCellValue(deleteTarget.cells[index]),
+      primaryKey: Boolean(col.primaryKey),
+    }));
+  }, [deleteTarget, tableColumns]);
+
   const handleCloseDetail = useCallback(() => {
     if (saving) return;
     if (editing && hasChanges) {
@@ -232,6 +255,10 @@ export default function TableDataPreview({
   }, [editing, hasChanges, saving]);
 
   const handleCloseAll = () => {
+    if (deleting) {
+      toast.error('删除进行中，请稍等');
+      return;
+    }
     if (generating) {
       toast.error('造数进行中，请稍等');
       return;
@@ -246,6 +273,13 @@ export default function TableDataPreview({
   useEffect(() => {
     if (!open) return;
     const handleKey = (e: KeyboardEvent) => {
+      if (deleteConfirmOpen) {
+        if (e.key === 'Escape' && !deleting) {
+          setDeleteConfirmOpen(false);
+          setDeleteTarget(null);
+        }
+        return;
+      }
       if (confirmOpen) {
         if (e.key === 'Escape') {
           setConfirmOpen(false);
@@ -316,6 +350,8 @@ export default function TableDataPreview({
     fetchRecord,
     editing,
     confirmOpen,
+    deleteConfirmOpen,
+    deleting,
     generateOpen,
     generating,
     ddlOpen,
@@ -385,12 +421,6 @@ export default function TableDataPreview({
     return col.value;
   };
 
-  const renderCellValue = (cell?: TableDataCell) => {
-    if (!cell || cell.isNull) return 'NULL';
-    if (cell.value === '') return "''";
-    return cell.value;
-  };
-
   const handleFilterColumnClick = (column: string) => {
     if (editing && hasChanges) {
       toast.error('请先保存或取消当前修改');
@@ -436,6 +466,52 @@ export default function TableDataPreview({
     setColumns([]);
     setOffset(row.offset);
     void fetchRecord(row.offset, appliedFilter);
+  };
+
+  const handleOpenDelete = (row: TableDataRow) => {
+    if (editing && hasChanges) {
+      toast.error('请先保存或取消当前修改');
+      return;
+    }
+    setDeleteTarget(row);
+    setDeleteConfirmOpen(true);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!deleteTarget) return;
+
+    setDeleting(true);
+    try {
+      const res = await deleteRemoteTableRecord({
+        ID: connectionId,
+        databaseName,
+        tableName,
+        offset: deleteTarget.offset,
+        ...(appliedFilter ? { filterColumn: appliedFilter.column, filterValue: appliedFilter.value } : {}),
+      });
+      if (res.code === 0) {
+        toast.success(res.msg || '删除成功');
+        const deletedOffset = deleteTarget.offset;
+        setDeleteConfirmOpen(false);
+        setDeleteTarget(null);
+        if (detailOpen && offset === deletedOffset) {
+          setDetailOpen(false);
+          setColumns([]);
+        }
+
+        const nextTotal = Math.max(0, total - 1);
+        const nextTotalPages = Math.max(1, Math.ceil(nextTotal / pageSize));
+        const nextPage = Math.min(page, nextTotalPages);
+        void fetchPage(nextPage, pageSize, appliedFilter);
+      } else {
+        toast.error(res.msg || '删除失败');
+      }
+    } catch (e) {
+      console.error(e);
+      toast.error(getRequestErrorMessage(e, '删除失败'));
+    } finally {
+      setDeleting(false);
+    }
   };
 
   const handleOpenDDL = async () => {
@@ -804,15 +880,27 @@ export default function TableDataPreview({
                       );
                     })}
                     <td className="tdp-action-col">
-                      <button
-                        type="button"
-                        className="tdp-row-action-btn"
-                        onClick={() => handleOpenDetail(row)}
-                        title="查看详情"
-                      >
-                        <Eye size={15} />
-                        查看
-                      </button>
+                      <div className="tdp-row-actions">
+                        <button
+                          type="button"
+                          className="tdp-row-action-btn"
+                          onClick={() => handleOpenDetail(row)}
+                          title="查看详情"
+                        >
+                          <Eye size={15} />
+                          查看
+                        </button>
+                        <button
+                          type="button"
+                          className="tdp-row-action-btn tdp-row-action-danger"
+                          disabled={deleting}
+                          onClick={() => handleOpenDelete(row)}
+                          title="删除记录"
+                        >
+                          <Trash2 size={15} />
+                          删除
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -907,6 +995,66 @@ export default function TableDataPreview({
               <button className="tdp-action-btn tdp-action-danger" disabled={saving} onClick={handleConfirmSave}>
                 {saving ? <Loader2 size={16} className="tdp-spinner" /> : <Save size={16} />}
                 确认保存
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {deleteConfirmOpen && deleteTarget && (
+        <div
+          className="tdp-confirm-layer"
+          onClick={e => {
+            e.stopPropagation();
+            if (!deleting) {
+              setDeleteConfirmOpen(false);
+              setDeleteTarget(null);
+            }
+          }}
+        >
+          <div className="tdp-confirm tdp-delete-confirm" onClick={e => e.stopPropagation()}>
+            <div className="tdp-confirm-head">
+              <span className="tdp-confirm-icon">
+                <AlertTriangle size={20} />
+              </span>
+              <div>
+                <h3>确认删除记录</h3>
+                <p>{databaseName} → {tableName}，第 {deleteTarget.offset + 1} 条记录</p>
+              </div>
+            </div>
+            <div className="tdp-confirm-body">
+              <div className="tdp-confirm-summary">
+                删除后会直接写入远程数据库，且无法从此页面撤销。请确认要删除这条记录。
+              </div>
+              <div className="tdp-delete-record">
+                {deletePreviewCells.map(cell => (
+                  <div className="tdp-delete-record-item" key={cell.name}>
+                    <div className="tdp-change-name">
+                      <span>{cell.name}</span>
+                      {cell.primaryKey && <b>PK</b>}
+                    </div>
+                    <span className="tdp-delete-record-value">{cell.value}</span>
+                  </div>
+                ))}
+                {tableColumns.length > deletePreviewCells.length && (
+                  <div className="tdp-change-more">还有 {tableColumns.length - deletePreviewCells.length} 个字段未展开</div>
+                )}
+              </div>
+            </div>
+            <div className="tdp-confirm-actions">
+              <button
+                className="tdp-action-btn"
+                disabled={deleting}
+                onClick={() => {
+                  setDeleteConfirmOpen(false);
+                  setDeleteTarget(null);
+                }}
+              >
+                取消
+              </button>
+              <button className="tdp-action-btn tdp-action-danger" disabled={deleting} onClick={handleConfirmDelete}>
+                {deleting ? <Loader2 size={16} className="tdp-spinner" /> : <Trash2 size={16} />}
+                确认删除
               </button>
             </div>
           </div>

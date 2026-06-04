@@ -1,0 +1,24 @@
+package main
+
+import (
+	"github.com/flipped-aurora/easy-deploy/server/core"
+	"github.com/flipped-aurora/easy-deploy/server/global"
+	"github.com/flipped-aurora/easy-deploy/server/initialize"
+	"go.uber.org/zap"
+)
+
+// main starts the Gin HTTP server without the Wails desktop shell.
+// Use this entrypoint for local web-react development.
+func main() {
+	global.GVA_VP = core.Viper()
+	initialize.OtherInit()
+	global.GVA_LOG = core.Zap()
+	zap.ReplaceGlobals(global.GVA_LOG)
+	global.GVA_DB = initialize.Gorm()
+	initialize.DBList()
+	initialize.SetupHandlers()
+	if global.GVA_DB != nil {
+		initialize.RegisterTables()
+	}
+	core.RunServer()
+}

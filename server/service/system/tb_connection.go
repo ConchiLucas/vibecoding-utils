@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -889,11 +890,13 @@ func buildTableDataGenerationMessages(databaseName, tableName string, colDefs []
 2. 数组每一项必须是对象，对象 key 使用字段 name，尽量覆盖所有字段。
 3. 字段值要符合 columnType 和 description，中文业务字段生成自然的中文内容，编码类字段生成稳定且不重复的代码。
 4. 时间字段使用 "YYYY-MM-DD HH:mm:ss" 字符串；日期字段使用 "YYYY-MM-DD" 字符串。
-5. 数字字段返回 JSON 数字，布尔字段返回 JSON boolean，确实没有值才返回 null。
+5. 数字字段返回 JSON 数字；integer/int/bigint/smallint/serial 等整数字段必须返回整数，不要返回 219.1 这类小数；布尔字段返回 JSON boolean，确实没有值才返回 null。
 6. 不要生成真实个人隐私数据，不要返回 SQL。
 7. 不要使用 Markdown 代码块，不要输出“好的/以下是/说明”等前后缀。
 8. JSON value 不能写成 name="value" 这种赋值表达式；例如 company_id 应写成 "company_id": "5001" 或 "company_id": 5001。
-9. 如果字段名是 tenancy，固定返回 "-1"。`, databaseName, tableName, count, string(fieldsJSON), count)
+9. JSON value 不能添加括号；例如 id 应写成 "id": 1，不能写成 "id": (1)。
+10. 不要输出 pi、NaN、Infinity 或 waste24.50 这类非 JSON 数值；所有数值必须是普通 JSON number。
+11. 如果字段名是 tenancy，固定返回 "-1"。`, databaseName, tableName, count, string(fieldsJSON), count)
 
 	return []ChatMessage{
 		{Role: "system", Content: systemMessage},
@@ -916,6 +919,8 @@ func buildTableDataGenerationRetryMessages(messages []ChatMessage, raw string, p
 - 第一个字符必须是 [，最后一个字符必须是 ]。
 - 不要 Markdown，不要代码块，不要解释，不要 SQL。
 - 不要输出 name="value" 这种赋值表达式，所有 value 必须是合法 JSON 值。
+- 不要给 value 添加括号，例如 "id": 1，不能写成 "id": (1)。
+- 不要输出 pi、NaN、Infinity 或字母加数字的伪数值。
 - 如果字段信息无法判断，也要使用虚构但合理的测试值。`, parseErr, count),
 	})
 	return retryMessages
@@ -965,7 +970,17 @@ func normalizeGeneratedRows(rows []map[string]interface{}) ([]map[string]interfa
 
 func repairGeneratedRowsJSON(jsonText string) string {
 	assignValuePattern := regexp.MustCompile(`(:\s*)[A-Za-z_][A-Za-z0-9_]*\s*=\s*("(?:\\.|[^"\\])*"|[-+]?\d+(?:\.\d+)?|true|false|null)`)
-	return assignValuePattern.ReplaceAllString(jsonText, `$1$2`)
+	repaired := assignValuePattern.ReplaceAllString(jsonText, `$1$2`)
+
+	parenthesizedValuePattern := regexp.MustCompile(`(:\s*)\(\s*("(?:\\.|[^"\\])*"|[-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?|true|false|null)\s*\)`)
+	repaired = parenthesizedValuePattern.ReplaceAllString(repaired, `$1$2`)
+
+	piValuePattern := regexp.MustCompile(`(?i)(:\s*)pi(\s*[,}])`)
+	repaired = piValuePattern.ReplaceAllString(repaired, `${1}3.14$2`)
+
+	prefixedNumberPattern := regexp.MustCompile(`(:\s*)[A-Za-z_]+([-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?)(\s*[,}])`)
+	repaired = prefixedNumberPattern.ReplaceAllString(repaired, `$1$2$3`)
+	return repaired
 }
 
 func extractJSONArrayText(raw string) (string, error) {
@@ -1100,6 +1115,7 @@ func normalizeGeneratedInsertValue(ct string, colDef utils.ClientColumnVO, value
 		if parsed, ok := parseGeneratedInt(value); ok {
 			return parsed, nil
 		}
+		return nil, fmt.Errorf("字段 %s 是整数类型，AI 返回了不可转换为整数的值 %q", colDef.Name, generatedValueString(value))
 	}
 	if isFloatColumnType(columnType) {
 		if parsed, ok := parseGeneratedFloat(value); ok {
@@ -1303,23 +1319,34 @@ func parseGeneratedInt(value interface{}) (int64, bool) {
 		if i, err := strconv.ParseInt(v.String(), 10, 64); err == nil {
 			return i, true
 		}
-		if f, err := strconv.ParseFloat(v.String(), 64); err == nil && f == float64(int64(f)) {
-			return int64(f), true
+		if f, err := strconv.ParseFloat(v.String(), 64); err == nil {
+			return roundGeneratedFloatToInt(f)
 		}
 	case float64:
-		if v == float64(int64(v)) {
-			return int64(v), true
-		}
+		return roundGeneratedFloatToInt(v)
 	case string:
 		text := strings.TrimSpace(v)
 		if i, err := strconv.ParseInt(text, 10, 64); err == nil {
 			return i, true
 		}
-		if f, err := strconv.ParseFloat(text, 64); err == nil && f == float64(int64(f)) {
-			return int64(f), true
+		if f, err := strconv.ParseFloat(text, 64); err == nil {
+			return roundGeneratedFloatToInt(f)
 		}
 	}
 	return 0, false
+}
+
+func roundGeneratedFloatToInt(value float64) (int64, bool) {
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return 0, false
+	}
+	rounded := math.Round(value)
+	text := strconv.FormatFloat(rounded, 'f', 0, 64)
+	i, err := strconv.ParseInt(text, 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return i, true
 }
 
 func isFloatColumnType(columnType string) bool {
@@ -1533,6 +1560,95 @@ func (s *TbConnectionService) UpdateTableRecord(connID uint, databaseName, table
 	}
 
 	return s.PreviewTableRecord(connID, databaseName, tableName, offset, filterColumn, filterValue)
+}
+
+// DeleteTableRecord deletes one previewed row and rolls back if the row selector is not unique.
+func (s *TbConnectionService) DeleteTableRecord(connID uint, databaseName, tableName string, offset int, filterColumn, filterValue string) error {
+	tableName = strings.TrimSpace(tableName)
+	if tableName == "" {
+		return fmt.Errorf("缺少表名")
+	}
+
+	db, ct, databaseName, err := s.openRemoteDB(connID, databaseName)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	if ct == "clickhouse" {
+		return fmt.Errorf("暂不支持删除 ClickHouse 表数据")
+	}
+
+	colDefs := utils.GetColumnDefinitions(db, databaseName, tableName, ct)
+	if len(colDefs) == 0 {
+		return fmt.Errorf("未读取到表字段信息")
+	}
+
+	qualifiedTable := buildQualifiedTableName(ct, databaseName, tableName)
+	whereSQL, whereArgs, err := buildSingleColumnFilter(ct, colDefs, filterColumn, filterValue)
+	if err != nil {
+		return err
+	}
+	rowColumns, rowValues, err := queryTableRecordValues(db, ct, qualifiedTable, offset, whereSQL, whereArgs)
+	if err != nil {
+		return err
+	}
+	if len(rowColumns) == 0 {
+		return fmt.Errorf("未找到要删除的记录")
+	}
+
+	rowIndex := make(map[string]int, len(rowColumns))
+	for i, col := range rowColumns {
+		rowIndex[strings.ToUpper(col)] = i
+	}
+
+	primaryKey := getTablePrimaryKey(db, databaseName, tableName, ct)
+	whereColumns := rowColumns
+	whereValues := rowValues
+	if primaryKey != "" {
+		if idx, ok := rowIndex[strings.ToUpper(primaryKey)]; ok && rowValues[idx] != nil {
+			whereColumns = []string{rowColumns[idx]}
+			whereValues = []interface{}{rowValues[idx]}
+		}
+	}
+
+	builder := sqlArgBuilder{ct: ct}
+	whereParts := make([]string, 0, len(whereColumns))
+	for i, col := range whereColumns {
+		if whereValues[i] == nil {
+			whereParts = append(whereParts, fmt.Sprintf("%s IS NULL", quoteColumnIdentifier(ct, col)))
+			continue
+		}
+		whereParts = append(whereParts, fmt.Sprintf("%s = %s", quoteColumnIdentifier(ct, col), builder.Add(whereValues[i])))
+	}
+	if len(whereParts) == 0 {
+		return fmt.Errorf("无法定位要删除的记录")
+	}
+
+	query := fmt.Sprintf("DELETE FROM %s WHERE %s", qualifiedTable, strings.Join(whereParts, " AND "))
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("开启事务失败: %w", err)
+	}
+
+	result, err := tx.Exec(query, builder.args...)
+	if err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("执行删除失败: %w", err)
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("无法确认删除结果: %w", err)
+	}
+	if rowsAffected != 1 {
+		_ = tx.Rollback()
+		return fmt.Errorf("本次删除影响了 %d 行，已取消；请确认记录唯一性后重试", rowsAffected)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("提交删除失败: %w", err)
+	}
+
+	return nil
 }
 
 func (s *TbConnectionService) openRemoteDB(connID uint, databaseName string) (*sql.DB, string, string, error) {
