@@ -7,8 +7,8 @@ import Login from './views/login/Login';
 import Layout from './views/layout/Layout';
 import ProjectDashboard from './views/project/ProjectDashboard';
 import CodeGenerateDashboard from './views/code_generate/ProjectDashboard';
+import DbTemplateLibrary from './views/code_generate/DbTemplateLibrary';
 import CodeGenerateTemplates from './views/code_generate/ProjectTemplates';
-import CodeGeneratePlaceholders from './views/code_generate/ProjectPlaceholders';
 import ProjectScripts from './views/project/ProjectScripts';
 import ScriptManager from './views/script-manager/ScriptManager';
 import ServerManager from './views/server/ServerManager';
@@ -82,8 +82,8 @@ function App() {
           
           {/* 代码生成 */}
           <Route path="code-generate" element={<CodeGenerateDashboard />} />
+          <Route path="code-generate/:projectId/db-templates" element={<DbTemplateLibrary />} />
           <Route path="code-generate/:projectId/templates" element={<CodeGenerateTemplates />} />
-          <Route path="code-generate/:projectId/placeholders" element={<CodeGeneratePlaceholders />} />
           
           {/* Imported from go-easy-test */}
           <Route path="dicts" element={<DictManager />} />

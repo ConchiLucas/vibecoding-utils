@@ -240,7 +240,7 @@ export default function ProjectTemplates() {
   };
 
   return (
-    <div className="flex flex-col w-full h-[calc(100vh-140px)] border border-slate-200/60 rounded-3xl overflow-hidden bg-white shadow-xl mt-2 animate-in fade-in duration-300">
+    <div className="flex flex-col w-full h-screen overflow-hidden bg-white animate-in fade-in duration-300">
       
       {/* Top Banner */}
       <div className="bg-gradient-to-r from-slate-800 to-slate-900 text-white px-6 py-4 flex items-center justify-between shadow-md z-20">
@@ -257,7 +257,7 @@ export default function ProjectTemplates() {
 
       <div className="flex flex-1 overflow-hidden">
         {/* Left Sidebar: Scripts Explorer */}
-        <div className="w-80 border-r border-slate-200 flex flex-col bg-[#f8fafc] flex-shrink-0 relative z-10">
+        <div className="w-[500px] border-r border-slate-200 flex flex-col bg-[#f8fafc] flex-shrink-0 relative z-10">
           <div className="p-3 border-b border-slate-200 bg-white">
              <input type="text" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="过滤文件树..." className="w-full bg-slate-100/50 border border-slate-200 px-3 py-2 text-sm rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/30 transition-all font-mono" />
           </div>
@@ -285,11 +285,7 @@ export default function ProjectTemplates() {
           {activePath ? (
             <>
               {/* Editor Header */}
-              <div className="h-14 border-b border-slate-800 flex items-center justify-between px-6 bg-slate-900 select-none overflow-hidden shrink-0">
-                    <div className="flex items-center gap-3">
-                        <div className="px-2 py-1 bg-slate-800 rounded text-xs text-slate-400 font-mono tracking-widest uppercase shadow-inner border border-slate-700">TARGET</div>
-                        <span className="text-slate-200 font-medium font-mono tracking-wide">{activePath.fileUrl}/{activePath.fileName}</span>
-                    </div>
+              <div className="h-14 border-b border-slate-800 flex items-center justify-end px-6 bg-slate-900 select-none overflow-hidden shrink-0">
                   <button 
                     onClick={handleSaveContent}
                     disabled={saving || loadingContent}

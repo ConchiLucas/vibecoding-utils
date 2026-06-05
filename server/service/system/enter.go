@@ -28,12 +28,11 @@ type ServiceGroup struct {
 	TbTablePreferService
 	TbInterfaceServerUserService
 	TbInterfaceProjectService
-	TbGeneratePlaceHolderService
 	TbGenerateProjectService
+	TbGenerateDbTemplateTypeService
+	TbGenerateDbTemplateScriptService
 	TbGenerateProjectPathService
 	TbGenerateProjectPathModelService
-	TbGenerateProjectPlaceHolderService
-	TbGenerateRecordService
 	AIChatService
 	AIChatHistoryService
 }

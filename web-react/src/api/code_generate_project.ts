@@ -22,16 +22,3 @@ export const deleteProject = (data: any) => {
 export const copyProject = (id: string) => {
     return api.get(`/tbgenerateproject/copy?id=${id}`)
 }
-
-
-export const globalReplace = (data: any) => {
-    return api.post('/tbgenerateproject/globalReplace', data)
-}
-
-export const generateCode = (data: any) => {
-    return api.post('/tbgenerateproject/generateCode', data)
-}
-
-export const getGenerateRecordByUser = (projectId: string | number) => {
-    return api.get('/tbgeneraterecord/getGenerateRecordByUser', { params: { projectId } })
-}

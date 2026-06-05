@@ -72,11 +72,10 @@ func RegisterTables() {
 		system.TbInterfaceServerUser{},
 		system.TbInterfaceProject{},
 		system.TbGenerateProject{},
-		system.TbGeneratePlaceHolder{},
+		system.TbGenerateDbTemplateType{},
+		system.TbGenerateDbTemplateScript{},
 		system.TbGenerateProjectPath{},
 		system.TbGenerateProjectPathModel{},
-		system.TbGenerateRecord{},
-		system.TbGenerateProjectPlaceHolder{},
 		system.TbAIConfig{},
 	)
 

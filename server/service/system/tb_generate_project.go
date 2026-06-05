@@ -3,7 +3,6 @@ package system
 import (
 	"github.com/flipped-aurora/easy-deploy/server/global"
 	"github.com/flipped-aurora/easy-deploy/server/model/system"
-	"strings"
 )
 
 type TbGenerateProjectService struct{}
@@ -14,22 +13,44 @@ func (s *TbGenerateProjectService) CreateTbGenerateProject(req *system.TbGenerat
 
 func (s *TbGenerateProjectService) DeleteTbGenerateProject(req system.TbGenerateProject) error {
 	tx := global.GVA_DB.Begin()
+	if err := tx.Error; err != nil {
+		return err
+	}
 
 	// 1. Find all paths belonging to this project
 	var paths []system.TbGenerateProjectPath
-	tx.Where("project_id = ?", req.ID).Find(&paths)
+	if err := tx.Where("project_id = ?", req.ID).Find(&paths).Error; err != nil {
+		tx.Rollback()
+		return err
+	}
 
 	// 2. For each path, delete its models, then the path itself
 	for _, p := range paths {
-		tx.Where("path_id = ?", p.ID).Unscoped().Delete(&system.TbGenerateProjectPathModel{})
-		tx.Unscoped().Delete(&p)
+		if err := tx.Where("path_id = ?", p.ID).Unscoped().Delete(&system.TbGenerateProjectPathModel{}).Error; err != nil {
+			tx.Rollback()
+			return err
+		}
+		if err := tx.Unscoped().Delete(&p).Error; err != nil {
+			tx.Rollback()
+			return err
+		}
 	}
 
-	// 3. Delete all project-level placeholders
-	tx.Where("project_id = ?", req.ID).Unscoped().Delete(&system.TbGenerateProjectPlaceHolder{})
+	// 3. Delete database template examples belonging to this project
+	if err := tx.Where("project_id = ?", req.ID).Unscoped().Delete(&system.TbGenerateDbTemplateScript{}).Error; err != nil {
+		tx.Rollback()
+		return err
+	}
+	if err := tx.Where("project_id = ?", req.ID).Unscoped().Delete(&system.TbGenerateDbTemplateType{}).Error; err != nil {
+		tx.Rollback()
+		return err
+	}
 
 	// 4. Delete the project itself
-	tx.Unscoped().Delete(&req)
+	if err := tx.Unscoped().Delete(&req).Error; err != nil {
+		tx.Rollback()
+		return err
+	}
 
 	return tx.Commit().Error
 }
@@ -92,48 +113,35 @@ func (s *TbGenerateProjectService) CopyProject(id string) error {
 		}
 	}
 
-	var holders []system.TbGenerateProjectPlaceHolder
-	global.GVA_DB.Where("project_id = ?", id).Find(&holders)
-	for _, h := range holders {
-		newHolder := system.TbGenerateProjectPlaceHolder{
-			ProjectId:    int(newProject.ID),
-			UserName:     h.UserName,
-			HolderKey:    h.HolderKey,
-			HolderValue:  h.HolderValue,
-			HolderDesc:   h.HolderDesc,
-			ExampleValue: h.ExampleValue,
+	var templateTypes []system.TbGenerateDbTemplateType
+	global.GVA_DB.Where("project_id = ?", id).Find(&templateTypes)
+	for _, templateType := range templateTypes {
+		oldTypeId := templateType.ID
+		newType := system.TbGenerateDbTemplateType{
+			ProjectId: int(newProject.ID),
+			TypeName:  templateType.TypeName,
+			Sort:      templateType.Sort,
 		}
-		global.GVA_DB.Create(&newHolder)
-	}
-	return nil
-}
-
-func (s *TbGenerateProjectService) ProjectGlobalReplace(id int, formerStr, replaceStr string) error {
-	tx := global.GVA_DB.Begin()
-	var paths []system.TbGenerateProjectPath
-	tx.Where("project_id = ?", id).Find(&paths)
-
-	for _, p := range paths {
-		if strings.Contains(p.FileUrl, formerStr) {
-			p.FileUrl = strings.ReplaceAll(p.FileUrl, formerStr, replaceStr)
-			tx.Save(&p)
+		if err := global.GVA_DB.Create(&newType).Error; err != nil {
+			return err
 		}
-		var model system.TbGenerateProjectPathModel
-		if err := tx.Where("path_id = ?", p.ID).First(&model).Error; err == nil {
-			if strings.Contains(model.Content, formerStr) {
-				model.Content = strings.ReplaceAll(model.Content, formerStr, replaceStr)
-				tx.Save(&model)
+
+		var scripts []system.TbGenerateDbTemplateScript
+		global.GVA_DB.Where("type_id = ?", oldTypeId).Find(&scripts)
+		for _, script := range scripts {
+			newScript := system.TbGenerateDbTemplateScript{
+				ProjectId:  int(newProject.ID),
+				TypeId:     int(newType.ID),
+				ScriptName: script.ScriptName,
+				ScriptKind: script.ScriptKind,
+				Content:    script.Content,
+				Sort:       script.Sort,
+			}
+			if err := global.GVA_DB.Create(&newScript).Error; err != nil {
+				return err
 			}
 		}
 	}
 
-	var holders []system.TbGenerateProjectPlaceHolder
-	tx.Where("project_id = ?", id).Find(&holders)
-	for _, h := range holders {
-		if strings.Contains(h.HolderKey, formerStr) {
-			h.HolderKey = strings.ReplaceAll(h.HolderKey, formerStr, replaceStr)
-			tx.Save(&h)
-		}
-	}
-	return tx.Commit().Error
+	return nil
 }

@@ -17,15 +17,5 @@ func (s *TbGenerateProjectRouter) InitTbGenerateProjectRouter(Router *gin.Router
 		tbGenerateProjectRouter.GET("getTbGenerateProject", tbGenerateProjectApi.GetTbGenerateProject)          // 根据ID获取
 		tbGenerateProjectRouter.GET("getTbGenerateProjectList", tbGenerateProjectApi.GetTbGenerateProjectList)  // 获取列表
 		tbGenerateProjectRouter.GET("copy", tbGenerateProjectApi.CopyProject)                                   // 克隆
-		tbGenerateProjectRouter.POST("globalReplace", tbGenerateProjectApi.GlobalReplace)                       // 全局替换
-		tbGenerateProjectRouter.POST("generateCode", tbGenerateProjectApi.GenerateCode)                         // 代码生成
-	}
-}
-
-func (s *TbGenerateProjectRouter) InitTbGenerateProjectPublicRouter(Router *gin.RouterGroup) {
-	tbGenerateProjectRouter := Router.Group("tbgenerateproject")
-	tbGenerateProjectApi := api.ApiGroupApp.SystemApiGroup.TbGenerateProjectApi
-	{
-		tbGenerateProjectRouter.POST("public/generateCode", tbGenerateProjectApi.GenerateCodePublic)
 	}
 }

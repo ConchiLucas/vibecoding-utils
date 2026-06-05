@@ -12,6 +12,10 @@ export const getModelListByPathId = (pathId: number) => {
   return api.get(`/tbgenerateprojectpathmodel/getTbGenerateProjectPathModelList?pathId=${pathId}`);
 };
 
+export const getModelList = () => {
+  return api.get('/tbgenerateprojectpathmodel/getTbGenerateProjectPathModelList');
+};
+
 export const createModel = (data: any) => {
   return api.post('/tbgenerateprojectpathmodel/createTbGenerateProjectPathModel', data);
 };

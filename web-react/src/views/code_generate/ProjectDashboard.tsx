@@ -1,63 +1,117 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Plus, Copy, FileCode, Search, Edit2, Trash2, Bot } from 'lucide-react';
-import { getProjectList, createProject, updateProject, deleteProject, copyProject, globalReplace, generateCode, getGenerateRecordByUser } from '@/api/code_generate_project';
-import { PlaceholderModal } from '@/components/PlaceholderModal';
+import { Plus, Copy, ClipboardCopy, Database, FileCode, Edit2, Trash2 } from 'lucide-react';
+import { getProjectList, createProject, updateProject, deleteProject, copyProject } from '@/api/code_generate_project';
+import { getDbTemplateScripts, getDbTemplateTypes } from '@/api/db_template';
+import { getModelList, getPathList } from '@/api/path_model';
 import { useProjectStore } from '@/stores/useProjectStore';
 import toast from 'react-hot-toast';
 
-const getPublicGenerateCodeUrl = () => {
-  const baseApi = import.meta.env.VITE_BASE_API || '/api';
-  const normalizedBase = baseApi.replace(/\/$/, '');
-  if (/^https?:\/\//i.test(normalizedBase)) {
-    return `${normalizedBase}/tbgenerateproject/public/generateCode`;
-  }
-  const basePath = normalizedBase.startsWith('/') ? normalizedBase : `/${normalizedBase}`;
-  return `${window.location.origin}${basePath}/tbgenerateproject/public/generateCode`;
+const unwrapResponseData = (res: any) => {
+  return res?.data?.data ?? res?.data ?? [];
 };
 
-const buildCodexInstruction = (project: any) => {
-  const projectId = Number(project?.ID) || 0;
-  const projectName = project?.projectName || '未命名项目';
-  const diskPath = project?.diskPath || '未配置';
-  const remark = project?.remark || '暂无说明';
-  const endpoint = getPublicGenerateCodeUrl();
+const normalizeProjectRows = (value: any) => {
+  if (Array.isArray(value)) return value;
+  if (value && Array.isArray(value.list)) return value.list;
+  return [];
+};
 
-  return `你是一个没有历史记忆的 Codex。请按下面流程调用本地代码生成器，根据生成结果继续微调代码。
+const copyTextToClipboard = async (text: string) => {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
 
-项目卡片信息:
-- 项目名称: ${projectName}
-- 项目 ID: ${projectId}
-- 代码生成根目录: ${diskPath}
-- 项目说明: ${remark}
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.style.position = 'fixed';
+  textarea.style.left = '-9999px';
+  textarea.style.top = '-9999px';
+  textarea.setAttribute('readonly', 'readonly');
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  const copied = document.execCommand('copy');
+  document.body.removeChild(textarea);
+  if (!copied) {
+    throw new Error('copy failed');
+  }
+};
 
-生成器作用:
-这个接口会根据 tableStructure 中的 CREATE TABLE SQL 解析表名、字段、注释和类型，再读取项目 ID=${projectId} 对应的路径模板、代码模板、项目占位符和全局占位符，最终把代码写入上面的代码生成根目录。卡片不同，模板和输出目录不同，生成结果也不同。
+const languageForFilename = (filename: string) => {
+  const lower = String(filename || '').toLowerCase();
+  if (lower.endsWith('.java')) return 'java';
+  if (lower.endsWith('.sql')) return 'sql';
+  if (lower.endsWith('.xml')) return 'xml';
+  if (lower.endsWith('.json')) return 'json';
+  if (lower.endsWith('.yaml') || lower.endsWith('.yml')) return 'yaml';
+  if (lower.endsWith('.sh')) return 'bash';
+  if (lower.endsWith('.ts') || lower.endsWith('.tsx')) return 'tsx';
+  if (lower.endsWith('.js') || lower.endsWith('.jsx')) return 'jsx';
+  return 'text';
+};
 
-调用接口:
-POST ${endpoint}
+const pathLabel = (pathObj: any) => {
+  const dir = String(pathObj.fileUrl || '').replace(/\/+/g, '/');
+  const fileName = String(pathObj.fileName || '');
+  if (!dir) return fileName || '未命名文件';
+  return `${dir}${dir.endsWith('/') ? '' : '/'}${fileName}`.replace(/\/+/g, '/');
+};
 
-请求体:
-\`\`\`json
-{
-  "projectId": ${projectId},
-  "moduleName": "根据用户需求填写，例如 order",
-  "moduleComment": "根据用户需求填写，例如 订单",
-  "dbType": "mysql",
-  "tableStructure": "用户提供的完整 CREATE TABLE SQL"
-}
-\`\`\`
+const isTableStructureNode = (pathObj: any, content: string) => {
+  const fileName = String(pathObj.fileName || '').toLowerCase();
+  return fileName.startsWith('create_') || /\bcreate\s+table\b/i.test(content);
+};
 
-执行规则:
-1. 如果用户没有提供 moduleName、moduleComment、dbType 或 CREATE TABLE SQL，先向用户确认。
-2. 使用 curl、fetch 或你可用的 HTTP 工具调用上面的 POST 接口。
-3. 接口返回 code=0 才代表生成成功；data.diskPath 是代码根目录，data.generatedFiles 是本次生成或追加的文件。
-4. 生成成功后不要停止。请打开 data.generatedFiles 中的文件；如果没有文件列表，就检查代码生成根目录。
-5. 根据用户的业务输入、当前代码风格、编译错误和生成结果继续修改代码。
-6. 相同表结构调用不同项目卡片，结果不同；同一项目卡片调用不同表结构，结果也不同。只有同一项目、同一表、同一参数和同一模板配置时，生成结果才应一致。
-7. 不要把生成器项目本身当成目标项目，目标代码位置是: ${diskPath}
-`;
+const formatCodeSection = (title: string, pathObj: any, content: string) => [
+  `### ${title}`,
+  `路径：${pathLabel(pathObj)}`,
+  '',
+  `\`\`\`${languageForFilename(pathObj.fileName || '')}`,
+  content.trim(),
+  '```',
+].join('\n');
+
+const buildDbTemplateSqlSections = async (project: any, options: { markdown?: boolean } = {}) => {
+  const projectId = Number(project.ID || 0);
+  const typeRes: any = await getDbTemplateTypes(projectId);
+  const types = Array.isArray(unwrapResponseData(typeRes)) ? unwrapResponseData(typeRes) : [];
+  const sections: string[] = [];
+
+  for (const typeObj of types) {
+    const scriptRes: any = await getDbTemplateScripts(projectId, Number(typeObj.ID));
+    const scripts = Array.isArray(unwrapResponseData(scriptRes)) ? unwrapResponseData(scriptRes) : [];
+
+    scripts
+      .filter((script: any) => String(script.content || '').trim())
+      .forEach((script: any) => {
+        if (options.markdown) {
+          sections.push([
+            `### 数据库模板 SQL`,
+            `项目：${project.projectName || projectId}`,
+            `业务类型：${typeObj.typeName || '-'}`,
+            `脚本：${script.scriptName || typeObj.typeName || '-'}`,
+            '',
+            '```sql',
+            String(script.content || '').trim(),
+            '```',
+          ].join('\n'));
+          return;
+        }
+
+        sections.push([
+          `-- 项目：${project.projectName || projectId}`,
+          `-- 业务类型：${typeObj.typeName || '-'}`,
+          `-- 脚本：${script.scriptName || typeObj.typeName || '-'}`,
+          '',
+          String(script.content || '').trim(),
+        ].join('\n'));
+      });
+  }
+
+  return sections;
 };
 
 export default function ProjectDashboard() {
@@ -66,26 +120,15 @@ export default function ProjectDashboard() {
   const [projects, setProjects] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
-  const [showGenerateModal, setShowGenerateModal] = useState(false);
-  const [showReplaceModal, setShowReplaceModal] = useState(false);
-  const [showPlaceholderModal, setShowPlaceholderModal] = useState(false);
-  const [showCodexModal, setShowCodexModal] = useState(false);
   const [currentProject, setCurrentProject] = useState<any>({});
-  const [codexProject, setCodexProject] = useState<any>(null);
-  
-  const defaultGenForm = { id: '', moduleName: '', moduleComment: '', tableStructure: '', dbType: 'mysql' };
-  const [genForm, setGenForm] = useState(defaultGenForm);
-  const [replaceForm, setReplaceForm] = useState({ id: 0, formerStr: '', replaceStr: '' });
+  const [copyingTemplateProjectId, setCopyingTemplateProjectId] = useState<number | null>(null);
+  const [copyingCodeProjectId, setCopyingCodeProjectId] = useState<number | null>(null);
 
   const fetchProjects = async () => {
     setLoading(true);
     try {
       const res = await getProjectList({ projectConfigId: activeProjectId });
-      let data = res.data;
-      if (data && !Array.isArray(data) && Array.isArray(data.list)) {
-        data = data.list;
-      }
-      setProjects(Array.isArray(data) ? data : []);
+      setProjects(normalizeProjectRows(unwrapResponseData(res)));
     } catch (e) {
       toast.error('获取项目列表失败');
     }
@@ -134,67 +177,103 @@ export default function ProjectDashboard() {
     }
   };
 
-  const openGenerateModal = async (projectId: string | number) => {
-    const id = projectId.toString();
-    setGenForm({ ...defaultGenForm, id });
-    setShowGenerateModal(true);
+  const handleCopyDbTemplateSql = async (project: any) => {
+    const projectId = Number(project.ID || 0);
+    if (!projectId) return;
+
+    setCopyingTemplateProjectId(projectId);
     try {
-      const res: any = await getGenerateRecordByUser(id);
-      const record = res?.data;
-      if (record) {
-        setGenForm({
-          id,
-          moduleName: record.moduleName || '',
-          moduleComment: record.moduleComment || '',
-          tableStructure: record.tableStructure || '',
-          dbType: record.dbType || 'mysql',
-        });
+      const sections = await buildDbTemplateSqlSections(project);
+
+      if (sections.length === 0) {
+        toast.error('该项目暂无可复制的 SQL 内容');
+        return;
       }
+
+      await copyTextToClipboard(sections.join('\n\n\n'));
+      toast.success('数据库模板 SQL 已复制');
     } catch (e) {
-      toast.error('读取上次生成参数失败');
+      toast.error('复制数据库模板失败');
+    } finally {
+      setCopyingTemplateProjectId(null);
     }
   };
 
+  const handleCopyProjectCodeForAi = async (project: any) => {
+    const projectId = Number(project.ID || 0);
+    if (!projectId) return;
 
-
-  const handleGenerate = async () => {
-    if (!genForm.tableStructure) { toast.error('建表SQL不能为空'); return; }
+    setCopyingCodeProjectId(projectId);
     try {
-      await generateCode(genForm);
-      toast.success('代码成功生成完毕并落盘');
-      setShowGenerateModal(false);
+      const pathRes: any = await getPathList(projectId);
+      let paths = normalizeProjectRows(unwrapResponseData(pathRes));
+      paths = paths
+        .filter((pathObj: any) => Number(pathObj.projectId || 0) === projectId)
+        .sort((a: any, b: any) => pathLabel(a).localeCompare(pathLabel(b)));
+
+      if (paths.length === 0) {
+        toast.error('该项目暂无代码文件');
+        return;
+      }
+
+      const modelRes: any = await getModelList();
+      const models = normalizeProjectRows(unwrapResponseData(modelRes));
+      const modelByPathId = new Map<number, any>();
+      models.forEach((model: any) => {
+        const pathId = Number(model.pathId || 0);
+        if (pathId && !modelByPathId.has(pathId)) {
+          modelByPathId.set(pathId, model);
+        }
+      });
+
+      const tableSections: string[] = [];
+      const codeSections: string[] = [];
+      const dbTemplateSqlSections = await buildDbTemplateSqlSections(project, { markdown: true });
+
+      paths.forEach((pathObj: any) => {
+        const model = modelByPathId.get(Number(pathObj.ID || 0));
+        const content = String(model?.content || '').trim();
+        if (!content) return;
+
+        if (isTableStructureNode(pathObj, content)) {
+          tableSections.push(formatCodeSection('表结构 SQL', pathObj, content));
+          return;
+        }
+        codeSections.push(formatCodeSection('代码文件', pathObj, content));
+      });
+
+      if (dbTemplateSqlSections.length === 0 && tableSections.length === 0 && codeSections.length === 0) {
+        toast.error('该项目暂无可复制的代码或表结构内容');
+        return;
+      }
+
+      const payload = [
+        '# 请基于以下现有代码和表结构生成同风格代码',
+        '',
+        `项目：${project.projectName || projectId}`,
+        `项目 ID：${projectId}`,
+        `磁盘输出路径：${project.diskPath || '未配置'}`,
+        '',
+        '要求：请参考这些真实文件的包路径、Controller/Service/Dao/Domain/Model/SQL 写法，为新表生成同风格后端代码。',
+        '',
+        dbTemplateSqlSections.length ? '## 新表结构 SQL / 数据库模板 SQL' : '',
+        dbTemplateSqlSections.join('\n\n'),
+        '',
+        tableSections.length ? '## 编辑引擎中的表结构 SQL' : '',
+        tableSections.join('\n\n'),
+        '',
+        codeSections.length ? '## 完整代码文件' : '',
+        codeSections.join('\n\n'),
+      ].filter((section) => String(section).trim()).join('\n\n');
+
+      await copyTextToClipboard(payload);
+      toast.success('代码和表结构已复制');
     } catch (e) {
-      toast.error('代码生成系统异常');
+      toast.error('复制代码失败');
+    } finally {
+      setCopyingCodeProjectId(null);
     }
   };
-
-  const handleReplace = async () => {
-    if (!replaceForm.formerStr) { toast.error('原字符必填'); return; }
-    try {
-      await globalReplace(replaceForm);
-      toast.success('工程全局替换结束');
-      setShowReplaceModal(false);
-    } catch(e) {
-      toast.error('替换中断');
-    }
-  };
-
-  const openCodexModal = (project: any) => {
-    setCodexProject(project);
-    setShowCodexModal(true);
-  };
-
-  const copyCodexInstruction = async () => {
-    if (!codexProject) return;
-    try {
-      await navigator.clipboard.writeText(buildCodexInstruction(codexProject));
-      toast.success('Codex 指令已复制');
-    } catch (e) {
-      toast.error('复制失败，请手动复制');
-    }
-  };
-
-  const codexInstruction = codexProject ? buildCodexInstruction(codexProject) : '';
 
   return (
     <div className="p-8 max-w-7xl mx-auto space-y-8 animate-fade-in">
@@ -205,13 +284,6 @@ export default function ProjectDashboard() {
           <p className="text-slate-500 mt-1">管理、配置您的所有自动化代码库工程模板</p>
         </div>
         <div className="flex items-center gap-3">
-          <button
-            onClick={() => setShowPlaceholderModal(true)}
-            className="flex items-center gap-2 bg-white hover:bg-slate-50 text-slate-700 px-5 py-3 rounded-xl shadow-sm border border-slate-200 transition-all hover:scale-105 active:scale-95"
-          >
-            <FileCode size={20} className="text-violet-500" />
-            <span>全局占位符管理</span>
-          </button>
           <button
             onClick={() => {
               setCurrentProject({});
@@ -277,26 +349,21 @@ export default function ProjectDashboard() {
 
                 <div className="mt-6 pt-4 border-t border-slate-100 flex flex-col gap-2 relative z-10">
                   <div className="flex gap-2">
-                    <button onClick={() => navigate(`/code-generate/${p.ID}/templates`)} className="flex-1 flex justify-center items-center gap-2 py-2.5 text-sm text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded-xl transition-colors font-bold border border-indigo-200">
+                    <button onClick={() => navigate(`/code-generate/${p.ID}/db-templates`)} className="flex-1 flex justify-center items-center gap-2 py-2.5 text-sm text-cyan-800 bg-cyan-50 hover:bg-cyan-100 rounded-xl transition-colors font-bold border border-cyan-200">
+                      <Database size={16} /> 数据库模板
+                    </button>
+                    <button onClick={() => handleCopyDbTemplateSql(p)} disabled={copyingTemplateProjectId === Number(p.ID)} className="flex-1 flex justify-center items-center gap-2 py-2.5 text-sm text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-xl transition-colors font-bold border border-emerald-200 disabled:cursor-not-allowed disabled:opacity-60">
+                      <ClipboardCopy size={16} /> {copyingTemplateProjectId === Number(p.ID) ? '复制中' : '复制 SQL'}
+                    </button>
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={() => navigate(`/code-generate/${p.ID}/templates`)} className="flex-1 min-w-0 flex justify-center items-center gap-2 py-2.5 px-2 text-xs text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded-xl transition-colors font-bold border border-indigo-200 sm:text-sm">
                       <FileCode size={16} /> 编辑引擎
                     </button>
-                    <button onClick={() => navigate(`/code-generate/${p.ID}/placeholders`)} className="flex-1 flex justify-center items-center gap-2 py-2.5 text-sm text-amber-700 bg-amber-50 hover:bg-amber-100 rounded-xl transition-colors font-bold border border-amber-200">
-                      <FileCode size={16} /> 占位符池
+                    <button onClick={() => handleCopyProjectCodeForAi(p)} disabled={copyingCodeProjectId === Number(p.ID)} className="flex-1 min-w-0 flex justify-center items-center gap-2 py-2.5 px-2 text-xs text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-xl transition-colors font-bold disabled:cursor-not-allowed disabled:opacity-60 sm:text-sm">
+                      <ClipboardCopy size={16} /> {copyingCodeProjectId === Number(p.ID) ? '复制中' : '复制代码'}
                     </button>
-                  </div>
-                  <div className="flex gap-2">
-                    <button onClick={() => openGenerateModal(p.ID)} className="flex-1 flex justify-center items-center gap-2 py-2 text-sm text-white bg-teal-600 hover:bg-teal-700 rounded-xl transition-colors font-medium">
-                      <FileCode size={16} /> 引擎生成代码
-                    </button>
-                    <button onClick={() => { setReplaceForm({ ...replaceForm, id: p.ID }); setShowReplaceModal(true); }} className="flex-1 flex justify-center items-center gap-2 py-2 text-sm text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl transition-colors font-medium">
-                      <Search size={16} /> 全局替换
-                    </button>
-                  </div>
-                  <div className="flex gap-2">
-                    <button onClick={() => openCodexModal(p)} className="flex-1 flex justify-center items-center gap-2 py-2 text-sm text-slate-600 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl transition-colors">
-                      <Bot size={16} /> Codex 指令
-                    </button>
-                    <button onClick={() => handleCopy(p.ID)} className="flex-1 flex justify-center items-center gap-2 py-2 text-sm text-slate-600 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl transition-colors">
+                    <button onClick={() => handleCopy(p.ID)} className="flex-1 min-w-0 flex justify-center items-center gap-2 py-2.5 px-2 text-xs text-slate-600 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl transition-colors sm:text-sm">
                       <Copy size={16} /> 克隆
                     </button>
                   </div>
@@ -371,96 +438,6 @@ export default function ProjectDashboard() {
         )}
       </AnimatePresence>
 
-      <PlaceholderModal isOpen={showPlaceholderModal} onClose={() => setShowPlaceholderModal(false)} />
-
-      {/* Codex Instruction Modal */}
-      <AnimatePresence>
-        {showCodexModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={() => setShowCodexModal(false)} />
-            <motion.div initial={{ opacity: 0, scale: 0.95, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: 20 }} className="relative w-full max-w-3xl bg-white rounded-3xl shadow-2xl p-8 max-h-[90vh] overflow-y-auto">
-              <h2 className="text-2xl font-bold text-slate-800 mb-6 flex items-center gap-2"><Bot className="text-teal-500" /> Codex 自动生成指令</h2>
-              <textarea
-                readOnly
-                value={codexInstruction}
-                className="w-full min-h-[520px] px-4 py-3 bg-slate-950 text-slate-100 font-mono text-sm border border-slate-800 rounded-2xl focus:outline-none focus:ring-2 focus:ring-teal-500/50 leading-relaxed"
-              />
-              <div className="mt-6 flex justify-end gap-3">
-                <button onClick={() => setShowCodexModal(false)} className="px-5 py-2.5 text-slate-600 hover:bg-slate-100 rounded-xl">关闭窗口</button>
-                <button onClick={copyCodexInstruction} className="px-5 py-2.5 bg-teal-600 hover:bg-teal-700 text-white rounded-xl shadow-lg shadow-teal-600/20 flex items-center gap-2"><Copy size={16} /> 复制指令</button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* Global Replace Modal */}
-      <AnimatePresence>
-        {showReplaceModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={() => setShowReplaceModal(false)} />
-            <motion.div initial={{ opacity: 0, scale: 0.95, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: 20 }} className="relative w-full max-w-lg bg-white rounded-3xl shadow-2xl p-8">
-              <h2 className="text-2xl font-bold text-slate-800 mb-6">全工程全局字符串替换</h2>
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-2">原字符串 (formerStr)</label>
-                  <input type="text" value={replaceForm.formerStr} onChange={e => setReplaceForm({ ...replaceForm, formerStr: e.target.value })} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/50" />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-2">替换为什么字符 (replaceStr)</label>
-                  <input type="text" value={replaceForm.replaceStr} onChange={e => setReplaceForm({ ...replaceForm, replaceStr: e.target.value })} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/50" />
-                </div>
-              </div>
-              <div className="mt-8 flex justify-end gap-3">
-                <button onClick={() => setShowReplaceModal(false)} className="px-5 py-2.5 text-slate-600 hover:bg-slate-100 rounded-xl">取消</button>
-                <button onClick={handleReplace} className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl">执行全盘替换</button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* Code Generate Modal */}
-      <AnimatePresence>
-        {showGenerateModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={() => setShowGenerateModal(false)} />
-            <motion.div initial={{ opacity: 0, scale: 0.95, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: 20 }} className="relative w-full max-w-xl bg-white rounded-3xl shadow-2xl p-8 max-h-[90vh] overflow-y-auto">
-              <h2 className="text-2xl font-bold text-slate-800 mb-6 flex items-center gap-2"><FileCode className="text-teal-500" /> 代码生成引擎与落盘器</h2>
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-2">解析数据库方言 (DB Type)</label>
-                  <select value={genForm.dbType} onChange={e => setGenForm({ ...genForm, dbType: e.target.value })} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-teal-500/50">
-                    <option value="mysql">MySQL</option>
-                    <option value="postgresql">PostgreSQL</option>
-                    <option value="mssql">SQL Server</option>
-                    <option value="oracle">Oracle</option>
-                    <option value="sqlite">SQLite</option>
-                  </select>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-2">引擎识别模块名 (moduleName)</label>
-                    <input type="text" value={genForm.moduleName} onChange={e => setGenForm({ ...genForm, moduleName: e.target.value })} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-teal-500/50" placeholder="例如: user" />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-2">模块注释 (moduleComment)</label>
-                    <input type="text" value={genForm.moduleComment} onChange={e => setGenForm({ ...genForm, moduleComment: e.target.value })} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-teal-500/50" placeholder="例如: 用户表" />
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-2">CREATE TABLE 完整建表语句 (用于逆向推理)</label>
-                  <textarea value={genForm.tableStructure} onChange={e => setGenForm({ ...genForm, tableStructure: e.target.value })} className="w-full px-4 py-3 bg-slate-50 font-mono text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-teal-500/50 min-h-[250px]" placeholder="CREATE TABLE `tb_domain` ..." />
-                </div>
-              </div>
-              <div className="mt-8 flex justify-end gap-3">
-                <button onClick={() => setShowGenerateModal(false)} className="px-5 py-2.5 text-slate-600 hover:bg-slate-100 rounded-xl">关闭窗口</button>
-                <button onClick={handleGenerate} className="px-5 py-2.5 bg-teal-600 hover:bg-teal-700 text-white rounded-xl shadow-lg shadow-teal-600/20">开始一键编译与落盘提取</button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
     </div>
   );
 };

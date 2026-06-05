@@ -61,7 +61,6 @@ func Routers() *gin.Engine {
 		systemRouter.InitBaseRouter(PublicGroup)       // 注册基础功能路由 不做鉴权
 		systemRouter.InitInitRouter(PublicGroup)       // 自动初始化相关
 		systemRouter.InitAIProviderRouter(PublicGroup) // AI 厂商列表，不返回密钥
-		systemRouter.InitTbGenerateProjectPublicRouter(PublicGroup)
 	}
 
 	{
@@ -90,12 +89,10 @@ func Routers() *gin.Engine {
 		systemRouter.InitTbTablePreferRouter(PrivateGroup)
 		systemRouter.InitTbInterfaceServerUserRouter(PrivateGroup)
 		systemRouter.InitTbInterfaceProjectRouter(PrivateGroup) // 项目配置路由
-		systemRouter.InitTbGeneratePlaceHolderRouter(PrivateGroup)
 		systemRouter.InitTbGenerateProjectRouter(PrivateGroup)
+		systemRouter.InitTbGenerateDbTemplateRouter(PrivateGroup)
 		systemRouter.InitTbGenerateProjectPathRouter(PrivateGroup)
 		systemRouter.InitTbGenerateProjectPathModelRouter(PrivateGroup)
-		systemRouter.InitTbGenerateProjectPlaceHolderRouter(PrivateGroup)
-		systemRouter.InitTbGenerateRecordRouter(PrivateGroup)
 		systemRouter.InitAIChatRouter(PrivateGroup)        // AI 对话
 		systemRouter.InitAIChatHistoryRouter(PrivateGroup) // AI 对话历史
 		systemRouter.InitAIConfigRouter(PrivateGroup)      // AI 配置管理
