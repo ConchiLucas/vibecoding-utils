@@ -1,14 +1,38 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
-import { getPathList, getModelListByPathId, createModel, updateModel } from '../../api/path_model';
+import { getPathList, getModelListByPathId, createModel, updateModel, updatePath } from '../../api/path_model';
 import { getProjectInstance } from '../../api/code_generate_project';
 import Editor from '@monaco-editor/react';
 import toast from 'react-hot-toast';
-import { FileCode, File, ArrowLeft, Save, RefreshCw, Folder, ChevronDown, ChevronRight } from 'lucide-react';
+import { FileCode, ArrowLeft, Save, RefreshCw, Folder, ChevronDown, ChevronRight, Pencil, Check, X } from 'lucide-react';
 import clsx from 'clsx';
 
 const unwrapResponseData = (res: any) => {
   return res?.data?.data ?? res?.data ?? [];
+};
+
+const splitTreePath = (value: string) => String(value || '').split('/').filter(Boolean);
+
+const normalizeTreePath = (value: string) => splitTreePath(value).join('/');
+
+const validateTreeNodeName = (name: string) => {
+  const nextName = name.trim();
+  if (!nextName) return '名称不能为空';
+  if (nextName === '.' || nextName === '..') return '名称不能是 . 或 ..';
+  if (/[\\/]/.test(nextName)) return '名称不能包含路径分隔符';
+  return '';
+};
+
+const renameExpandedFolderKeys = (prev: Record<string, boolean>, oldKey: string, newKey: string) => {
+  const next: Record<string, boolean> = {};
+  Object.entries(prev).forEach(([key, value]) => {
+    if (key === oldKey || key.startsWith(`${oldKey}/`)) {
+      next[`${newKey}${key.slice(oldKey.length)}`] = value;
+    } else {
+      next[key] = value;
+    }
+  });
+  return next;
 };
 
 export default function ProjectTemplates() {
@@ -31,6 +55,9 @@ export default function ProjectTemplates() {
   const [codeContent, setCodeContent] = useState('');
   const [loadingContent, setLoadingContent] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [renamingNode, setRenamingNode] = useState<any>(null);
+  const [renamingValue, setRenamingValue] = useState('');
+  const [renamingSaving, setRenamingSaving] = useState(false);
 
   const fetchEnv = async () => {
     try {
@@ -145,6 +172,78 @@ export default function ProjectTemplates() {
     }
   };
 
+  const startRenameNode = (node: any, type: 'dir' | 'file', currentPath: string, event: React.MouseEvent) => {
+    event.stopPropagation();
+    setRenamingNode({
+      type,
+      key: `${type}:${normalizeTreePath(currentPath)}:${node.fileNode?.ID || ''}`,
+      path: normalizeTreePath(currentPath),
+      name: node.name,
+      fileNode: node.fileNode,
+    });
+    setRenamingValue(node.name);
+  };
+
+  const cancelRenameNode = (event?: React.MouseEvent) => {
+    event?.stopPropagation();
+    if (renamingSaving) return;
+    setRenamingNode(null);
+    setRenamingValue('');
+  };
+
+  const commitRenameNode = async (event?: React.MouseEvent) => {
+    event?.stopPropagation();
+    if (!renamingNode || renamingSaving) return;
+
+    const nextName = renamingValue.trim();
+    const invalidMessage = validateTreeNodeName(nextName);
+    if (invalidMessage) {
+      toast.error(invalidMessage);
+      return;
+    }
+    if (nextName === renamingNode.name) {
+      cancelRenameNode();
+      return;
+    }
+
+    setRenamingSaving(true);
+    try {
+      if (renamingNode.type === 'file') {
+        await updatePath({ ...renamingNode.fileNode, fileName: nextName });
+      } else {
+        const dirParts = splitTreePath(renamingNode.path);
+        if (dirParts.length === 0) {
+          throw new Error('目录路径无效');
+        }
+        const affectedPaths = paths.filter((pathObj) => {
+          const fileUrlParts = splitTreePath(pathObj.fileUrl || '');
+          return dirParts.length <= fileUrlParts.length && dirParts.every((part, index) => fileUrlParts[index] === part);
+        });
+        if (affectedPaths.length === 0) {
+          throw new Error('没有找到需要更新的文件路径');
+        }
+        await Promise.all(affectedPaths.map((pathObj) => {
+          const fileUrlParts = splitTreePath(pathObj.fileUrl || '');
+          fileUrlParts[dirParts.length - 1] = nextName;
+          return updatePath({ ...pathObj, fileUrl: fileUrlParts.join('/') });
+        }));
+
+        const parentPath = dirParts.slice(0, -1).join('/');
+        const nextPath = parentPath ? `${parentPath}/${nextName}` : nextName;
+        setExpandedFolders((prev) => renameExpandedFolderKeys(prev, `/${dirParts.join('/')}`, `/${nextPath}`));
+      }
+
+      toast.success('名称已更新');
+      setRenamingNode(null);
+      setRenamingValue('');
+      await fetchEnv();
+    } catch (err: any) {
+      toast.error(err?.message || '更新名称失败');
+    } finally {
+      setRenamingSaving(false);
+    }
+  };
+
   // Determine language natively mapped to monaco using the fileName regex from the Go layer
   const getLanguageType = (filename: string) => {
     const fn = (filename || '').toLowerCase();
@@ -208,6 +307,8 @@ export default function ProjectTemplates() {
   const TreeItem = ({ node, level, pathStr }: { node: any, level: number, pathStr: string }) => {
     const currentPath = `${pathStr}/${node.name}`;
     const isExpanded = expandedFolders[currentPath] !== false;
+    const renameKey = `${node.isDir ? 'dir' : 'file'}:${normalizeTreePath(currentPath)}:${node.fileNode?.ID || ''}`;
+    const isRenaming = renamingNode?.key === renameKey;
 
     const handleToggle = (e: React.MouseEvent) => {
       e.stopPropagation();
@@ -221,14 +322,46 @@ export default function ProjectTemplates() {
         <div className="w-full">
           <div 
             onClick={handleToggle}
-            className="flex items-center gap-1.5 py-1.5 px-2 hover:bg-slate-200/50 rounded-lg cursor-pointer transition-colors text-slate-700"
+            className="group/tree-node flex items-center gap-1.5 py-1.5 px-2 hover:bg-slate-200/50 rounded-lg cursor-pointer transition-colors text-slate-700"
             style={{ paddingLeft: `${level * 16 + 8}px` }}
           >
             <div className="w-4 flex items-center justify-center text-slate-400">
               {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
             </div>
             <Folder size={14} className={isExpanded ? "text-teal-500 fill-teal-500/20" : "text-amber-500 fill-amber-500/20"} />
-            <span className="text-sm font-medium truncate" title={node.name}>{node.name}</span>
+            {isRenaming ? (
+              <div className="flex min-w-0 flex-1 items-center gap-1" onClick={(event) => event.stopPropagation()}>
+                <input
+                  value={renamingValue}
+                  onChange={(event) => setRenamingValue(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') commitRenameNode();
+                    if (event.key === 'Escape') cancelRenameNode();
+                  }}
+                  autoFocus
+                  disabled={renamingSaving}
+                  className="min-w-0 flex-1 rounded-md border border-teal-300 bg-white px-2 py-1 text-sm font-semibold text-slate-800 outline-none ring-2 ring-teal-500/10"
+                />
+                <button type="button" onClick={commitRenameNode} disabled={renamingSaving} className="rounded-md p-1 text-teal-600 hover:bg-teal-100 disabled:opacity-50" title="保存名称">
+                  <Check size={13} />
+                </button>
+                <button type="button" onClick={cancelRenameNode} disabled={renamingSaving} className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 disabled:opacity-50" title="取消">
+                  <X size={13} />
+                </button>
+              </div>
+            ) : (
+              <>
+                <span className="min-w-0 flex-1 truncate text-sm font-medium" title={node.name}>{node.name}</span>
+                <button
+                  type="button"
+                  onClick={(event) => startRenameNode(node, 'dir', currentPath, event)}
+                  className="rounded-md p-1 text-slate-400 opacity-0 transition hover:bg-slate-100 hover:text-teal-600 group-hover/tree-node:opacity-100"
+                  title="修改名称"
+                >
+                  <Pencil size={12} />
+                </button>
+              </>
+            )}
           </div>
           {isExpanded && node.childrenArr && (
             <div className="w-full">
@@ -247,7 +380,7 @@ export default function ProjectTemplates() {
         <div 
           onClick={() => handleSelectPath(p)}
           className={clsx(
-            "flex items-center gap-2 py-1.5 px-2 my-0.5 rounded-lg cursor-pointer transition-colors text-sm w-full",
+            "group/tree-node flex items-center gap-2 py-1.5 px-2 my-0.5 rounded-lg cursor-pointer transition-colors text-sm w-full",
             isActive 
               ? "bg-teal-100 text-teal-900 shadow-sm border border-teal-200/50" 
               : "hover:bg-slate-200/50 text-slate-600 border border-transparent"
@@ -255,7 +388,39 @@ export default function ProjectTemplates() {
           style={{ paddingLeft: `${level * 16 + 8 + 16}px` }} // +16 for icon alignment without chevron
         >
           <FileCode size={14} className={clsx("flex-shrink-0", isActive ? "text-teal-600" : "text-slate-400")} />
-          <span className="truncate flex-1" title={node.name}>{node.name}</span>
+          {isRenaming ? (
+            <div className="flex min-w-0 flex-1 items-center gap-1" onClick={(event) => event.stopPropagation()}>
+              <input
+                value={renamingValue}
+                onChange={(event) => setRenamingValue(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') commitRenameNode();
+                  if (event.key === 'Escape') cancelRenameNode();
+                }}
+                autoFocus
+                disabled={renamingSaving}
+                className="min-w-0 flex-1 rounded-md border border-teal-300 bg-white px-2 py-1 text-sm font-semibold text-slate-800 outline-none ring-2 ring-teal-500/10"
+              />
+              <button type="button" onClick={commitRenameNode} disabled={renamingSaving} className="rounded-md p-1 text-teal-600 hover:bg-teal-100 disabled:opacity-50" title="保存名称">
+                <Check size={13} />
+              </button>
+              <button type="button" onClick={cancelRenameNode} disabled={renamingSaving} className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 disabled:opacity-50" title="取消">
+                <X size={13} />
+              </button>
+            </div>
+          ) : (
+            <>
+              <span className="min-w-0 flex-1 truncate" title={node.name}>{node.name}</span>
+              <button
+                type="button"
+                onClick={(event) => startRenameNode(node, 'file', currentPath, event)}
+                className="rounded-md p-1 text-slate-400 opacity-0 transition hover:bg-slate-100 hover:text-teal-600 group-hover/tree-node:opacity-100"
+                title="修改名称"
+              >
+                <Pencil size={12} />
+              </button>
+            </>
+          )}
         </div>
       );
     }

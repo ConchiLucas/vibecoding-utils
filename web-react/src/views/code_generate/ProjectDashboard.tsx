@@ -72,6 +72,22 @@ const buildDbTemplateSqlSections = async (project: any) => {
   return sections;
 };
 
+const buildGenerateCodexHandoffText = (result: any) => {
+  if (!result) return '';
+  const files = Array.isArray(result.files) ? result.files : [];
+  const absolutePaths = files
+    .map((file: any) => String(file?.absolutePath || file?.path || '').trim())
+    .filter(Boolean);
+
+  return [
+    '生成文件绝对路径：',
+    ...(absolutePaths.length > 0 ? absolutePaths.map((path, index) => `${index + 1}. ${path}`) : ['-']),
+    '',
+    '提示词接口地址（无需鉴权，Codex 可直接访问）：',
+    String(result.promptUrl || '').trim() || '-',
+  ].join('\n');
+};
+
 export default function ProjectDashboard() {
   const navigate = useNavigate();
   const [projects, setProjects] = useState<any[]>([]);
@@ -304,7 +320,7 @@ export default function ProjectDashboard() {
       }
       const result = unwrapResponseData(res);
       setGenerateResult(result);
-      toast.success(`生成完成：${Number(result?.generatedCount || 0)} 个文件`);
+      toast.success(`Codex 任务已准备：${Number((result?.files || []).length)} 个目标文件`);
     } catch (e) {
       toast.error('生成代码失败');
     } finally {
@@ -606,7 +622,7 @@ export default function ProjectDashboard() {
             />
             <motion.div
               initial={{ opacity: 0, scale: 0.95, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="relative flex max-h-[88vh] w-full max-w-xl flex-col overflow-hidden rounded-lg bg-white shadow-2xl"
+              className="relative flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-lg bg-white shadow-2xl"
               onClick={(event) => event.stopPropagation()}
             >
               <div className="border-b border-slate-200 px-6 py-5">
@@ -658,7 +674,7 @@ export default function ProjectDashboard() {
                 </div>
 
                 <label className="mt-5 flex cursor-pointer items-center justify-between gap-4 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
-                  <span className="text-sm font-bold text-slate-700">覆盖已存在文件</span>
+                  <span className="text-sm font-bold text-slate-700">覆盖已存在目标文件</span>
                   <input
                     type="checkbox"
                     checked={generateDraft.overwrite}
@@ -668,26 +684,103 @@ export default function ProjectDashboard() {
                 </label>
 
                 {generateResult && (
-                  <div className="mt-5 rounded-lg border border-slate-200 bg-slate-50">
-                    <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-3">
-                      <div className="text-sm font-bold text-slate-800">
-                        已生成 {Number(generateResult.generatedCount || 0)} 个 / 跳过 {Number(generateResult.skippedCount || 0)} 个
+                  <div className="mt-5 space-y-4">
+                    <div className="rounded-lg border border-teal-200 bg-teal-50">
+                      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-teal-200 px-4 py-3">
+                        <div>
+                          <div className="text-sm font-bold text-teal-900">Codex 任务已准备</div>
+                          <div className="mt-0.5 text-xs font-semibold text-teal-700">
+                            目标文件 {Number((generateResult.files || []).length)} 个 / 已写入 {Number(generateResult.generatedCount || 0)} 个 / 跳过 {Number(generateResult.skippedCount || 0)} 个
+                          </div>
+                        </div>
+                        <div className="rounded-full bg-white px-2 py-1 text-xs font-bold text-teal-700 ring-1 ring-teal-200">
+                          pathSet {Number(generateResult.pathSet || 0)}
+                        </div>
                       </div>
-                      <div className="rounded-full bg-white px-2 py-1 text-xs font-bold text-slate-500 ring-1 ring-slate-200">
-                        pathSet {Number(generateResult.pathSet || 0)}
+                      <div className="space-y-3 px-4 py-3">
+                        <div>
+                          <div className="mb-1 text-xs font-bold uppercase tracking-wider text-teal-700">提示词接口地址</div>
+                          <div className="flex items-center gap-2 rounded-md bg-white px-3 py-2 ring-1 ring-teal-200">
+                            <span className="min-w-0 flex-1 truncate font-mono text-xs font-semibold text-slate-700" title={generateResult.promptUrl || ''}>
+                              {generateResult.promptUrl || '-'}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                try {
+                                  await copyTextToClipboard(generateResult.promptUrl || '');
+                                  toast.success('提示词接口已复制');
+                                } catch (e) {
+                                  toast.error('复制提示词接口失败');
+                                }
+                              }}
+                              disabled={!generateResult.promptUrl}
+                              className="shrink-0 rounded-md p-1.5 text-teal-700 transition-colors hover:bg-teal-100 disabled:cursor-not-allowed disabled:opacity-50"
+                              title="复制提示词接口"
+                            >
+                              <Copy size={14} />
+                            </button>
+                          </div>
+                        </div>
+                        <div className="rounded-md bg-white px-3 py-2 text-xs font-semibold leading-5 text-slate-600 ring-1 ring-teal-200">
+                          {generateResult.modifyInstructions}
+                        </div>
                       </div>
                     </div>
-                    <div className="max-h-56 overflow-y-auto p-2">
-                      {(generateResult.files || []).map((file: any) => (
-                        <div key={`${file.pathId}-${file.relativePath}`} className="flex items-center gap-2 rounded-md px-2 py-1.5 text-xs">
-                          <span className={`shrink-0 rounded-full px-2 py-0.5 font-bold ${file.status === 'skipped' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>
-                            {file.status === 'skipped' ? '跳过' : file.status === 'overwritten' ? '覆盖' : '生成'}
-                          </span>
-                          <span className="min-w-0 flex-1 truncate font-mono font-semibold text-slate-600" title={file.path}>
-                            {file.relativePath}
-                          </span>
+
+                    <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+                      <div className="flex items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3">
+                        <div>
+                          <div className="text-sm font-bold text-slate-800">给 Codex 的文本</div>
+                          <div className="mt-0.5 text-xs font-semibold text-slate-400">包含生成文件绝对路径和无需鉴权的提示词接口地址</div>
                         </div>
-                      ))}
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            try {
+                              await copyTextToClipboard(buildGenerateCodexHandoffText(generateResult));
+                              toast.success('Codex 文本已复制');
+                            } catch (e) {
+                              toast.error('复制 Codex 文本失败');
+                            }
+                          }}
+                          className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md bg-white px-3 text-xs font-bold text-slate-700 ring-1 ring-slate-200 transition-colors hover:bg-slate-100"
+                        >
+                          <Copy size={13} />
+                          复制
+                        </button>
+                      </div>
+                      <textarea
+                        readOnly
+                        value={buildGenerateCodexHandoffText(generateResult)}
+                        className="h-44 w-full resize-none border-0 bg-white p-4 font-mono text-xs font-semibold leading-6 text-slate-700 outline-none"
+                      />
+                    </div>
+
+                    <div className="rounded-lg border border-slate-200 bg-slate-50">
+                      <div className="border-b border-slate-200 px-4 py-3 text-sm font-bold text-slate-800">
+                        目标文件绝对路径与修改方式
+                      </div>
+                      <div className="max-h-72 overflow-y-auto p-2">
+                        {(generateResult.files || []).map((file: any) => (
+                          <div key={`${file.pathId}-${file.relativePath}`} className="rounded-md px-2 py-2 text-xs hover:bg-white">
+                            <div className="mb-1 flex items-center gap-2">
+                              <span className={`shrink-0 rounded-full px-2 py-0.5 font-bold ${file.status === 'skipped' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                                {file.status === 'skipped' ? '跳过' : file.status === 'overwritten' ? '覆盖' : '生成'}
+                              </span>
+                              <span className="min-w-0 flex-1 truncate font-mono font-bold text-slate-700" title={file.absolutePath || file.path}>
+                                {file.absolutePath || file.path}
+                              </span>
+                            </div>
+                            <div className="truncate pl-12 font-mono text-[11px] font-semibold text-slate-400" title={file.relativePath}>
+                              {file.relativePath}
+                            </div>
+                            <div className="mt-1 pl-12 text-xs font-semibold leading-5 text-slate-500">
+                              {file.instruction}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   </div>
                 )}
@@ -709,7 +802,7 @@ export default function ProjectDashboard() {
                   className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-5 py-2.5 text-sm font-bold text-white shadow-lg shadow-slate-900/15 transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {generatingTemplateProjectId ? <RefreshCw size={16} className="animate-spin" /> : <Wand2 size={16} />}
-                  生成
+                  准备任务
                 </button>
               </div>
             </motion.div>

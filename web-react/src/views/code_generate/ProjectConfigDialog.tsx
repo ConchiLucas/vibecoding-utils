@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowRight, Check, ChevronLeft, Copy, Edit2, FileCode, Folder, MoveRight, Plus, RefreshCw, Save, Search, Trash2, X } from 'lucide-react';
+import { ArrowRight, Check, ChevronLeft, Copy, Edit2, FileCode, Folder, MoveRight, Plus, RefreshCw, Save, Search, Trash2, Wand2, X } from 'lucide-react';
 import Editor from '@monaco-editor/react';
 import toast from 'react-hot-toast';
 import {
@@ -432,12 +432,18 @@ export default function ProjectConfigDialog({ project: templateProject, onClose,
   const [activePathSetKey, setActivePathSetKey] = useState<string | null>(null);
   const [activePathGroupKey, setActivePathGroupKey] = useState<string | null>(null);
   const [pathSearch, setPathSearch] = useState('');
+  const [promptSummaryOpen, setPromptSummaryOpen] = useState(false);
+  const [promptSummaryPath, setPromptSummaryPath] = useState<any | null>(null);
+  const [promptModel, setPromptModel] = useState<any | null>(null);
+  const [promptDraft, setPromptDraft] = useState('');
   const [loadingProjects, setLoadingProjects] = useState(false);
   const [loadingPaths, setLoadingPaths] = useState(false);
   const [savingProject, setSavingProject] = useState(false);
   const [savingPath, setSavingPath] = useState(false);
   const [loadingContent, setLoadingContent] = useState(false);
   const [savingContent, setSavingContent] = useState(false);
+  const [loadingPrompt, setLoadingPrompt] = useState(false);
+  const [savingPrompt, setSavingPrompt] = useState(false);
   const [savingPathGroupKey, setSavingPathGroupKey] = useState<string | null>(null);
   const [movingPathGroupKey, setMovingPathGroupKey] = useState<string | null>(null);
   const [savingPathSetNameKey, setSavingPathSetNameKey] = useState<string | null>(null);
@@ -521,6 +527,10 @@ export default function ProjectConfigDialog({ project: templateProject, onClose,
       setPathGroupEdits({});
       setMovingPathGroupPickerKey(null);
       setPathSetNameEdits({});
+      setPromptSummaryOpen(false);
+      setPromptSummaryPath(null);
+      setPromptModel(null);
+      setPromptDraft('');
     } catch (e) {
       toast.error('加载项目列表失败');
     } finally {
@@ -545,6 +555,10 @@ export default function ProjectConfigDialog({ project: templateProject, onClose,
     setPathGroupEdits({});
     setMovingPathGroupPickerKey(null);
     setPathSetNameEdits({});
+    setPromptSummaryOpen(false);
+    setPromptSummaryPath(null);
+    setPromptModel(null);
+    setPromptDraft('');
     fetchProjectInstances(undefined, true);
   }, [templateProjectId]);
 
@@ -722,6 +736,10 @@ export default function ProjectConfigDialog({ project: templateProject, onClose,
     setPathGroupEdits({});
     setMovingPathGroupPickerKey(null);
     setPathSetNameEdits({});
+    setPromptSummaryOpen(false);
+    setPromptSummaryPath(null);
+    setPromptModel(null);
+    setPromptDraft('');
   };
 
   const openCreateProject = () => {
@@ -757,6 +775,56 @@ export default function ProjectConfigDialog({ project: templateProject, onClose,
   const openEditPath = (pathObj: any) => {
     setPathDraft({ ...pathObj });
     setPathEditorOpen(true);
+  };
+
+  const openPathPromptDialog = async (pathObj: any) => {
+    if (Number(pathObj?.enabled || 0) !== 1) {
+      toast.error('停用文件不能编辑提示词');
+      return;
+    }
+    setPromptSummaryPath(pathObj);
+    setPromptModel(null);
+    setPromptDraft('');
+    setPromptSummaryOpen(true);
+    setLoadingPrompt(true);
+    try {
+      const res: any = await getModelListByPathId(Number(pathObj.ID || 0));
+      let models = unwrapResponseData(res);
+      if (!Array.isArray(models)) models = [];
+      models = models.filter((item: any) => Number(item.pathId || 0) === Number(pathObj.ID || 0));
+      const model = models[0] || null;
+      setPromptModel(model);
+      setPromptDraft(model?.prompt || '');
+    } catch (e) {
+      toast.error('加载提示词失败');
+    } finally {
+      setLoadingPrompt(false);
+    }
+  };
+
+  const savePathPrompt = async () => {
+    if (!promptSummaryPath?.ID) return;
+    setSavingPrompt(true);
+    try {
+      if (promptModel?.ID) {
+        const payload = { ...promptModel, prompt: promptDraft };
+        await updateModel(payload);
+        setPromptModel(payload);
+        toast.success('提示词已保存');
+      } else {
+        await createModel({ pathId: Number(promptSummaryPath.ID), content: '', prompt: promptDraft });
+        const res: any = await getModelListByPathId(Number(promptSummaryPath.ID));
+        let models = unwrapResponseData(res);
+        if (!Array.isArray(models)) models = [];
+        models = models.filter((item: any) => Number(item.pathId || 0) === Number(promptSummaryPath.ID));
+        setPromptModel(models[0] || null);
+        toast.success('提示词已初始化');
+      }
+    } catch (e) {
+      toast.error('保存提示词失败');
+    } finally {
+      setSavingPrompt(false);
+    }
   };
 
   const openPathContentEditor = async (pathObj: any) => {
@@ -1631,7 +1699,7 @@ export default function ProjectConfigDialog({ project: templateProject, onClose,
               </div>
             ) : (
               <div className="overflow-hidden rounded-lg border border-gray-200">
-                <div className="grid grid-cols-[minmax(520px,3fr)_minmax(220px,1fr)_120px_132px] border-b border-gray-200 bg-gray-50 px-4 py-2 text-xs font-bold uppercase text-gray-400">
+                <div className="grid grid-cols-[minmax(520px,3fr)_minmax(220px,1fr)_120px_172px] border-b border-gray-200 bg-gray-50 px-4 py-2 text-xs font-bold uppercase text-gray-400">
                   <div>剩余父级</div>
                   <div>文件路径</div>
                   <div>状态</div>
@@ -1647,7 +1715,7 @@ export default function ProjectConfigDialog({ project: templateProject, onClose,
                         key={pathObj.ID}
                         data-testid="path-row"
                         onClick={() => openEditPath(pathObj)}
-                        className={`grid w-full cursor-pointer grid-cols-[minmax(520px,3fr)_minmax(220px,1fr)_120px_132px] items-center gap-3 px-4 py-3 text-left transition-colors ${active ? 'bg-gray-900 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'}`}
+                        className={`grid w-full cursor-pointer grid-cols-[minmax(520px,3fr)_minmax(220px,1fr)_120px_172px] items-center gap-3 px-4 py-3 text-left transition-colors ${active ? 'bg-gray-900 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'}`}
                       >
                         <div className="min-w-0">
                           <div className={`mb-1 flex items-center gap-1.5 text-xs font-bold ${active ? 'text-white/60' : 'text-gray-400'}`}>
@@ -1685,6 +1753,18 @@ export default function ProjectConfigDialog({ project: templateProject, onClose,
                             type="button"
                             onClick={(event) => {
                               event.stopPropagation();
+                              openPathPromptDialog(pathObj);
+                            }}
+                            disabled={!enabled}
+                            className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${active ? 'text-white/70 hover:bg-white/10 hover:text-white' : 'text-gray-300 hover:bg-teal-50 hover:text-teal-700'}`}
+                            title="编辑提示词"
+                          >
+                            <Wand2 size={14} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
                               openPathContentEditor(pathObj);
                             }}
                             className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${active ? 'text-white/70 hover:bg-white/10 hover:text-white' : 'text-gray-300 hover:bg-cyan-50 hover:text-cyan-700'}`}
@@ -1714,6 +1794,87 @@ export default function ProjectConfigDialog({ project: templateProject, onClose,
               </div>
             )}
           </section>
+        </div>
+      )}
+
+      {promptSummaryOpen && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm">
+          <div
+            data-testid="prompt-summary-dialog"
+            className="flex max-h-[92vh] w-full max-w-[980px] flex-col overflow-hidden rounded-xl border border-gray-200 bg-white text-gray-900 shadow-2xl"
+          >
+            <div className="flex items-start justify-between gap-4 border-b border-gray-200 bg-gray-50 px-6 py-4">
+              <div className="min-w-0">
+                <div className="text-xs font-bold uppercase tracking-wider text-teal-600">文件提示词</div>
+                <h4 className="mt-1 truncate text-lg font-extrabold text-gray-950" title={formatPathLabel(promptSummaryPath || {})}>
+                  {formatPathFileLabel(promptSummaryPath || {})}
+                </h4>
+                <p className="mt-1 truncate font-mono text-xs font-bold text-gray-400" title={formatPathLabel(promptSummaryPath || {})}>
+                  {formatPathLabel(promptSummaryPath || {})}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!savingPrompt) {
+                    setPromptSummaryOpen(false);
+                    setPromptSummaryPath(null);
+                    setPromptModel(null);
+                    setPromptDraft('');
+                  }
+                }}
+                disabled={savingPrompt}
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-900 disabled:cursor-not-allowed disabled:opacity-50"
+                title="关闭"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="min-h-0 flex-1 px-6 py-5">
+              <textarea
+                value={promptDraft}
+                onChange={(event) => setPromptDraft(event.target.value)}
+                disabled={loadingPrompt || savingPrompt}
+                placeholder="输入当前文件的提示词..."
+                autoFocus
+                className="h-[54vh] min-h-[360px] w-full resize-none rounded-lg border border-gray-200 bg-gray-50 p-4 font-mono text-sm font-semibold leading-6 text-gray-800 outline-none transition focus:border-teal-300 focus:bg-white focus:ring-2 focus:ring-teal-500/15 disabled:cursor-not-allowed disabled:opacity-60"
+              />
+            </div>
+
+            <div className="flex items-center justify-end gap-3 border-t border-gray-200 bg-gray-50 px-6 py-4">
+              {loadingPrompt && (
+                <div className="mr-auto inline-flex items-center gap-2 text-sm font-bold text-gray-400">
+                  <RefreshCw size={15} className="animate-spin" />
+                  正在加载提示词
+                </div>
+              )}
+              <button
+                type="button"
+                onClick={() => {
+                  if (!savingPrompt) {
+                    setPromptSummaryOpen(false);
+                    setPromptSummaryPath(null);
+                    setPromptModel(null);
+                    setPromptDraft('');
+                  }
+                }}
+                disabled={savingPrompt}
+                className="inline-flex h-10 items-center gap-2 rounded-lg border border-gray-200 bg-white px-4 text-sm font-bold text-gray-700 transition-colors hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={savePathPrompt}
+                disabled={loadingPrompt || savingPrompt}
+                className="inline-flex h-10 items-center gap-2 rounded-lg bg-gray-950 px-4 text-sm font-extrabold text-white transition-colors hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {savingPrompt ? <RefreshCw size={16} className="animate-spin" /> : <Save size={16} />}
+                保存提示词
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

@@ -129,6 +129,7 @@ func (s *TbGenerateProjectInstanceService) cloneTemplatePaths(tx *gorm.DB, templ
 			newModel := system.TbGenerateProjectPathModel{
 				PathId:  int(newPath.ID),
 				Content: templateModel.Content,
+				Prompt:  templateModel.Prompt,
 			}
 			if err := tx.Create(&newModel).Error; err != nil {
 				return err

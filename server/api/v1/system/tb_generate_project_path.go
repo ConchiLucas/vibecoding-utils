@@ -109,6 +109,21 @@ func (a *TbGenerateProjectPathApi) CopyPathSet(c *gin.Context) {
 	}
 }
 
+func (a *TbGenerateProjectPathApi) BuildPromptSummary(c *gin.Context) {
+	var req systemReq.BuildGenerateProjectPromptSummaryReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.FailWithMessage(err.Error(), c)
+		return
+	}
+	res, err := tbGenerateProjectPathService.BuildPromptSummary(req)
+	if err != nil {
+		global.GVA_LOG.Error("生成提示词失败!", zap.Error(err))
+		response.FailWithMessage(err.Error(), c)
+	} else {
+		response.OkWithDetailed(res, "生成成功", c)
+	}
+}
+
 func (a *TbGenerateProjectPathApi) GetTbGenerateProjectPath(c *gin.Context) {
 	id := c.Query("id")
 	res, err := tbGenerateProjectPathService.GetTbGenerateProjectPath(id)

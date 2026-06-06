@@ -29,6 +29,10 @@ export const renamePathSet = (data: any) => {
   return api.post('/tbgenerateprojectpath/renamePathSet', data);
 };
 
+export const buildPromptSummary = (data: any) => {
+  return api.post('/tbgenerateprojectpath/buildPromptSummary', data);
+};
+
 export const deletePath = (data: any) => {
   return api.delete('/tbgenerateprojectpath/deleteTbGenerateProjectPath', { data });
 };

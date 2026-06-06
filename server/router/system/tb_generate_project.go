@@ -21,3 +21,11 @@ func (s *TbGenerateProjectRouter) InitTbGenerateProjectRouter(Router *gin.Router
 		tbGenerateProjectRouter.GET("copy", tbGenerateProjectApi.CopyProject)                                  // 克隆
 	}
 }
+
+func (s *TbGenerateProjectRouter) InitTbGenerateProjectPublicRouter(Router *gin.RouterGroup) {
+	tbGenerateProjectRouter := Router.Group("tbgenerateproject")
+	tbGenerateProjectApi := api.ApiGroupApp.SystemApiGroup.TbGenerateProjectApi
+	{
+		tbGenerateProjectRouter.GET("publicPrompt", tbGenerateProjectApi.PublicPrompt)
+	}
+}

@@ -20,5 +20,6 @@ func (s *TbGenerateProjectPathRouter) InitTbGenerateProjectPathRouter(Router *gi
 		tbGenerateProjectPathRouter.GET("getTbGenerateProjectPathList", tbGenerateProjectPathApi.GetTbGenerateProjectPathList)
 		tbGenerateProjectPathRouter.POST("updateEnabled", tbGenerateProjectPathApi.UpdateEnabled)
 		tbGenerateProjectPathRouter.POST("copyPathSet", tbGenerateProjectPathApi.CopyPathSet)
+		tbGenerateProjectPathRouter.POST("buildPromptSummary", tbGenerateProjectPathApi.BuildPromptSummary)
 	}
 }

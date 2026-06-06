@@ -2,6 +2,7 @@ package system
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/flipped-aurora/easy-deploy/server/global"
@@ -10,6 +11,19 @@ import (
 )
 
 type TbGenerateProjectPathService struct{}
+
+type GenerateProjectPromptSummaryResult struct {
+	ProjectInstanceId  int                       `json:"projectInstanceId"`
+	ProjectName        string                    `json:"projectName"`
+	DiskPath           string                    `json:"diskPath"`
+	PathSet            int                       `json:"pathSet"`
+	Module             string                    `json:"module"`
+	TableName          string                    `json:"tableName"`
+	Prompt             string                    `json:"prompt"`
+	ModifyInstructions string                    `json:"modifyInstructions"`
+	TargetPaths        []string                  `json:"targetPaths"`
+	Files              []GenerateProjectCodeFile `json:"files"`
+}
 
 func (s *TbGenerateProjectPathService) CreateTbGenerateProjectPath(req *system.TbGenerateProjectPath) error {
 	if req.ProjectInstanceId == 0 {
@@ -175,6 +189,7 @@ func (s *TbGenerateProjectPathService) CopyPathSet(req systemReq.CopyGeneratePro
 			newModel := system.TbGenerateProjectPathModel{
 				PathId:  int(newPath.ID),
 				Content: sourceModel.Content,
+				Prompt:  sourceModel.Prompt,
 			}
 			if err := tx.Create(&newModel).Error; err != nil {
 				tx.Rollback()
@@ -204,4 +219,103 @@ func (s *TbGenerateProjectPathService) GetTbGenerateProjectPathList(projectId in
 
 func (s *TbGenerateProjectPathService) UpdateEnabled(id uint, enabled int) error {
 	return global.GVA_DB.Model(&system.TbGenerateProjectPath{}).Where("id = ?", id).Update("enabled", enabled).Error
+}
+
+func (s *TbGenerateProjectPathService) BuildPromptSummary(req systemReq.BuildGenerateProjectPromptSummaryReq) (GenerateProjectPromptSummaryResult, error) {
+	if req.ProjectInstanceId <= 0 {
+		return GenerateProjectPromptSummaryResult{}, errors.New("projectInstanceId is required")
+	}
+	module := strings.TrimSpace(req.Module)
+	tableName := strings.TrimSpace(req.TableName)
+	if module == "" {
+		return GenerateProjectPromptSummaryResult{}, errors.New("module 必填")
+	}
+	if tableName == "" {
+		return GenerateProjectPromptSummaryResult{}, errors.New("TableName 必填")
+	}
+
+	var instance system.TbGenerateProjectInstance
+	if err := global.GVA_DB.Where("id = ?", req.ProjectInstanceId).First(&instance).Error; err != nil {
+		return GenerateProjectPromptSummaryResult{}, err
+	}
+
+	diskPathSource := instance.DiskPath
+	if strings.TrimSpace(diskPathSource) == "" && instance.TemplateProjectId > 0 {
+		var project system.TbGenerateProject
+		if err := global.GVA_DB.Where("id = ?", instance.TemplateProjectId).First(&project).Error; err != nil {
+			return GenerateProjectPromptSummaryResult{}, err
+		}
+		diskPathSource = project.DiskPath
+	}
+	diskPath, err := normalizeCodeGenerationRoot(diskPathSource)
+	if err != nil {
+		return GenerateProjectPromptSummaryResult{}, err
+	}
+
+	var paths []system.TbGenerateProjectPath
+	query := global.GVA_DB.Where("project_instance_id = ? AND enabled = 1", req.ProjectInstanceId)
+	if len(req.PathIds) > 0 {
+		query = query.Where("id IN ?", req.PathIds)
+	} else {
+		query = query.Where("path_set = ?", req.PathSet)
+	}
+	if err := query.Order("id ASC").Find(&paths).Error; err != nil {
+		return GenerateProjectPromptSummaryResult{}, err
+	}
+	if len(paths) == 0 {
+		return GenerateProjectPromptSummaryResult{}, errors.New("当前相对路径没有可生成提示词的启用文件")
+	}
+
+	templates, err := loadGenerateProjectPathTemplates(paths)
+	if err != nil {
+		return GenerateProjectPromptSummaryResult{}, err
+	}
+
+	vars := buildCodeGenerationVars(module, tableName)
+	result := GenerateProjectPromptSummaryResult{
+		ProjectInstanceId:  int(instance.ID),
+		ProjectName:        instance.ProjectName,
+		DiskPath:           diskPath,
+		PathSet:            req.PathSet,
+		Module:             module,
+		TableName:          tableName,
+		ModifyInstructions: codeGenerationModifyInstructions,
+		TargetPaths:        make([]string, 0, len(paths)),
+		Files:              make([]GenerateProjectCodeFile, 0, len(paths)),
+	}
+	drafts := make([]generateProjectCodeDraft, 0, len(paths))
+
+	for _, pathObj := range paths {
+		relativePath, targetPath, err := buildGeneratedFileTarget(
+			diskPath,
+			renderCodeGenerationText(pathObj.FileUrl, vars),
+			renderCodeGenerationText(pathObj.FileName, vars),
+		)
+		if err != nil {
+			return GenerateProjectPromptSummaryResult{}, fmt.Errorf("路径 %d 无效: %w", pathObj.ID, err)
+		}
+
+		pathTemplate := templates[int(pathObj.ID)]
+		content := renderCodeGenerationText(pathTemplate.Content, vars)
+		filePrompt := renderCodeGenerationText(pathTemplate.Prompt, vars)
+		file := GenerateProjectCodeFile{
+			Path:         targetPath,
+			AbsolutePath: targetPath,
+			RelativePath: relativePath,
+			PathId:       pathObj.ID,
+			Status:       "ready",
+			Bytes:        len([]byte(content)),
+			Instruction:  buildGenerateCodeFileInstruction(relativePath, targetPath),
+		}
+		result.TargetPaths = append(result.TargetPaths, targetPath)
+		result.Files = append(result.Files, file)
+		drafts = append(drafts, generateProjectCodeDraft{
+			File:            file,
+			TemplateContent: content,
+			FilePrompt:      filePrompt,
+		})
+	}
+
+	result.Prompt = buildCodeGenerationTaskPromptContent(module, tableName, req.Overwrite, result.ProjectName, result.DiskPath, result.PathSet, drafts)
+	return result, nil
 }
