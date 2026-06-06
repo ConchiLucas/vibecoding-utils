@@ -30,6 +30,7 @@ type ApiGroup struct {
 	TbInterfaceServerUserApi
 	TbInterfaceProjectApi
 	TbGenerateProjectApi
+	TbGenerateProjectInstanceApi
 	TbGenerateDbTemplateTypeApi
 	TbGenerateDbTemplateScriptApi
 	TbGenerateProjectPathApi
@@ -67,6 +68,7 @@ var (
 	tbInterfaceServerUserService      = service.ServiceGroupApp.SystemServiceGroup.TbInterfaceServerUserService
 	tbInterfaceProjectService         = service.ServiceGroupApp.SystemServiceGroup.TbInterfaceProjectService
 	tbGenerateProjectService          = service.ServiceGroupApp.SystemServiceGroup.TbGenerateProjectService
+	tbGenerateProjectInstanceService  = service.ServiceGroupApp.SystemServiceGroup.TbGenerateProjectInstanceService
 	tbGenerateDbTemplateTypeService   = service.ServiceGroupApp.SystemServiceGroup.TbGenerateDbTemplateTypeService
 	tbGenerateDbTemplateScriptService = service.ServiceGroupApp.SystemServiceGroup.TbGenerateDbTemplateScriptService
 	tbGenerateProjectPathService      = service.ServiceGroupApp.SystemServiceGroup.TbGenerateProjectPathService

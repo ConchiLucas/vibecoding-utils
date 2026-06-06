@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { getPathList, getModelListByPathId, createModel, updateModel } from '../../api/path_model';
-import { getProjectList } from '../../api/project';
+import { getProjectInstance } from '../../api/code_generate_project';
 import Editor from '@monaco-editor/react';
 import toast from 'react-hot-toast';
 import { FileCode, File, ArrowLeft, Save, RefreshCw, Folder, ChevronDown, ChevronRight } from 'lucide-react';
@@ -14,8 +14,11 @@ const unwrapResponseData = (res: any) => {
 export default function ProjectTemplates() {
   const { projectId } = useParams();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const pathFilterKey = searchParams.toString();
 
   const [projectName, setProjectName] = useState<string>('解析中...');
+  const [pathSetName, setPathSetName] = useState('');
   const [paths, setPaths] = useState<any[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [loadingList, setLoadingList] = useState(false);
@@ -31,28 +34,47 @@ export default function ProjectTemplates() {
 
   const fetchEnv = async () => {
     try {
-      // Find the project name
       const pId = parseInt(projectId as string);
-      const resProj: any = await getProjectList();
-      const projects = unwrapResponseData(resProj);
-      if (Array.isArray(projects)) {
-        const found = projects.find((p: any) => p.ID === pId);
-        if (found) setProjectName(found.projectName);
+      const selectedPathIds = new Set(
+        String(searchParams.get('pathIds') || '')
+          .split(',')
+          .map((item) => Number(item))
+          .filter(Boolean),
+      );
+      const pathSetParam = searchParams.get('pathSet');
+      const hasPathSetFilter = pathSetParam !== null && pathSetParam !== '';
+      const selectedPathSet = Number(pathSetParam || 0);
+      const selectedPathSetName = String(searchParams.get('pathSetName') || '').trim();
+      setPathSetName(selectedPathSetName);
+
+      const resProj: any = await getProjectInstance(pId);
+      const projectInstance = unwrapResponseData(resProj);
+      if (projectInstance?.projectName) {
+        setProjectName(projectInstance.projectName);
       }
 
       setLoadingList(true);
       const resPath: any = await getPathList(pId);
-      
-      // Filter out those where projectId == pId (Wait, our backend GET /tbgenerateprojectpath/getTbGenerateProjectPathList might ignore our custom filter logic if we didn't add it in the Go code. So let's filter in frontend just in case!)
+
       let allPaths = unwrapResponseData(resPath);
       if (!Array.isArray(allPaths)) allPaths = [];
-      if (allPaths.length > 0 && allPaths[0].projectId !== undefined) {
-         allPaths = allPaths.filter((x: any) => x.projectId === pId);
+      if (allPaths.length > 0 && allPaths[0].projectInstanceId !== undefined) {
+        allPaths = allPaths.filter((x: any) => Number(x.projectInstanceId || 0) === pId);
+      }
+      if (selectedPathIds.size > 0) {
+        allPaths = allPaths.filter((x: any) => selectedPathIds.has(Number(x.ID || 0)));
+      } else if (hasPathSetFilter) {
+        allPaths = allPaths.filter((x: any) => Number(x.pathSet || 0) === selectedPathSet);
       }
       setPaths(allPaths);
-      
-      if (allPaths.length > 0 && !activePath) {
-        await handleSelectPath(allPaths[0]);
+
+      const nextActivePath = allPaths.find((item: any) => Number(item.ID || 0) === Number(activePath?.ID || 0)) || allPaths[0] || null;
+      if (nextActivePath) {
+        await handleSelectPath(nextActivePath);
+      } else {
+        setActivePath(null);
+        setActiveModel(null);
+        setCodeContent('');
       }
     } catch (e) {
       toast.error("加载项目底层路径表失败");
@@ -65,7 +87,7 @@ export default function ProjectTemplates() {
     if (projectId) {
       fetchEnv();
     }
-  }, [projectId]);
+  }, [projectId, pathFilterKey]);
 
   const handleSelectPath = async (pathObj: any) => {
     setActivePath(pathObj);
@@ -78,7 +100,7 @@ export default function ProjectTemplates() {
       let models = unwrapResponseData(res);
       if (!Array.isArray(models)) models = [];
       // Frontend filter map
-      models = models.filter((x: any) => x.pathId === pathObj.ID);
+      models = models.filter((x: any) => Number(x.pathId || 0) === Number(pathObj.ID || 0));
       
       if (models.length > 0) {
         setActiveModel(models[0]);
@@ -113,7 +135,7 @@ export default function ProjectTemplates() {
         const res: any = await getModelListByPathId(activePath.ID);
         let models = unwrapResponseData(res);
         if (!Array.isArray(models)) models = [];
-        models = models.filter((x: any) => x.pathId === activePath.ID);
+        models = models.filter((x: any) => Number(x.pathId || 0) === Number(activePath.ID || 0));
         if (models.length > 0) setActiveModel(models[0]);
       }
     } catch (err) {
@@ -250,7 +272,10 @@ export default function ProjectTemplates() {
              </button>
              <div className="h-6 w-px bg-slate-700"></div>
              <div>
-                <h1 className="text-lg font-bold tracking-tight text-teal-400">工程逻辑架构树与模型编辑 <span className="text-slate-300 font-normal">/ {projectName}</span></h1>
+                <h1 className="text-lg font-bold tracking-tight text-teal-400">
+                  工程逻辑架构树与模型编辑
+                  <span className="text-slate-300 font-normal"> / {projectName}{pathSetName ? ` / ${pathSetName}` : ''}</span>
+                </h1>
              </div>
          </div>
       </div>
@@ -268,7 +293,7 @@ export default function ProjectTemplates() {
               <div className="text-sm text-slate-400 text-center mt-10">检索架构树...</div>
             ) : treeData.length === 0 ? (
               <div className="text-sm text-slate-400 text-center mt-10">
-                {searchTerm ? '未找到节点' : '工程暂无路径'}
+                {searchTerm ? '未找到节点' : '当前相对路径配置暂无文件'}
               </div>
             ) : (
               <div className="w-full flex flex-col">

@@ -31,6 +31,7 @@ type RouterGroup struct {
 	TbInterfaceServerUserRouter
 	TbInterfaceProjectRouter
 	TbGenerateProjectRouter
+	TbGenerateProjectInstanceRouter
 	TbGenerateDbTemplateRouter
 	TbGenerateProjectPathRouter
 	TbGenerateProjectPathModelRouter
@@ -66,6 +67,7 @@ var (
 	tbInterfaceServerUserApi      = api.ApiGroupApp.SystemApiGroup.TbInterfaceServerUserApi
 	tbInterfaceProjectApi         = api.ApiGroupApp.SystemApiGroup.TbInterfaceProjectApi
 	tbGenerateProjectApi          = api.ApiGroupApp.SystemApiGroup.TbGenerateProjectApi
+	tbGenerateProjectInstanceApi  = api.ApiGroupApp.SystemApiGroup.TbGenerateProjectInstanceApi
 	tbGenerateDbTemplateTypeApi   = api.ApiGroupApp.SystemApiGroup.TbGenerateDbTemplateTypeApi
 	tbGenerateDbTemplateScriptApi = api.ApiGroupApp.SystemApiGroup.TbGenerateDbTemplateScriptApi
 	tbGenerateProjectPathApi      = api.ApiGroupApp.SystemApiGroup.TbGenerateProjectPathApi

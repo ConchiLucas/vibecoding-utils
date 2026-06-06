@@ -1,6 +1,8 @@
 package system
 
 import (
+	"errors"
+
 	"github.com/flipped-aurora/easy-deploy/server/global"
 	"github.com/flipped-aurora/easy-deploy/server/model/system"
 )
@@ -17,14 +19,31 @@ func (s *TbGenerateProjectService) DeleteTbGenerateProject(req system.TbGenerate
 		return err
 	}
 
-	// 1. Find all paths belonging to this project
+	// 1. Delete project instances under this template card and their independent paths.
+	var instances []system.TbGenerateProjectInstance
+	if err := tx.Where("template_project_id = ?", req.ID).Find(&instances).Error; err != nil {
+		tx.Rollback()
+		return err
+	}
+	for _, instance := range instances {
+		if err := deleteGenerateProjectInstancePaths(tx, int(instance.ID)); err != nil {
+			tx.Rollback()
+			return err
+		}
+		if err := tx.Unscoped().Delete(&instance).Error; err != nil {
+			tx.Rollback()
+			return err
+		}
+	}
+
+	// 2. Find all legacy/template paths belonging to this project card.
 	var paths []system.TbGenerateProjectPath
-	if err := tx.Where("project_id = ?", req.ID).Find(&paths).Error; err != nil {
+	if err := tx.Where("project_id = ? AND (project_instance_id = 0 OR project_instance_id IS NULL)", req.ID).Find(&paths).Error; err != nil {
 		tx.Rollback()
 		return err
 	}
 
-	// 2. For each path, delete its models, then the path itself
+	// 3. For each path, delete its models, then the path itself.
 	for _, p := range paths {
 		if err := tx.Where("path_id = ?", p.ID).Unscoped().Delete(&system.TbGenerateProjectPathModel{}).Error; err != nil {
 			tx.Rollback()
@@ -36,7 +55,7 @@ func (s *TbGenerateProjectService) DeleteTbGenerateProject(req system.TbGenerate
 		}
 	}
 
-	// 3. Delete database template examples belonging to this project
+	// 4. Delete database template examples belonging to this project.
 	if err := tx.Where("project_id = ?", req.ID).Unscoped().Delete(&system.TbGenerateDbTemplateScript{}).Error; err != nil {
 		tx.Rollback()
 		return err
@@ -46,7 +65,7 @@ func (s *TbGenerateProjectService) DeleteTbGenerateProject(req system.TbGenerate
 		return err
 	}
 
-	// 4. Delete the project itself
+	// 5. Delete the template card itself.
 	if err := tx.Unscoped().Delete(&req).Error; err != nil {
 		tx.Rollback()
 		return err
@@ -56,7 +75,30 @@ func (s *TbGenerateProjectService) DeleteTbGenerateProject(req system.TbGenerate
 }
 
 func (s *TbGenerateProjectService) UpdateTbGenerateProject(req *system.TbGenerateProject) error {
-	return global.GVA_DB.Updates(req).Error
+	return global.GVA_DB.Save(req).Error
+}
+
+func (s *TbGenerateProjectService) UpdateSelectedProjectInstance(templateProjectId int, projectInstanceId int) error {
+	if templateProjectId <= 0 {
+		return errors.New("templateProjectId 必填")
+	}
+	if projectInstanceId <= 0 {
+		return errors.New("projectInstanceId 必填")
+	}
+
+	var count int64
+	if err := global.GVA_DB.Model(&system.TbGenerateProjectInstance{}).
+		Where("id = ? AND template_project_id = ?", projectInstanceId, templateProjectId).
+		Count(&count).Error; err != nil {
+		return err
+	}
+	if count == 0 {
+		return errors.New("项目实例不存在")
+	}
+
+	return global.GVA_DB.Model(&system.TbGenerateProject{}).
+		Where("id = ?", templateProjectId).
+		Update("selected_project_instance_id", projectInstanceId).Error
 }
 
 func (s *TbGenerateProjectService) GetTbGenerateProject(id string) (res system.TbGenerateProject, err error) {
@@ -80,7 +122,8 @@ func (s *TbGenerateProjectService) CopyProject(id string) error {
 	}
 
 	newProject := system.TbGenerateProject{
-		ProjectConfigId: project.ProjectConfigId,
+		ProjectConfigId: 0,
+		BusinessType:    project.BusinessType,
 		ProjectName:     project.ProjectName + "_copy",
 		DiskPath:        project.DiskPath,
 		Remark:          project.Remark,
@@ -96,11 +139,12 @@ func (s *TbGenerateProjectService) CopyProject(id string) error {
 	for _, p := range paths {
 		oldPathId := p.ID
 		newPath := system.TbGenerateProjectPath{
-			ProjectId:   int(newProject.ID),
-			Enabled:     p.Enabled,
-			FileUrl:     p.FileUrl,
-			FileName:    p.FileName,
-			Incremented: p.Incremented,
+			ProjectId:         int(newProject.ID),
+			ProjectInstanceId: 0,
+			Enabled:           p.Enabled,
+			FileUrl:           p.FileUrl,
+			FileName:          p.FileName,
+			Incremented:       p.Incremented,
 		}
 		global.GVA_DB.Create(&newPath)
 		var oldModel system.TbGenerateProjectPathModel

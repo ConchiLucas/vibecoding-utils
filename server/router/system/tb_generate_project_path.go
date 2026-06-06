@@ -13,9 +13,12 @@ func (s *TbGenerateProjectPathRouter) InitTbGenerateProjectPathRouter(Router *gi
 	{
 		tbGenerateProjectPathRouter.POST("createTbGenerateProjectPath", tbGenerateProjectPathApi.CreateTbGenerateProjectPath)
 		tbGenerateProjectPathRouter.DELETE("deleteTbGenerateProjectPath", tbGenerateProjectPathApi.DeleteTbGenerateProjectPath)
+		tbGenerateProjectPathRouter.POST("deletePathSet", tbGenerateProjectPathApi.DeletePathSet)
+		tbGenerateProjectPathRouter.POST("renamePathSet", tbGenerateProjectPathApi.RenamePathSet)
 		tbGenerateProjectPathRouter.PUT("updateTbGenerateProjectPath", tbGenerateProjectPathApi.UpdateTbGenerateProjectPath)
 		tbGenerateProjectPathRouter.GET("getTbGenerateProjectPath", tbGenerateProjectPathApi.GetTbGenerateProjectPath)
 		tbGenerateProjectPathRouter.GET("getTbGenerateProjectPathList", tbGenerateProjectPathApi.GetTbGenerateProjectPathList)
 		tbGenerateProjectPathRouter.POST("updateEnabled", tbGenerateProjectPathApi.UpdateEnabled)
+		tbGenerateProjectPathRouter.POST("copyPathSet", tbGenerateProjectPathApi.CopyPathSet)
 	}
 }

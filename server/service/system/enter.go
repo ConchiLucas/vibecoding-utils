@@ -29,6 +29,7 @@ type ServiceGroup struct {
 	TbInterfaceServerUserService
 	TbInterfaceProjectService
 	TbGenerateProjectService
+	TbGenerateProjectInstanceService
 	TbGenerateDbTemplateTypeService
 	TbGenerateDbTemplateScriptService
 	TbGenerateProjectPathService

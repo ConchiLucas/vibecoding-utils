@@ -90,6 +90,7 @@ func Routers() *gin.Engine {
 		systemRouter.InitTbInterfaceServerUserRouter(PrivateGroup)
 		systemRouter.InitTbInterfaceProjectRouter(PrivateGroup) // 项目配置路由
 		systemRouter.InitTbGenerateProjectRouter(PrivateGroup)
+		systemRouter.InitTbGenerateProjectInstanceRouter(PrivateGroup)
 		systemRouter.InitTbGenerateDbTemplateRouter(PrivateGroup)
 		systemRouter.InitTbGenerateProjectPathRouter(PrivateGroup)
 		systemRouter.InitTbGenerateProjectPathModelRouter(PrivateGroup)

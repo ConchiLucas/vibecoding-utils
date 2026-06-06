@@ -16,7 +16,7 @@ func (s *TbGenerateProjectPathModelService) DeleteTbGenerateProjectPathModel(req
 }
 
 func (s *TbGenerateProjectPathModelService) UpdateTbGenerateProjectPathModel(req *system.TbGenerateProjectPathModel) error {
-	return global.GVA_DB.Updates(req).Error
+	return global.GVA_DB.Save(req).Error
 }
 
 func (s *TbGenerateProjectPathModelService) GetTbGenerateProjectPathModel(id string) (res system.TbGenerateProjectPathModel, err error) {
@@ -24,7 +24,11 @@ func (s *TbGenerateProjectPathModelService) GetTbGenerateProjectPathModel(id str
 	return
 }
 
-func (s *TbGenerateProjectPathModelService) GetTbGenerateProjectPathModelList() (res []system.TbGenerateProjectPathModel, err error) {
-	err = global.GVA_DB.Find(&res).Error
+func (s *TbGenerateProjectPathModelService) GetTbGenerateProjectPathModelList(pathId int) (res []system.TbGenerateProjectPathModel, err error) {
+	db := global.GVA_DB.Model(&system.TbGenerateProjectPathModel{})
+	if pathId > 0 {
+		db = db.Where("path_id = ?", pathId)
+	}
+	err = db.Order("id ASC").Find(&res).Error
 	return
 }

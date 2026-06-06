@@ -6,6 +6,7 @@ import (
 	"github.com/flipped-aurora/easy-deploy/server/global"
 	"github.com/flipped-aurora/easy-deploy/server/model/common/response"
 	"github.com/flipped-aurora/easy-deploy/server/model/system"
+	systemReq "github.com/flipped-aurora/easy-deploy/server/model/system/request"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
@@ -55,6 +56,20 @@ func (a *TbGenerateProjectApi) UpdateTbGenerateProject(c *gin.Context) {
 	if err != nil {
 		global.GVA_LOG.Error("更新失败!", zap.Error(err))
 		response.FailWithMessage("更新失败", c)
+	} else {
+		response.OkWithMessage("更新成功", c)
+	}
+}
+
+func (a *TbGenerateProjectApi) UpdateSelectedProjectInstance(c *gin.Context) {
+	var req systemReq.UpdateSelectedProjectInstanceReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.FailWithMessage(err.Error(), c)
+		return
+	}
+	if err := tbGenerateProjectService.UpdateSelectedProjectInstance(req.TemplateProjectId, req.ProjectInstanceId); err != nil {
+		global.GVA_LOG.Error("更新项目选中状态失败!", zap.Error(err))
+		response.FailWithMessage("更新项目选中状态失败", c)
 	} else {
 		response.OkWithMessage("更新成功", c)
 	}

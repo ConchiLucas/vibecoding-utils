@@ -1,6 +1,8 @@
 package system
 
 import (
+	"strconv"
+
 	"github.com/flipped-aurora/easy-deploy/server/global"
 	"github.com/flipped-aurora/easy-deploy/server/model/common/response"
 	"github.com/flipped-aurora/easy-deploy/server/model/system"
@@ -70,7 +72,13 @@ func (a *TbGenerateProjectPathModelApi) GetTbGenerateProjectPathModel(c *gin.Con
 }
 
 func (a *TbGenerateProjectPathModelApi) GetTbGenerateProjectPathModelList(c *gin.Context) {
-	res, err := tbGenerateProjectPathModelService.GetTbGenerateProjectPathModelList()
+	pathId := 0
+	if v := c.Query("pathId"); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil {
+			pathId = parsed
+		}
+	}
+	res, err := tbGenerateProjectPathModelService.GetTbGenerateProjectPathModelList(pathId)
 	if err != nil {
 		global.GVA_LOG.Error("查询列表失败!", zap.Error(err))
 		response.FailWithMessage("查询列表失败", c)
