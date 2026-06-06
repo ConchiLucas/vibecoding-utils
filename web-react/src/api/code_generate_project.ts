@@ -31,6 +31,10 @@ export const copyProject = (id: string) => {
     return api.get(`/tbgenerateproject/copy?id=${id}`)
 }
 
+export const generateProjectCode = (data: any) => {
+    return api.post('/tbgenerateproject/generateCode', data)
+}
+
 export const getProjectInstanceList = (templateProjectId: number, ensureDefault = true) => {
     return api.get('/tbgenerateprojectinstance/getTbGenerateProjectInstanceList', {
         params: {

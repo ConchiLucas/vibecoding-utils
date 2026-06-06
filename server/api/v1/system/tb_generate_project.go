@@ -75,6 +75,21 @@ func (a *TbGenerateProjectApi) UpdateSelectedProjectInstance(c *gin.Context) {
 	}
 }
 
+func (a *TbGenerateProjectApi) GenerateCode(c *gin.Context) {
+	var req systemReq.GenerateProjectCodeReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.FailWithMessage(err.Error(), c)
+		return
+	}
+	res, err := tbGenerateProjectService.GenerateCode(req)
+	if err != nil {
+		global.GVA_LOG.Error("生成代码失败!", zap.Error(err))
+		response.FailWithMessage(err.Error(), c)
+	} else {
+		response.OkWithDetailed(res, "生成成功", c)
+	}
+}
+
 func (a *TbGenerateProjectApi) GetTbGenerateProject(c *gin.Context) {
 	id := c.Query("id")
 	res, err := tbGenerateProjectService.GetTbGenerateProject(id)
