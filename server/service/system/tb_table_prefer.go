@@ -55,7 +55,7 @@ func (s *TbTablePreferService) GetTbTablePreferInfoList(info systemReq.TablePref
 	return list, total, err
 }
 
-func (s *TbTablePreferService) GetPreferVOByParams(databaseStr string, userName string, projectConfigID uint) (system.TbTablePrefer, error) {
+func (s *TbTablePreferService) GetPreferVOByParams(databaseStr string, userName string, projectConfigID uint, connectionID uint) (system.TbTablePrefer, error) {
 	var prefer system.TbTablePrefer
 	parts := strings.Split(databaseStr, ":")
 	if len(parts) >= 2 {
@@ -66,11 +66,14 @@ func (s *TbTablePreferService) GetPreferVOByParams(databaseStr string, userName 
 	if projectConfigID != 0 {
 		db = db.Where("project_config_id = ?", projectConfigID)
 	}
+	if connectionID != 0 {
+		db = db.Where("connection_id = ?", connectionID)
+	}
 	err := db.Order("id desc").First(&prefer).Error
 	return prefer, err
 }
 
-func (s *TbTablePreferService) GetPreferColumnValueList(databaseStr string, userName string, projectConfigID uint) ([]map[string]interface{}, error) {
+func (s *TbTablePreferService) GetPreferColumnValueList(databaseStr string, userName string, projectConfigID uint, connectionID uint) ([]map[string]interface{}, error) {
 	parts := strings.Split(databaseStr, ":")
 	if len(parts) < 2 {
 		return []map[string]interface{}{}, nil
@@ -79,6 +82,9 @@ func (s *TbTablePreferService) GetPreferColumnValueList(databaseStr string, user
 	db := global.GVA_DB.Where("database_name = ? AND table_name = ? AND user_name = ?", parts[0], parts[1], userName)
 	if projectConfigID != 0 {
 		db = db.Where("project_config_id = ?", projectConfigID)
+	}
+	if connectionID != 0 {
+		db = db.Where("connection_id = ?", connectionID)
 	}
 	err := db.Find(&prefers).Error
 	if err != nil {
@@ -97,7 +103,7 @@ func (s *TbTablePreferService) GetPreferColumnValueList(databaseStr string, user
 }
 
 // GetHistoryTableNames returns a deduplicated list of "db:table" strings previously queried by the user
-func (s *TbTablePreferService) GetHistoryTableNames(userName string, projectConfigID uint) ([]string, error) {
+func (s *TbTablePreferService) GetHistoryTableNames(userName string, projectConfigID uint, connectionID uint) ([]string, error) {
 	type row struct {
 		DatabaseName string
 		TableName    string
@@ -110,6 +116,9 @@ func (s *TbTablePreferService) GetHistoryTableNames(userName string, projectConf
 		Where("user_name = ?", userName)
 	if projectConfigID != 0 {
 		db = db.Where("project_config_id = ?", projectConfigID)
+	}
+	if connectionID != 0 {
+		db = db.Where("connection_id = ?", connectionID)
 	}
 	err := db.Group("database_name, table_name").
 		Order("max_id DESC").

@@ -48,7 +48,11 @@ function relationEndpointLabel(relation: TbTableRelate, direction: 'source' | 't
   return `${formatTableLabel(relation.relateDatabaseName, relation.relateTableName)}.${relation.relateColumnName || '-'}`;
 }
 
-export default function RelateManager() {
+interface RelateManagerProps {
+  embedded?: boolean;
+}
+
+export default function RelateManager({ embedded = false }: RelateManagerProps) {
   const [relates, setRelates] = useState<TbTableRelate[]>([]);
   const [loading, setLoading] = useState(true);
   const [page] = useState(1);
@@ -222,7 +226,7 @@ export default function RelateManager() {
   }
 
   return (
-    <div className="max-w-full space-y-6">
+    <div className={embedded ? 'flex min-h-full max-w-full flex-col space-y-5' : 'max-w-full space-y-6'}>
       <div className="flex flex-col gap-4 rounded-2xl border border-slate-200/70 bg-white p-6 shadow-sm lg:flex-row lg:items-center lg:justify-between">
         <div>
           <h2 className="text-xl font-extrabold text-slate-900">表级血缘指配中心</h2>
@@ -243,7 +247,7 @@ export default function RelateManager() {
         </div>
       </div>
 
-      <div className="grid min-h-[520px] gap-5 xl:grid-cols-[360px_minmax(0,1fr)]">
+      <div className={`grid gap-5 xl:grid-cols-[360px_minmax(0,1fr)] ${embedded ? 'min-h-0 flex-1' : 'min-h-[520px]'}`}>
         <aside className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
           <div className="mb-4 flex items-center justify-between gap-3">
             <div>
@@ -265,7 +269,7 @@ export default function RelateManager() {
             />
           </div>
 
-          <div className="max-h-[620px] space-y-2 overflow-y-auto pr-1">
+          <div className={`${embedded ? 'max-h-[calc(100vh-300px)]' : 'max-h-[620px]'} space-y-2 overflow-y-auto pr-1`}>
             {loading ? (
               <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 py-12 text-center text-sm text-slate-500">加载血缘链路...</div>
             ) : visibleTables.length === 0 ? (

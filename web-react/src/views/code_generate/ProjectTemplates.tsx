@@ -519,7 +519,7 @@ export default function ProjectTemplates() {
                     className="flex-shrink-0 bg-teal-500 hover:bg-teal-400 disabled:opacity-50 text-slate-900 px-4 py-2 rounded-xl text-sm font-bold inline-flex items-center gap-2 transition-all whitespace-nowrap shadow-[0_0_15px_rgba(20,184,166,0.3)] hover:shadow-[0_0_25px_rgba(20,184,166,0.5)] active:scale-95"
                   >
                     {saving ? <RefreshCw size={16} className="animate-spin" /> : <Save size={16} />}
-                    {activeModel?.ID ? '覆盖原落盘规则' : '初始化并强制落盘'}
+                    {activeModel?.ID ? '保存' : '初始化并强制落盘'}
                   </button>
               </div>
               

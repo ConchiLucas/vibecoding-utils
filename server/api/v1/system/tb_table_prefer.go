@@ -122,6 +122,7 @@ func (a *TbTablePreferApi) GetTbTablePreferList(c *gin.Context) {
 type TablePreferByParamsModel struct {
 	DatabaseStr     string `json:"databaseStr"`
 	ProjectConfigID uint   `json:"projectConfigId"`
+	ConnectionID    uint   `json:"connectionId"`
 }
 
 func (a *TbTablePreferApi) GetPreferVOByParams(c *gin.Context) {
@@ -132,7 +133,7 @@ func (a *TbTablePreferApi) GetPreferVOByParams(c *gin.Context) {
 		return
 	}
 	userName := utils.GetUserName(c)
-	prefer, err := tbTablePreferService.GetPreferVOByParams(params.DatabaseStr, userName, params.ProjectConfigID)
+	prefer, err := tbTablePreferService.GetPreferVOByParams(params.DatabaseStr, userName, params.ProjectConfigID, params.ConnectionID)
 	if err != nil {
 		global.GVA_LOG.Error("获取失败!", zap.Error(err))
 		response.FailWithMessage("获取失败", c)
@@ -149,7 +150,7 @@ func (a *TbTablePreferApi) GetPreferColumnValueList(c *gin.Context) {
 		return
 	}
 	userName := utils.GetUserName(c)
-	list, err := tbTablePreferService.GetPreferColumnValueList(params.DatabaseStr, userName, params.ProjectConfigID)
+	list, err := tbTablePreferService.GetPreferColumnValueList(params.DatabaseStr, userName, params.ProjectConfigID, params.ConnectionID)
 	if err != nil {
 		global.GVA_LOG.Error("获取失败!", zap.Error(err))
 		response.FailWithMessage("获取失败", c)
@@ -162,12 +163,13 @@ func (a *TbTablePreferApi) GetHistoryTableNames(c *gin.Context) {
 	userName := utils.GetUserName(c)
 	var params struct {
 		ProjectConfigID uint `form:"projectConfigId"`
+		ConnectionID    uint `form:"connectionId"`
 	}
 	if err := c.ShouldBindQuery(&params); err != nil {
 		response.FailWithMessage(err.Error(), c)
 		return
 	}
-	list, err := tbTablePreferService.GetHistoryTableNames(userName, params.ProjectConfigID)
+	list, err := tbTablePreferService.GetHistoryTableNames(userName, params.ProjectConfigID, params.ConnectionID)
 	if err != nil {
 		global.GVA_LOG.Error("获取历史表名失败!", zap.Error(err))
 		response.FailWithMessage("获取失败", c)

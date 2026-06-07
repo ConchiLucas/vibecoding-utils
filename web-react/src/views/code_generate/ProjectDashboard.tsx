@@ -634,31 +634,29 @@ export default function ProjectDashboard() {
                   </div>
 
                   <div className="mt-auto border-t border-gray-100 bg-gray-50/50 p-4 flex flex-col gap-2">
-                    <div className="flex min-h-[38px] gap-2">
-                      {showDbTemplateActions && (
-                        <>
-                          <button
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              navigate(`/code-generate/${p.ID}/db-templates`);
-                            }}
-                            className="flex-1 min-w-0 flex justify-center items-center gap-1.5 py-2 px-2 text-sm text-cyan-800 bg-cyan-50 hover:bg-cyan-100 rounded-md transition-colors font-bold border border-cyan-200"
-                          >
-                            <Database size={15} /> <span className="truncate">数据库模板</span>
-                          </button>
-                          <button
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              handleCopyDbTemplateSql(p);
-                            }}
-                            disabled={copyingTemplateProjectId === Number(p.ID)}
-                            className="flex-1 min-w-0 flex justify-center items-center gap-1.5 py-2 px-2 text-sm text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-md transition-colors font-bold border border-emerald-200 disabled:cursor-not-allowed disabled:opacity-60"
-                          >
-                            <ClipboardCopy size={15} /> <span className="truncate">{copyingTemplateProjectId === Number(p.ID) ? '复制中' : '复制 SQL'}</span>
-                          </button>
-                        </>
-                      )}
-                    </div>
+                    {showDbTemplateActions && (
+                      <div className="flex min-h-[38px] gap-2">
+                        <button
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            navigate(`/code-generate/${p.ID}/db-templates`);
+                          }}
+                          className="flex-1 min-w-0 flex justify-center items-center gap-1.5 py-2 px-2 text-sm text-cyan-800 bg-cyan-50 hover:bg-cyan-100 rounded-md transition-colors font-bold border border-cyan-200"
+                        >
+                          <Database size={15} /> <span className="truncate">数据库模板</span>
+                        </button>
+                        <button
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            handleCopyDbTemplateSql(p);
+                          }}
+                          disabled={copyingTemplateProjectId === Number(p.ID)}
+                          className="flex-1 min-w-0 flex justify-center items-center gap-1.5 py-2 px-2 text-sm text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-md transition-colors font-bold border border-emerald-200 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          <ClipboardCopy size={15} /> <span className="truncate">{copyingTemplateProjectId === Number(p.ID) ? '复制中' : '复制 SQL'}</span>
+                        </button>
+                      </div>
+                    )}
                     <div className="flex gap-2">
                       <button
                         onClick={(event) => {
@@ -690,6 +688,7 @@ export default function ProjectDashboard() {
                     >
                       <Copy size={15} /> <span className="truncate">克隆</span>
                     </button>
+                    {!showDbTemplateActions && <div className="min-h-[38px]" aria-hidden="true" />}
                   </div>
                   </motion.div>
                 );

@@ -7,6 +7,7 @@ import (
 type TbTablePrefer struct {
 	global.GVA_MODEL_NO_SOFT_DELETE
 	ProjectConfigID uint   `json:"projectConfigId" form:"projectConfigId" gorm:"column:project_config_id;type:bigint;index;comment:项目配置ID"`
+	ConnectionID    uint   `json:"connectionId" form:"connectionId" gorm:"column:connection_id;type:bigint;index;comment:数据源ID"`
 	DatabaseName    string `json:"databaseName" gorm:"column:database_name;type:varchar(255);comment:数据库名"`
 	TbName          string `json:"tableName" gorm:"column:table_name;type:varchar(255);comment:表名"`
 	ColumnValue     string `json:"columnValue" gorm:"column:column_value;type:varchar(255);comment:字段值"`

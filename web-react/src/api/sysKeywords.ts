@@ -32,7 +32,7 @@ export const getPreferColumnValueList = (data: any) => {
   })
 }
 
-export const getHistoryTableNames = (params?: { projectConfigId?: number | null }) => {
+export const getHistoryTableNames = (params?: { projectConfigId?: number | null; connectionId?: number | null }) => {
   return request({
     url: '/tablePrefer/getHistoryTableNames',
     method: 'get',

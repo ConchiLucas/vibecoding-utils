@@ -392,6 +392,7 @@ func (s *TbTableRelateService) GetClientData(query systemReq.ClientQueryModel) (
 	// Insert Prefer (best-effort, ignore error)
 	prefer := system.TbTablePrefer{
 		ProjectConfigID: query.ProjectConfigID,
+		ConnectionID:    query.ConnectionID,
 		DatabaseName:    dbName,
 		TbName:          tableName,
 		ColumnValue:     query.Value,
