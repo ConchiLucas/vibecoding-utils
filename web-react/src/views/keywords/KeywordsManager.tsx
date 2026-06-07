@@ -427,19 +427,12 @@ export default function KeywordsManager() {
 
       {showKeywordDetail && (
       <div className="fixed inset-0 z-[10000] flex flex-col overflow-hidden bg-slate-50 text-slate-900">
-        <div className="flex min-h-[72px] items-center justify-between border-b border-slate-800 bg-slate-900 px-6 shadow-md">
-          <div className="min-w-0">
-            <h2 className="truncate text-lg font-extrabold tracking-tight">
-              <span className="text-teal-400">全局关键字探查</span>
-              <span className="font-normal text-slate-300">
-                {selectedConnection ? ` / ${selectedConnection.envName || '默认环境'} / ${selectedConnection.connectionName}` : ' / 数据源详情'}
-              </span>
-            </h2>
-          </div>
+        <div className="relative flex min-h-[72px] items-center justify-center border-b border-slate-800 bg-slate-900 px-6 shadow-md">
+          <h1 className="truncate text-2xl font-extrabold tracking-tight text-teal-400">全局关键字探查</h1>
           <button
             type="button"
             onClick={() => setShowKeywordDetail(false)}
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-700 text-slate-300 transition-colors hover:bg-white/10 hover:text-white"
+            className="absolute right-6 top-1/2 flex h-10 w-10 -translate-y-1/2 shrink-0 items-center justify-center rounded-xl border border-slate-700 text-slate-300 transition-colors hover:bg-white/10 hover:text-white"
             title="关闭全局关键字探查"
             aria-label="关闭全局关键字探查"
           >
@@ -450,11 +443,6 @@ export default function KeywordsManager() {
         <div className="min-h-0 flex-1 flex flex-col overflow-hidden bg-white">
       {/* Top Search Bar */}
       <div className="relative z-30 border-b border-slate-100 px-8 py-6 bg-slate-50/50">
-        <div className="relative mb-6 flex items-start justify-center">
-          <div className="text-center">
-            <h1 className="text-2xl font-extrabold text-slate-800">全局关键字探查</h1>
-          </div>
-        </div>
         <div className="mx-auto mb-6 flex max-w-[1180px] flex-wrap items-center justify-center gap-2 text-sm">
           {selectedConnection ? (
             <>
