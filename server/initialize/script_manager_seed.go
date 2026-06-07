@@ -30,6 +30,7 @@ const (
 	reverseClickHouseTableWorkflowName   = "ClickHouse 单表从本机导出到 mac mini 服务器"
 	defaultExportStepName                = "导出本地 PostgreSQL 数据库"
 	reverseExportStepName                = "导出目标服务器 PostgreSQL 数据库"
+	legacyReverseUploadStepName          = "通过 Tailscale 上传 PostgreSQL 导出文件到本地"
 	defaultClickHouseExportStepName      = "导出 mac mini ClickHouse 数据库"
 	reverseClickHouseExportStepName      = "导出本机 ClickHouse 数据库"
 	legacyDefaultExportStepName          = "导出 easy-deploy 本地数据库"
@@ -544,22 +545,41 @@ func seedReversePostgresDatabaseExportWorkflow(db *gorm.DB, userID uint) error {
 	if targetDatabaseResourceID == 0 {
 		targetDatabaseResourceID = sourceDatabaseResourceID
 	}
+	sourceDatabaseHost := firstText(databaseResourceHostForConfigID(db, userID, sourceDatabaseResourceID), defaultMacMiniDatabaseHost)
+	sourceServerResourceID := firstServerResourceConfigIDForHost(db, userID, sourceDatabaseHost)
+	if sourceServerResourceID == 0 {
+		sourceServerResourceID = firstResourceConfigIDByPlaceholderKeys(
+			db,
+			userID,
+			defaultServerResourceCategoryName,
+			defaultMacMiniServerPlaceholderKey(),
+			defaultMacMiniDatabaseConfigName,
+			defaultTencentServerConfigName,
+		)
+	}
+	sourceServerID := firstServerIDForHost(db, userID, sourceDatabaseHost)
+	if sourceServerID == 0 {
+		sourceServerID = firstServerIDForUser(db, userID)
+	}
 	pathConstantsResourceID, dynamicParamsCategoryID, dynamicParamsResourceID, err := ensurePostgresWorkflowResources(db, userID, workflow.ID, reverseDeployProjectNameSeedRow(), seedDynamicParamsResourceConfigs)
 	if err != nil {
 		return err
 	}
+	_ = db.Model(&sysModel.TbScriptStep{}).
+		Where("workflow_id = ? AND step_name = ?", workflow.ID, "通过 Tailscale 拉取 PostgreSQL 导出文件到本地").
+		Update("step_name", legacyReverseUploadStepName).Error
 
 	steps := []sysModel.TbScriptStep{
 		{
 			WorkflowId:    workflow.ID,
 			StepName:      reverseExportStepName,
 			StepType:      "local_exec",
-			ScriptContent: defaultEasyDeployExportScript,
-			Placeholders:  defaultExportPlaceholders(sourceDatabaseResourceID, dynamicParamsCategoryID, dynamicParamsResourceID, pathConstantsResourceID, connectionID),
+			ScriptContent: defaultPostgresRemoteDatabaseExportScript,
+			Placeholders:  defaultRemoteExportPlaceholders(sourceDatabaseResourceID, sourceServerResourceID, dynamicParamsCategoryID, dynamicParamsResourceID, pathConstantsResourceID, connectionID, sourceServerID),
 		},
 		{
 			WorkflowId:    workflow.ID,
-			StepName:      "通过 Tailscale 上传 PostgreSQL 导出文件到本地",
+			StepName:      legacyReverseUploadStepName,
 			StepType:      "local_upload",
 			ScriptContent: defaultEasyDeployUploadScript,
 			Placeholders:  defaultUploadPlaceholders(localServerResourceID, dynamicParamsCategoryID, dynamicParamsResourceID, pathConstantsResourceID, localServerID),
@@ -639,6 +659,22 @@ func seedReversePostgresTableExportWorkflow(db *gorm.DB, userID uint) error {
 	if targetDatabaseResourceID == 0 {
 		targetDatabaseResourceID = sourceDatabaseResourceID
 	}
+	sourceDatabaseHost := firstText(databaseResourceHostForConfigID(db, userID, sourceDatabaseResourceID), defaultMacMiniDatabaseHost)
+	sourceServerResourceID := firstServerResourceConfigIDForHost(db, userID, sourceDatabaseHost)
+	if sourceServerResourceID == 0 {
+		sourceServerResourceID = firstResourceConfigIDByPlaceholderKeys(
+			db,
+			userID,
+			defaultServerResourceCategoryName,
+			defaultMacMiniServerPlaceholderKey(),
+			defaultMacMiniDatabaseConfigName,
+			defaultTencentServerConfigName,
+		)
+	}
+	sourceServerID := firstServerIDForHost(db, userID, sourceDatabaseHost)
+	if sourceServerID == 0 {
+		sourceServerID = firstServerIDForUser(db, userID)
+	}
 	pathConstantsResourceID, dynamicParamsCategoryID, dynamicParamsResourceID, err := ensurePostgresWorkflowResources(db, userID, workflow.ID, reverseTableProjectNameSeedRow(), seedReverseTableDynamicParamsResourceConfigs)
 	if err != nil {
 		return err
@@ -649,8 +685,8 @@ func seedReversePostgresTableExportWorkflow(db *gorm.DB, userID uint) error {
 			WorkflowId:    workflow.ID,
 			StepName:      reverseTableExportStepName,
 			StepType:      "local_exec",
-			ScriptContent: defaultPostgresTableExportScript,
-			Placeholders:  defaultTableExportPlaceholders(sourceDatabaseResourceID, dynamicParamsCategoryID, dynamicParamsResourceID, pathConstantsResourceID, connectionID),
+			ScriptContent: defaultPostgresRemoteTableExportScript,
+			Placeholders:  defaultRemoteTableExportPlaceholders(sourceDatabaseResourceID, sourceServerResourceID, dynamicParamsCategoryID, dynamicParamsResourceID, pathConstantsResourceID, connectionID, sourceServerID),
 		},
 		{
 			WorkflowId:    workflow.ID,
@@ -1247,7 +1283,8 @@ func seedReverseTableDynamicParamsResourceConfigs(db *gorm.DB, userID uint, cate
 		{Name: "TABLE_SCHEMA", Placeholder: "表 Schema", Value: "public"},
 		{Name: "TABLE_NAME", Placeholder: "表名", Value: ""},
 		{Name: "TARGET_TABLE_DROP_BEFORE_IMPORT", Placeholder: "导入前删除目标表", Value: "true"},
-		{Name: "SOURCE_PG_DUMP_CMD", Placeholder: "源库 pg_dump 命令", Value: "/usr/local/bin/pg_dump"},
+		{Name: "SOURCE_PG_DUMP_CMD", Placeholder: "源库 pg_dump 命令", Value: "/usr/local/bin/docker exec postgres16 pg_dump"},
+		{Name: "LOCAL_EXPECT_CMD", Placeholder: "本地 expect 命令", Value: "/usr/bin/expect"},
 		{Name: "TARGET_PSQL_CMD", Placeholder: "目标库 psql 命令", Value: "/usr/local/bin/psql"},
 		{Name: "TARGET_PG_RESTORE_CMD", Placeholder: "目标库 pg_restore 命令", Value: "/usr/local/bin/pg_restore"},
 	}
@@ -1384,6 +1421,9 @@ func syncDefaultScriptStep(db *gorm.DB, existing sysModel.TbScriptStep, desired 
 	if shouldRefreshDefaultStepScript(existing.StepName, existing.ScriptContent) {
 		updates["script_content"] = desired.ScriptContent
 	}
+	if shouldRefreshDefaultStepType(existing.StepName, existing.StepType, desired.StepType) {
+		updates["step_type"] = desired.StepType
+	}
 	if len(updates) == 0 {
 		return nil
 	}
@@ -1475,6 +1515,43 @@ func firstServerIDForHost(db *gorm.DB, userID uint, host string) uint {
 	return 0
 }
 
+func firstServerResourceConfigIDForHost(db *gorm.DB, userID uint, host string) uint {
+	identifier := resourceIdentifierForHost(host)
+	preferredKeys := []string{}
+	if identifier != "" {
+		preferredKeys = append(preferredKeys, databaseResourcePlaceholderKey(identifier, "server"), identifier)
+	}
+	if normalizeDatabaseResourceHost(host) == defaultMacMiniDatabaseHost {
+		preferredKeys = append(preferredKeys, defaultMacMiniServerPlaceholderKey(), defaultMacMiniDatabaseConfigName)
+	}
+	if normalizeDatabaseResourceHost(host) == defaultTencentServerHost {
+		preferredKeys = append(preferredKeys, databaseResourcePlaceholderKey(defaultTencentServerConfigName, "server"), defaultTencentServerConfigName)
+	}
+	if len(preferredKeys) == 0 {
+		return 0
+	}
+	var category sysModel.TbScriptResourceCategory
+	if err := db.Where("user_id = ? AND category_name = ?", userID, defaultServerResourceCategoryName).First(&category).Error; err != nil {
+		return 0
+	}
+	var configs []sysModel.TbScriptResourceConfig
+	if err := db.Where("user_id = ? AND category_id = ? AND (workflow_id = 0 OR workflow_id IS NULL)", userID, category.ID).Order("id").Find(&configs).Error; err != nil {
+		return 0
+	}
+	for _, preferredKey := range preferredKeys {
+		preferredKey = normalizeSeedPlaceholderName(preferredKey)
+		if preferredKey == "" {
+			continue
+		}
+		for _, config := range configs {
+			if normalizeSeedPlaceholderName(config.PlaceholderKey) == preferredKey {
+				return config.ID
+			}
+		}
+	}
+	return 0
+}
+
 func firstConnectionID(db *gorm.DB) uint {
 	var connection sysModel.TbConnection
 	if err := db.Order("id").First(&connection).Error; err == nil {
@@ -1557,6 +1634,21 @@ func firstResourceConfigByPlaceholderKeys(db *gorm.DB, userID uint, categoryName
 		return sysModel.TbScriptResourceConfig{}, false
 	}
 	return configs[0], true
+}
+
+func databaseResourceHostForConfigID(db *gorm.DB, userID uint, configID uint) string {
+	if configID == 0 {
+		return ""
+	}
+	var config sysModel.TbScriptResourceConfig
+	if err := db.Where("id = ? AND user_id = ?", configID, userID).First(&config).Error; err != nil {
+		return ""
+	}
+	rows, err := scriptResourceSeedRowsFromJSON(config.Rows)
+	if err != nil {
+		return ""
+	}
+	return databaseResourceHostFromRows(rows)
 }
 
 func firstResourceCategoryID(db *gorm.DB, userID uint, categoryName string) uint {
@@ -3151,6 +3243,49 @@ func defaultTargetExecPlaceholders(databaseResourceID uint, serverResourceID uin
 	return marshalSeedPlaceholders(placeholders)
 }
 
+func defaultRemoteExportPlaceholders(databaseResourceID uint, serverResourceID uint, dynamicCategoryID uint, dynamicConfigID uint, pathConstantsConfigID uint, connectionID uint, serverID uint) string {
+	placeholders := []scriptSeedPlaceholder{}
+	if databaseResourceID != 0 {
+		placeholders = append(placeholders, resourceSeedPlaceholder("SOURCE_DB", "源数据库配置", databaseResourceID))
+	} else if connectionID != 0 {
+		placeholders = append(placeholders, connectionSeedPlaceholder("SOURCE_DB", "源数据库配置", connectionID))
+	}
+	if serverResourceID != 0 {
+		placeholders = append([]scriptSeedPlaceholder{
+			resourceSeedPlaceholder("SOURCE_SERVER", "源服务器配置", serverResourceID),
+		}, placeholders...)
+	} else if serverID != 0 {
+		placeholders = append([]scriptSeedPlaceholder{
+			serverSeedPlaceholder("SOURCE_SERVER", "源服务器配置", serverID),
+		}, placeholders...)
+	}
+	placeholders = appendExecutionParamsPlaceholder(placeholders, dynamicConfigID)
+	placeholders = appendPathConstantsPlaceholder(placeholders, pathConstantsConfigID)
+	placeholders = appendDynamicManualPlaceholder(placeholders, dynamicCategoryID, dynamicConfigID, "SOURCE_DB_DATABASE", "源数据库名称", "easy_deploy")
+	return marshalSeedPlaceholders(placeholders)
+}
+
+func defaultRemoteTableExportPlaceholders(databaseResourceID uint, serverResourceID uint, dynamicCategoryID uint, dynamicConfigID uint, pathConstantsConfigID uint, connectionID uint, serverID uint) string {
+	placeholders := []scriptSeedPlaceholder{}
+	if databaseResourceID != 0 {
+		placeholders = append(placeholders, resourceSeedPlaceholder("SOURCE_DB", "源数据库配置", databaseResourceID))
+	} else if connectionID != 0 {
+		placeholders = append(placeholders, connectionSeedPlaceholder("SOURCE_DB", "源数据库配置", connectionID))
+	}
+	if serverResourceID != 0 {
+		placeholders = append([]scriptSeedPlaceholder{
+			resourceSeedPlaceholder("SOURCE_SERVER", "源服务器配置", serverResourceID),
+		}, placeholders...)
+	} else if serverID != 0 {
+		placeholders = append([]scriptSeedPlaceholder{
+			serverSeedPlaceholder("SOURCE_SERVER", "源服务器配置", serverID),
+		}, placeholders...)
+	}
+	placeholders = appendExecutionParamsPlaceholder(placeholders, dynamicConfigID)
+	placeholders = appendPathConstantsPlaceholder(placeholders, pathConstantsConfigID)
+	return marshalSeedPlaceholders(placeholders)
+}
+
 func defaultTableTargetExecPlaceholders(databaseResourceID uint, serverResourceID uint, dynamicCategoryID uint, dynamicConfigID uint, pathConstantsConfigID uint, connectionID uint, serverID uint) string {
 	placeholders := []scriptSeedPlaceholder{}
 	if databaseResourceID != 0 {
@@ -3484,25 +3619,35 @@ func shouldRefreshDefaultStepScript(stepName string, script string) bool {
 		return true
 	}
 	switch stepName {
-	case legacyDefaultExportStepName, defaultExportStepName, reverseExportStepName:
+	case legacyDefaultExportStepName, defaultExportStepName:
 		return strings.Contains(script, `:-`) || strings.Contains(script, `SOURCE_DB_KEY`) || !strings.Contains(script, `require_non_empty_env`)
-	case defaultTableExportStepName, reverseTableExportStepName:
+	case reverseExportStepName:
+		return !strings.Contains(script, `REMOTE_SCRIPT_LOCAL`) || !strings.Contains(script, `SOURCE_SERVER_TARGET_TAILSCALE_IP`)
+	case defaultTableExportStepName:
 		return !strings.Contains(script, `TABLE_NAME`) || !strings.Contains(script, `SOURCE_PG_DUMP_CMD`)
+	case reverseTableExportStepName:
+		return !strings.Contains(script, `REMOTE_SCRIPT_LOCAL`) ||
+			!strings.Contains(script, `SOURCE_SERVER_TARGET_TAILSCALE_IP`) ||
+			!strings.Contains(script, `SOURCE_TABLE_REF`)
 	case defaultMySQLTableExportStepName, reverseMySQLTableExportStepName:
 		return !strings.Contains(script, `TABLE_NAME`) || !strings.Contains(script, `SOURCE_MYSQLDUMP_CMD`)
 	case "通过 Tailscale 上传导出文件":
 		return strings.Contains(script, `:-`) || strings.Contains(script, `TARGET_SERVER_KEY`) || !strings.Contains(script, `TARGET_TAILSCALE_PORT`)
+	case legacyReverseUploadStepName:
+		return strings.Contains(script, `REMOTE_EXPORT_MANIFEST_LOCAL`) || !strings.Contains(script, `TARGET_TAILSCALE_PORT`)
 	case "通过 Tailscale 上传单表导出文件":
 		return !strings.Contains(script, `SOURCE_TABLE_NAME`) || !strings.Contains(script, `TARGET_TAILSCALE_PORT`)
 	case "通过 Tailscale 上传 MySQL 单表导出文件", "通过 Tailscale 上传 MySQL 单表导出文件到本地":
 		return !strings.Contains(script, `SOURCE_TABLE_NAME`) || !strings.Contains(script, `TARGET_TAILSCALE_PORT`)
 	case "目标服务器整理并校验文件":
 		return strings.Contains(script, `:-`) || !strings.Contains(script, `require_non_empty_env`)
+	case "本地服务器整理并校验 PostgreSQL 文件":
+		return strings.Contains(script, `本地导入清单`) || !strings.Contains(script, `REMOTE_MANIFEST`)
 	case "目标服务器整理并校验单表文件":
 		return !strings.Contains(script, `SOURCE_TABLE_NAME`) || !strings.Contains(script, `RESTORE_ENV`)
 	case "目标服务器整理并校验 MySQL 单表文件", "本地服务器整理并校验 MySQL 单表文件":
 		return !strings.Contains(script, `SOURCE_TABLE_NAME`) || !strings.Contains(script, `RESTORE_ENV`)
-	case "目标服务器导入数据库":
+	case "目标服务器导入数据库", "本地服务器导入 PostgreSQL 数据库":
 		return strings.Contains(script, `TARGET_DB_KEY`) ||
 			!strings.Contains(script, `TARGET_DB_DROP_TABLES_BEFORE_IMPORT`) ||
 			strings.Contains(script, `DROP SCHEMA IF EXISTS public CASCADE`)
@@ -3522,6 +3667,18 @@ func shouldRefreshDefaultStepScript(stepName string, script string) bool {
 		return !strings.Contains(script, `TARGET_CLICKHOUSE_HTTP_CMD`) || !strings.Contains(script, `TARGET_DB_DROP_TABLES_BEFORE_IMPORT`) || !strings.Contains(script, `python_stream_clickhouse_native`)
 	case "本机服务器导入 ClickHouse 单表", "mac mini 服务器导入 ClickHouse 单表":
 		return !strings.Contains(script, `TARGET_CLICKHOUSE_HTTP_CMD`) || !strings.Contains(script, `TARGET_TABLE_DROP_BEFORE_IMPORT`) || !strings.Contains(script, `python_stream_clickhouse_native`)
+	default:
+		return false
+	}
+}
+
+func shouldRefreshDefaultStepType(stepName string, existingStepType string, desiredStepType string) bool {
+	if strings.TrimSpace(desiredStepType) == "" || strings.TrimSpace(existingStepType) == strings.TrimSpace(desiredStepType) {
+		return false
+	}
+	switch stepName {
+	case reverseExportStepName, legacyReverseUploadStepName, "本地服务器整理并校验 PostgreSQL 文件", "本地服务器导入 PostgreSQL 数据库":
+		return true
 	default:
 		return false
 	}
@@ -3560,6 +3717,13 @@ run_configured_cmd_with_env() {
   shift 3
   require_non_empty_env "$cmd_var"
   read -r -a cmd_parts <<< "${!cmd_var}"
+  for i in "${!cmd_parts[@]}"; do
+    if [ "${cmd_parts[$i]##*/}" = "docker" ] && [ "${cmd_parts[$((i + 1))]:-}" = "exec" ]; then
+      cmd_parts=("${cmd_parts[@]:0:$((i + 2))}" -e "${env_name}=${env_value}" "${cmd_parts[@]:$((i + 2))}")
+      "${cmd_parts[@]}" "$@"
+      return
+    fi
+  done
   env "$env_name=$env_value" "${cmd_parts[@]}" "$@"
 }
 
@@ -3623,6 +3787,346 @@ PROJECT_NAME=$PROJECT_NAME
 EOF
 
 echo "导出完成: $DUMP_FILE"
+echo "校验文件: $DUMP_SHA_FILE"
+echo "流程清单: $LATEST_ENV"
+`
+
+const defaultPostgresRemoteDatabaseExportScript = `#!/usr/bin/env bash
+set -euo pipefail
+
+require_env() {
+  for name in "$@"; do
+    if [ -z "${!name+x}" ]; then
+      echo "缺少必要资源配置: $name" >&2
+      exit 1
+    fi
+  done
+}
+
+require_non_empty_env() {
+  for name in "$@"; do
+    require_env "$name"
+    if [ -z "${!name}" ]; then
+      echo "资源配置不能为空: $name" >&2
+      exit 1
+    fi
+  done
+}
+
+write_env_assignment() {
+  local name="$1"
+  local value="$2"
+  printf 'export %s=%q\n' "$name" "$value" >> "$REMOTE_ENV_LOCAL"
+}
+
+run_expect() {
+  local delimiter
+  local joined
+  delimiter="$(printf '\034')"
+  joined=""
+  for arg in "$@"; do
+    joined="${joined}${arg}${delimiter}"
+  done
+  EXPECT_COMMAND="$joined" "$LOCAL_EXPECT_CMD" <<'EXPECT_SCRIPT'
+set timeout -1
+set args {}
+foreach part [split $env(EXPECT_COMMAND) "\034"] {
+  if {$part ne ""} {
+    lappend args $part
+  }
+}
+spawn {*}$args
+expect {
+  -nocase -re "password:" {
+    log_user 0
+    send -- "$env(SOURCE_SERVER_PASSWORD)\r"
+    log_user 1
+    exp_continue
+  }
+  eof
+}
+catch wait result
+exit [lindex $result 3]
+EXPECT_SCRIPT
+}
+
+require_non_empty_env PROJECT_NAME SOURCE_DB_TYPE SOURCE_DB_HOST SOURCE_DB_PORT SOURCE_DB_DATABASE SOURCE_DB_USER EXPORT_ROOT LOCAL_ENV SOURCE_PG_DUMP_CMD LOCAL_EXPECT_CMD SOURCE_SERVER_TARGET_TAILSCALE_IP SOURCE_SERVER_TARGET_TAILSCALE_PORT SOURCE_SERVER_USER SOURCE_SERVER_PASSWORD
+require_env SOURCE_DB_PASSWORD
+
+case "$SOURCE_DB_TYPE" in
+  pgsql|postgres|postgresql)
+    ;;
+  *)
+    echo "远端导出仅支持 PostgreSQL，当前 SOURCE_DB_TYPE: $SOURCE_DB_TYPE" >&2
+    exit 1
+    ;;
+esac
+
+SOURCE_DB_NAME="$SOURCE_DB_DATABASE"
+SOURCE_DB_CONNECT_HOST="${SOURCE_DB_REMOTE_HOST:-$SOURCE_DB_HOST}"
+SOURCE_SSH_HOST="$SOURCE_SERVER_TARGET_TAILSCALE_IP"
+SOURCE_SSH_PORT="$SOURCE_SERVER_TARGET_TAILSCALE_PORT"
+RUN_ID="$(date +%Y%m%d_%H%M%S)"
+DUMP_BASENAME="${PROJECT_NAME}_${SOURCE_DB_NAME}_${RUN_ID}.dump"
+DUMP_SHA_BASENAME="${DUMP_BASENAME}.sha256"
+DUMP_FILE="${EXPORT_ROOT}/${DUMP_BASENAME}"
+DUMP_SHA_FILE="${DUMP_FILE}.sha256"
+LATEST_ENV="$LOCAL_ENV"
+REMOTE_EXPORT_ROOT="${EXPORT_ROOT}/source"
+REMOTE_DUMP_FILE="${REMOTE_EXPORT_ROOT}/${DUMP_BASENAME}"
+REMOTE_DUMP_SHA_FILE="${REMOTE_DUMP_FILE}.sha256"
+REMOTE_SCRIPT_LOCAL="${EXPORT_ROOT}/${PROJECT_NAME}_${SOURCE_DB_NAME}_${RUN_ID}_remote_pg_export.sh"
+REMOTE_ENV_LOCAL="${EXPORT_ROOT}/${PROJECT_NAME}_${SOURCE_DB_NAME}_${RUN_ID}_remote_pg.env"
+REMOTE_SCRIPT_REMOTE="/tmp/${PROJECT_NAME}_${SOURCE_DB_NAME}_${RUN_ID}_remote_pg_export.sh"
+REMOTE_ENV_REMOTE="/tmp/${PROJECT_NAME}_${SOURCE_DB_NAME}_${RUN_ID}_remote_pg.env"
+
+mkdir -p "$EXPORT_ROOT" "$(dirname "$LATEST_ENV")"
+chmod 700 "$EXPORT_ROOT"
+
+cat > "$REMOTE_SCRIPT_LOCAL" <<'REMOTE_SCRIPT'
+#!/usr/bin/env bash
+set -euo pipefail
+
+run_configured_cmd_with_env() {
+  local env_name="$1"
+  local env_value="$2"
+  local cmd_var="$3"
+  shift 3
+  read -r -a cmd_parts <<< "${!cmd_var}"
+  for i in "${!cmd_parts[@]}"; do
+    if [ "${cmd_parts[$i]##*/}" = "docker" ] && [ "${cmd_parts[$((i + 1))]:-}" = "exec" ]; then
+      cmd_parts=("${cmd_parts[@]:0:$((i + 2))}" -e "${env_name}=${env_value}" "${cmd_parts[@]:$((i + 2))}")
+      "${cmd_parts[@]}" "$@"
+      return
+    fi
+  done
+  env "$env_name=$env_value" "${cmd_parts[@]}" "$@"
+}
+
+mkdir -p "$REMOTE_EXPORT_ROOT"
+chmod 700 "$REMOTE_EXPORT_ROOT"
+
+echo "开始在目标服务器本地导出 PostgreSQL 数据库 ${SOURCE_DB_NAME} (${SOURCE_DB_CONNECT_HOST}:${SOURCE_DB_PORT})"
+run_configured_cmd_with_env PGPASSWORD "$SOURCE_DB_PASSWORD" SOURCE_PG_DUMP_CMD \
+  -h "$SOURCE_DB_CONNECT_HOST" \
+  -p "$SOURCE_DB_PORT" \
+  -U "$SOURCE_DB_USER" \
+  -Fc \
+  "$SOURCE_DB_NAME" > "$REMOTE_DUMP_FILE"
+
+(cd "$(dirname "$REMOTE_DUMP_FILE")" && shasum -a 256 "$(basename "$REMOTE_DUMP_FILE")") > "$REMOTE_DUMP_SHA_FILE"
+
+echo "目标服务器 PostgreSQL 导出完成: $REMOTE_DUMP_FILE"
+REMOTE_SCRIPT
+
+: > "$REMOTE_ENV_LOCAL"
+write_env_assignment SOURCE_PG_DUMP_CMD "$SOURCE_PG_DUMP_CMD"
+write_env_assignment SOURCE_DB_CONNECT_HOST "$SOURCE_DB_CONNECT_HOST"
+write_env_assignment SOURCE_DB_PORT "$SOURCE_DB_PORT"
+write_env_assignment SOURCE_DB_NAME "$SOURCE_DB_NAME"
+write_env_assignment SOURCE_DB_USER "$SOURCE_DB_USER"
+write_env_assignment SOURCE_DB_PASSWORD "$SOURCE_DB_PASSWORD"
+write_env_assignment REMOTE_EXPORT_ROOT "$REMOTE_EXPORT_ROOT"
+write_env_assignment REMOTE_DUMP_FILE "$REMOTE_DUMP_FILE"
+write_env_assignment REMOTE_DUMP_SHA_FILE "$REMOTE_DUMP_SHA_FILE"
+
+chmod 600 "$REMOTE_ENV_LOCAL"
+
+echo "通过 Tailscale SSH 上传 PostgreSQL 导出脚本到源服务器 ${SOURCE_SERVER_USER}@${SOURCE_SSH_HOST}:${SOURCE_SSH_PORT}"
+run_expect scp -P "$SOURCE_SSH_PORT" -o StrictHostKeyChecking=accept-new "$REMOTE_SCRIPT_LOCAL" "$REMOTE_ENV_LOCAL" "${SOURCE_SERVER_USER}@${SOURCE_SSH_HOST}:/tmp/"
+
+echo "通过 Tailscale SSH 在源服务器导出 PostgreSQL"
+run_expect ssh -p "$SOURCE_SSH_PORT" -o StrictHostKeyChecking=accept-new "${SOURCE_SERVER_USER}@${SOURCE_SSH_HOST}" "chmod 700 '$REMOTE_SCRIPT_REMOTE' '$REMOTE_ENV_REMOTE' && source '$REMOTE_ENV_REMOTE' && bash '$REMOTE_SCRIPT_REMOTE'"
+
+echo "通过 Tailscale 拉取源服务器 PostgreSQL 导出文件到本机"
+run_expect scp -P "$SOURCE_SSH_PORT" -o StrictHostKeyChecking=accept-new "${SOURCE_SERVER_USER}@${SOURCE_SSH_HOST}:${REMOTE_DUMP_FILE}" "${SOURCE_SERVER_USER}@${SOURCE_SSH_HOST}:${REMOTE_DUMP_SHA_FILE}" "$EXPORT_ROOT/"
+
+cat > "$LATEST_ENV" <<EOF
+DUMP_FILE=$DUMP_FILE
+DUMP_SHA_FILE=$DUMP_SHA_FILE
+DUMP_BASENAME=$DUMP_BASENAME
+DUMP_SHA_BASENAME=$DUMP_SHA_BASENAME
+SOURCE_DB_TYPE=$SOURCE_DB_TYPE
+SOURCE_DB_NAME=$SOURCE_DB_NAME
+PROJECT_NAME=$PROJECT_NAME
+EOF
+
+echo "导出完成: $DUMP_FILE"
+echo "校验文件: $DUMP_SHA_FILE"
+echo "流程清单: $LATEST_ENV"
+`
+
+const defaultPostgresRemoteTableExportScript = `#!/usr/bin/env bash
+set -euo pipefail
+
+require_env() {
+  for name in "$@"; do
+    if [ -z "${!name+x}" ]; then
+      echo "缺少必要资源配置: $name" >&2
+      exit 1
+    fi
+  done
+}
+
+require_non_empty_env() {
+  for name in "$@"; do
+    require_env "$name"
+    if [ -z "${!name}" ]; then
+      echo "资源配置不能为空: $name" >&2
+      exit 1
+    fi
+  done
+}
+
+write_env_assignment() {
+  local name="$1"
+  local value="$2"
+  printf 'export %s=%q\n' "$name" "$value" >> "$REMOTE_ENV_LOCAL"
+}
+
+run_expect() {
+  local delimiter
+  local joined
+  delimiter="$(printf '\034')"
+  joined=""
+  for arg in "$@"; do
+    joined="${joined}${arg}${delimiter}"
+  done
+  EXPECT_COMMAND="$joined" "$LOCAL_EXPECT_CMD" <<'EXPECT_SCRIPT'
+set timeout -1
+set args {}
+foreach part [split $env(EXPECT_COMMAND) "\034"] {
+  if {$part ne ""} {
+    lappend args $part
+  }
+}
+spawn {*}$args
+expect {
+  -nocase -re "password:" {
+    log_user 0
+    send -- "$env(SOURCE_SERVER_PASSWORD)\r"
+    log_user 1
+    exp_continue
+  }
+  eof
+}
+catch wait result
+exit [lindex $result 3]
+EXPECT_SCRIPT
+}
+
+require_non_empty_env PROJECT_NAME SOURCE_DB_TYPE SOURCE_DB_HOST SOURCE_DB_PORT SOURCE_DB_DATABASE SOURCE_DB_USER TABLE_SCHEMA TABLE_NAME EXPORT_ROOT LOCAL_ENV SOURCE_PG_DUMP_CMD LOCAL_EXPECT_CMD SOURCE_SERVER_TARGET_TAILSCALE_IP SOURCE_SERVER_TARGET_TAILSCALE_PORT SOURCE_SERVER_USER SOURCE_SERVER_PASSWORD
+require_env SOURCE_DB_PASSWORD
+
+case "$SOURCE_DB_TYPE" in
+  pgsql|postgres|postgresql)
+    ;;
+  *)
+    echo "远端单表导出仅支持 PostgreSQL，当前 SOURCE_DB_TYPE: $SOURCE_DB_TYPE" >&2
+    exit 1
+    ;;
+esac
+
+SOURCE_DB_NAME="$SOURCE_DB_DATABASE"
+SOURCE_TABLE_SCHEMA="$TABLE_SCHEMA"
+SOURCE_TABLE_NAME="$TABLE_NAME"
+SOURCE_TABLE_REF="${SOURCE_TABLE_SCHEMA}.${SOURCE_TABLE_NAME}"
+SOURCE_DB_CONNECT_HOST="${SOURCE_DB_REMOTE_HOST:-$SOURCE_DB_HOST}"
+SOURCE_SSH_HOST="$SOURCE_SERVER_TARGET_TAILSCALE_IP"
+SOURCE_SSH_PORT="$SOURCE_SERVER_TARGET_TAILSCALE_PORT"
+RUN_ID="$(date +%Y%m%d_%H%M%S)"
+SAFE_TABLE_NAME="$(printf "%s_%s" "$SOURCE_TABLE_SCHEMA" "$SOURCE_TABLE_NAME" | tr -c 'A-Za-z0-9_-' '_')"
+DUMP_BASENAME="${PROJECT_NAME}_${SOURCE_DB_NAME}_${SAFE_TABLE_NAME}_${RUN_ID}.dump"
+DUMP_SHA_BASENAME="${DUMP_BASENAME}.sha256"
+DUMP_FILE="${EXPORT_ROOT}/${DUMP_BASENAME}"
+DUMP_SHA_FILE="${DUMP_FILE}.sha256"
+LATEST_ENV="$LOCAL_ENV"
+REMOTE_EXPORT_ROOT="${EXPORT_ROOT}/source"
+REMOTE_DUMP_FILE="${REMOTE_EXPORT_ROOT}/${DUMP_BASENAME}"
+REMOTE_DUMP_SHA_FILE="${REMOTE_DUMP_FILE}.sha256"
+REMOTE_SCRIPT_LOCAL="${EXPORT_ROOT}/${PROJECT_NAME}_${SOURCE_DB_NAME}_${SAFE_TABLE_NAME}_${RUN_ID}_remote_pg_table_export.sh"
+REMOTE_ENV_LOCAL="${EXPORT_ROOT}/${PROJECT_NAME}_${SOURCE_DB_NAME}_${SAFE_TABLE_NAME}_${RUN_ID}_remote_pg_table.env"
+REMOTE_SCRIPT_REMOTE="/tmp/${PROJECT_NAME}_${SOURCE_DB_NAME}_${SAFE_TABLE_NAME}_${RUN_ID}_remote_pg_table_export.sh"
+REMOTE_ENV_REMOTE="/tmp/${PROJECT_NAME}_${SOURCE_DB_NAME}_${SAFE_TABLE_NAME}_${RUN_ID}_remote_pg_table.env"
+
+mkdir -p "$EXPORT_ROOT" "$(dirname "$LATEST_ENV")"
+chmod 700 "$EXPORT_ROOT"
+
+cat > "$REMOTE_SCRIPT_LOCAL" <<'REMOTE_SCRIPT'
+#!/usr/bin/env bash
+set -euo pipefail
+
+run_configured_cmd_with_env() {
+  local env_name="$1"
+  local env_value="$2"
+  local cmd_var="$3"
+  shift 3
+  read -r -a cmd_parts <<< "${!cmd_var}"
+  for i in "${!cmd_parts[@]}"; do
+    if [ "${cmd_parts[$i]##*/}" = "docker" ] && [ "${cmd_parts[$((i + 1))]:-}" = "exec" ]; then
+      cmd_parts=("${cmd_parts[@]:0:$((i + 2))}" -e "${env_name}=${env_value}" "${cmd_parts[@]:$((i + 2))}")
+      "${cmd_parts[@]}" "$@"
+      return
+    fi
+  done
+  env "$env_name=$env_value" "${cmd_parts[@]}" "$@"
+}
+
+mkdir -p "$REMOTE_EXPORT_ROOT"
+chmod 700 "$REMOTE_EXPORT_ROOT"
+
+echo "开始在目标服务器本地导出 PostgreSQL 单表 ${SOURCE_DB_NAME}.${SOURCE_TABLE_REF} (${SOURCE_DB_CONNECT_HOST}:${SOURCE_DB_PORT})"
+run_configured_cmd_with_env PGPASSWORD "$SOURCE_DB_PASSWORD" SOURCE_PG_DUMP_CMD \
+  -h "$SOURCE_DB_CONNECT_HOST" \
+  -p "$SOURCE_DB_PORT" \
+  -U "$SOURCE_DB_USER" \
+  -Fc \
+  --no-owner \
+  -t "$SOURCE_TABLE_REF" \
+  "$SOURCE_DB_NAME" > "$REMOTE_DUMP_FILE"
+
+(cd "$(dirname "$REMOTE_DUMP_FILE")" && shasum -a 256 "$(basename "$REMOTE_DUMP_FILE")") > "$REMOTE_DUMP_SHA_FILE"
+
+echo "目标服务器 PostgreSQL 单表导出完成: $REMOTE_DUMP_FILE"
+REMOTE_SCRIPT
+
+: > "$REMOTE_ENV_LOCAL"
+write_env_assignment SOURCE_PG_DUMP_CMD "$SOURCE_PG_DUMP_CMD"
+write_env_assignment SOURCE_DB_CONNECT_HOST "$SOURCE_DB_CONNECT_HOST"
+write_env_assignment SOURCE_DB_PORT "$SOURCE_DB_PORT"
+write_env_assignment SOURCE_DB_NAME "$SOURCE_DB_NAME"
+write_env_assignment SOURCE_DB_USER "$SOURCE_DB_USER"
+write_env_assignment SOURCE_DB_PASSWORD "$SOURCE_DB_PASSWORD"
+write_env_assignment SOURCE_TABLE_REF "$SOURCE_TABLE_REF"
+write_env_assignment REMOTE_EXPORT_ROOT "$REMOTE_EXPORT_ROOT"
+write_env_assignment REMOTE_DUMP_FILE "$REMOTE_DUMP_FILE"
+write_env_assignment REMOTE_DUMP_SHA_FILE "$REMOTE_DUMP_SHA_FILE"
+
+chmod 600 "$REMOTE_ENV_LOCAL"
+
+echo "通过 Tailscale SSH 上传 PostgreSQL 单表导出脚本到源服务器 ${SOURCE_SERVER_USER}@${SOURCE_SSH_HOST}:${SOURCE_SSH_PORT}"
+run_expect scp -P "$SOURCE_SSH_PORT" -o StrictHostKeyChecking=accept-new "$REMOTE_SCRIPT_LOCAL" "$REMOTE_ENV_LOCAL" "${SOURCE_SERVER_USER}@${SOURCE_SSH_HOST}:/tmp/"
+
+echo "通过 Tailscale SSH 在源服务器导出 PostgreSQL 单表"
+run_expect ssh -p "$SOURCE_SSH_PORT" -o StrictHostKeyChecking=accept-new "${SOURCE_SERVER_USER}@${SOURCE_SSH_HOST}" "chmod 700 '$REMOTE_SCRIPT_REMOTE' '$REMOTE_ENV_REMOTE' && source '$REMOTE_ENV_REMOTE' && bash '$REMOTE_SCRIPT_REMOTE'"
+
+echo "通过 Tailscale 拉取源服务器 PostgreSQL 单表导出文件到本机"
+run_expect scp -P "$SOURCE_SSH_PORT" -o StrictHostKeyChecking=accept-new "${SOURCE_SERVER_USER}@${SOURCE_SSH_HOST}:${REMOTE_DUMP_FILE}" "${SOURCE_SERVER_USER}@${SOURCE_SSH_HOST}:${REMOTE_DUMP_SHA_FILE}" "$EXPORT_ROOT/"
+
+cat > "$LATEST_ENV" <<EOF
+DUMP_FILE=$DUMP_FILE
+DUMP_SHA_FILE=$DUMP_SHA_FILE
+DUMP_BASENAME=$DUMP_BASENAME
+DUMP_SHA_BASENAME=$DUMP_SHA_BASENAME
+SOURCE_DB_TYPE=$SOURCE_DB_TYPE
+SOURCE_DB_NAME=$SOURCE_DB_NAME
+SOURCE_TABLE_SCHEMA=$SOURCE_TABLE_SCHEMA
+SOURCE_TABLE_NAME=$SOURCE_TABLE_NAME
+SOURCE_TABLE_REF=$SOURCE_TABLE_REF
+PROJECT_NAME=$PROJECT_NAME
+EOF
+
+echo "单表导出完成: $DUMP_FILE"
 echo "校验文件: $DUMP_SHA_FILE"
 echo "流程清单: $LATEST_ENV"
 `
@@ -3803,6 +4307,13 @@ run_configured_cmd_with_env() {
   shift 3
   require_non_empty_env "$cmd_var"
   read -r -a cmd_parts <<< "${!cmd_var}"
+  for i in "${!cmd_parts[@]}"; do
+    if [ "${cmd_parts[$i]##*/}" = "docker" ] && [ "${cmd_parts[$((i + 1))]:-}" = "exec" ]; then
+      cmd_parts=("${cmd_parts[@]:0:$((i + 2))}" -e "${env_name}=${env_value}" "${cmd_parts[@]:$((i + 2))}")
+      "${cmd_parts[@]}" "$@"
+      return
+    fi
+  done
   env "$env_name=$env_value" "${cmd_parts[@]}" "$@"
 }
 
@@ -3951,6 +4462,13 @@ run_configured_cmd_with_env() {
   shift 3
   require_non_empty_env "$cmd_var"
   read -r -a cmd_parts <<< "${!cmd_var}"
+  for i in "${!cmd_parts[@]}"; do
+    if [ "${cmd_parts[$i]##*/}" = "docker" ] && [ "${cmd_parts[$((i + 1))]:-}" = "exec" ]; then
+      cmd_parts=("${cmd_parts[@]:0:$((i + 2))}" -e "${env_name}=${env_value}" "${cmd_parts[@]:$((i + 2))}")
+      "${cmd_parts[@]}" "$@"
+      return
+    fi
+  done
   env "$env_name=$env_value" "${cmd_parts[@]}" "$@"
 }
 
@@ -4193,6 +4711,13 @@ run_configured_cmd_with_env() {
   shift 3
   require_non_empty_env "$cmd_var"
   read -r -a cmd_parts <<< "${!cmd_var}"
+  for i in "${!cmd_parts[@]}"; do
+    if [ "${cmd_parts[$i]##*/}" = "docker" ] && [ "${cmd_parts[$((i + 1))]:-}" = "exec" ]; then
+      cmd_parts=("${cmd_parts[@]:0:$((i + 2))}" -e "${env_name}=${env_value}" "${cmd_parts[@]:$((i + 2))}")
+      "${cmd_parts[@]}" "$@"
+      return
+    fi
+  done
   env "$env_name=$env_value" "${cmd_parts[@]}" "$@"
 }
 
@@ -4303,6 +4828,13 @@ run_configured_cmd_with_env() {
   shift 3
   require_non_empty_env "$cmd_var"
   read -r -a cmd_parts <<< "${!cmd_var}"
+  for i in "${!cmd_parts[@]}"; do
+    if [ "${cmd_parts[$i]##*/}" = "docker" ] && [ "${cmd_parts[$((i + 1))]:-}" = "exec" ]; then
+      cmd_parts=("${cmd_parts[@]:0:$((i + 2))}" -e "${env_name}=${env_value}" "${cmd_parts[@]:$((i + 2))}")
+      "${cmd_parts[@]}" "$@"
+      return
+    fi
+  done
   env "$env_name=$env_value" "${cmd_parts[@]}" "$@"
 }
 
@@ -4390,6 +4922,13 @@ run_configured_cmd_with_env() {
   shift 3
   require_non_empty_env "$cmd_var"
   read -r -a cmd_parts <<< "${!cmd_var}"
+  for i in "${!cmd_parts[@]}"; do
+    if [ "${cmd_parts[$i]##*/}" = "docker" ] && [ "${cmd_parts[$((i + 1))]:-}" = "exec" ]; then
+      cmd_parts=("${cmd_parts[@]:0:$((i + 2))}" -e "${env_name}=${env_value}" "${cmd_parts[@]:$((i + 2))}")
+      "${cmd_parts[@]}" "$@"
+      return
+    fi
+  done
   env "$env_name=$env_value" "${cmd_parts[@]}" "$@"
 }
 

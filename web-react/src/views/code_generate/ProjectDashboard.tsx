@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Plus, Copy, ClipboardCopy, Database, FileCode, Edit2, Trash2, Search, Folder, Check, X, Wand2, RefreshCw } from 'lucide-react';
 import { getProjectList, createProject, updateProject, deleteProject, copyProject, generateProjectCode } from '@/api/code_generate_project';
 import { getDbTemplateScripts, getDbTemplateTypes } from '@/api/db_template';
 import toast from 'react-hot-toast';
 import ProjectConfigDialog from './ProjectConfigDialog';
+import DbTemplateLibrary from './DbTemplateLibrary';
 import { buildDbTemplateSqlCopyText, buildDbTemplateSqlSection } from './dbTemplateCopy';
 import {
   getProjectTypeLabel,
@@ -92,7 +93,6 @@ const buildGenerateCodexHandoffText = (result: any) => {
 };
 
 export default function ProjectDashboard() {
-  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [projects, setProjects] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -109,6 +109,7 @@ export default function ProjectDashboard() {
   const [generateProject, setGenerateProject] = useState<any | null>(null);
   const [generateDraft, setGenerateDraft] = useState({ module: '', tableName: '', overwrite: false });
   const [generateResult, setGenerateResult] = useState<any | null>(null);
+  const [dbTemplateProject, setDbTemplateProject] = useState<any | null>(null);
   const [generatingTemplateProjectId, setGeneratingTemplateProjectId] = useState<number | null>(null);
   const [copyingTemplateProjectId, setCopyingTemplateProjectId] = useState<number | null>(null);
   const [dbSqlPreviewOpen, setDbSqlPreviewOpen] = useState(false);
@@ -639,7 +640,7 @@ export default function ProjectDashboard() {
                         <button
                           onClick={(event) => {
                             event.stopPropagation();
-                            navigate(`/code-generate/${p.ID}/db-templates`);
+                            setDbTemplateProject(p);
                           }}
                           className="flex-1 min-w-0 flex justify-center items-center gap-1.5 py-2 px-2 text-sm text-cyan-800 bg-cyan-50 hover:bg-cyan-100 rounded-md transition-colors font-bold border border-cyan-200"
                         >
@@ -713,6 +714,23 @@ export default function ProjectDashboard() {
           onProjectSaved={fetchProjects}
         />
       )}
+
+      <AnimatePresence>
+        {dbTemplateProject && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[60] bg-slate-950 text-white"
+          >
+            <DbTemplateLibrary
+              projectIdOverride={dbTemplateProject.ID}
+              fullscreenDialog
+              onClose={() => setDbTemplateProject(null)}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <AnimatePresence>
         {generateProject && (

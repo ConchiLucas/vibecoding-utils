@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import Editor from '@monaco-editor/react';
-import { ArrowLeft, Database, Edit2, Plus, RefreshCw, Save, Trash2 } from 'lucide-react';
+import { ArrowLeft, Database, Edit2, Plus, RefreshCw, Save, Trash2, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import clsx from 'clsx';
 import {
@@ -42,10 +42,16 @@ const scriptDraftForType = (projectId: number, typeObj: any, script?: any) => ({
   ...(script || {}),
 });
 
-export default function DbTemplateLibrary() {
+type DbTemplateLibraryProps = {
+  projectIdOverride?: number | string;
+  onClose?: () => void;
+  fullscreenDialog?: boolean;
+};
+
+export default function DbTemplateLibrary({ projectIdOverride, onClose, fullscreenDialog = false }: DbTemplateLibraryProps = {}) {
   const { projectId } = useParams();
   const navigate = useNavigate();
-  const numericProjectId = Number(projectId || 0);
+  const numericProjectId = Number(projectIdOverride || projectId || 0);
 
   const [projectName, setProjectName] = useState('解析中...');
   const [types, setTypes] = useState<any[]>([]);
@@ -201,30 +207,46 @@ export default function DbTemplateLibrary() {
   };
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden bg-white">
+    <div className={clsx('flex flex-col overflow-hidden bg-white', fullscreenDialog ? 'h-full' : 'h-screen')}>
       <div className="z-20 flex items-center justify-between bg-gradient-to-r from-slate-800 to-slate-900 px-6 py-4 text-white shadow-md">
         <div className="flex min-w-0 items-center gap-4">
-          <button
-            onClick={() => navigate('/code-generate')}
-            className="flex items-center gap-1 rounded-xl border border-slate-700 p-2 text-sm font-medium transition-colors hover:bg-white/10"
-          >
-            <ArrowLeft size={16} /> 返回主版
-          </button>
-          <div className="h-6 w-px bg-slate-700" />
+          {!fullscreenDialog && (
+            <>
+              <button
+                onClick={() => navigate('/code-generate')}
+                className="flex items-center gap-1 rounded-xl border border-slate-700 p-2 text-sm font-medium transition-colors hover:bg-white/10"
+              >
+                <ArrowLeft size={16} /> 返回主版
+              </button>
+              <div className="h-6 w-px bg-slate-700" />
+            </>
+          )}
           <div className="min-w-0">
             <h1 className="truncate text-lg font-bold tracking-tight text-cyan-300">
               数据库模板示例库 <span className="font-normal text-slate-300">/ {projectName}</span>
             </h1>
           </div>
         </div>
-        <button
-          onClick={handleSaveScript}
-          disabled={!activeType || !scriptDraft || loadingScripts || savingScript}
-          className="inline-flex items-center gap-2 rounded-xl bg-cyan-400 px-4 py-2 text-sm font-bold text-slate-950 shadow-[0_0_16px_rgba(34,211,238,0.25)] transition-all hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {savingScript ? <RefreshCw size={16} className="animate-spin" /> : <Save size={16} />}
-          保存脚本
-        </button>
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            onClick={handleSaveScript}
+            disabled={!activeType || !scriptDraft || loadingScripts || savingScript}
+            className="inline-flex items-center gap-2 rounded-xl bg-cyan-400 px-4 py-2 text-sm font-bold text-slate-950 shadow-[0_0_16px_rgba(34,211,238,0.25)] transition-all hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {savingScript ? <RefreshCw size={16} className="animate-spin" /> : <Save size={16} />}
+            保存脚本
+          </button>
+          {fullscreenDialog && (
+            <button
+              type="button"
+              onClick={onClose}
+              className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-700 text-slate-300 transition-colors hover:bg-white/10 hover:text-white"
+              title="关闭"
+            >
+              <X size={18} />
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="flex min-h-0 flex-1">

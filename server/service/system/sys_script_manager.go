@@ -869,6 +869,9 @@ func (s *ScriptManagerService) resourceTargetServer(rawPlaceholders string, user
 		if err != nil {
 			return modelSystem.TbServer{}, false, err
 		}
+		if resourceConfigRowValue(rows, "TYPE") != "" {
+			continue
+		}
 		server, ok := serverFromResourceRows(rows)
 		if ok {
 			return server, true, nil
