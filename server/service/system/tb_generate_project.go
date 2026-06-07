@@ -104,6 +104,11 @@ func (s *TbGenerateProjectService) DeleteTbGenerateProject(req system.TbGenerate
 		}
 	}
 
+	if err := tx.Where("project_id = ? AND (project_instance_id = 0 OR project_instance_id IS NULL)", req.ID).Unscoped().Delete(&system.TbGenerateProjectPathGroup{}).Error; err != nil {
+		tx.Rollback()
+		return err
+	}
+
 	// 4. Delete database template examples belonging to this project.
 	if err := tx.Where("project_id = ?", req.ID).Unscoped().Delete(&system.TbGenerateDbTemplateScript{}).Error; err != nil {
 		tx.Rollback()
@@ -186,7 +191,7 @@ func (s *TbGenerateProjectService) GenerateCode(req systemReq.GenerateProjectCod
 	drafts := make([]generateProjectCodeDraft, 0, len(paths))
 
 	for _, pathObj := range paths {
-		relativePath, targetPath, err := buildGeneratedFileTarget(diskPath, renderCodeGenerationText(pathObj.FileUrl, vars), renderCodeGenerationText(pathObj.FileName, vars))
+		relativePath, targetPath, err := renderGeneratedFileTarget(diskPath, pathObj.FileUrl, pathObj.FileName, vars)
 		if err != nil {
 			return GenerateProjectCodeResult{}, fmt.Errorf("路径 %d 无效: %w", pathObj.ID, err)
 		}
@@ -311,79 +316,129 @@ func (s *TbGenerateProjectService) GetTbGenerateProjectList(projectConfigId int)
 	return
 }
 
-func (s *TbGenerateProjectService) CopyProject(id string) error {
+func (s *TbGenerateProjectService) CopyProject(req systemReq.CopyGenerateProjectReq) (system.TbGenerateProject, error) {
+	if req.SourceProjectId <= 0 {
+		return system.TbGenerateProject{}, errors.New("sourceProjectId 必填")
+	}
+
 	var project system.TbGenerateProject
-	if err := global.GVA_DB.Where("id = ?", id).First(&project).Error; err != nil {
-		return err
+	if err := global.GVA_DB.Where("id = ?", req.SourceProjectId).First(&project).Error; err != nil {
+		return system.TbGenerateProject{}, err
 	}
 
 	newProject := system.TbGenerateProject{
 		ProjectConfigId: 0,
-		BusinessType:    project.BusinessType,
-		ProjectName:     project.ProjectName + "_copy",
+		BusinessType:    strings.TrimSpace(firstNonEmptyString(req.BusinessType, project.BusinessType)),
+		ProjectType:     strings.TrimSpace(firstNonEmptyString(req.ProjectType, project.ProjectType)),
+		ProjectName:     strings.TrimSpace(firstNonEmptyString(req.ProjectName, project.ProjectName+"_copy")),
 		DiskPath:        project.DiskPath,
-		Remark:          project.Remark,
-		UserName:        project.UserName,
+		Remark:          strings.TrimSpace(firstNonEmptyString(req.Remark, project.Remark)),
+		UserName:        strings.TrimSpace(firstNonEmptyString(req.UserName, project.UserName)),
 	}
-	if err := global.GVA_DB.Create(&newProject).Error; err != nil {
+	if newProject.ProjectName == "" {
+		return system.TbGenerateProject{}, errors.New("projectName 必填")
+	}
+	if newProject.ProjectType == "" {
+		newProject.ProjectType = "backend"
+	}
+
+	tx := global.GVA_DB.Begin()
+	if err := tx.Error; err != nil {
+		return system.TbGenerateProject{}, err
+	}
+	if err := tx.Create(&newProject).Error; err != nil {
+		tx.Rollback()
+		return system.TbGenerateProject{}, err
+	}
+
+	pathService := &TbGenerateProjectPathService{}
+	if err := pathService.copyGenerateProjectPathScope(tx, int(project.ID), 0, int(newProject.ID), 0); err != nil {
+		tx.Rollback()
+		return system.TbGenerateProject{}, err
+	}
+	if err := s.copyProjectInstancesTx(tx, project, &newProject); err != nil {
+		tx.Rollback()
+		return system.TbGenerateProject{}, err
+	}
+	if err := s.copyProjectDbTemplatesTx(tx, int(project.ID), int(newProject.ID)); err != nil {
+		tx.Rollback()
+		return system.TbGenerateProject{}, err
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		return system.TbGenerateProject{}, err
+	}
+	return newProject, nil
+}
+
+func (s *TbGenerateProjectService) copyProjectInstancesTx(tx *gorm.DB, sourceProject system.TbGenerateProject, targetProject *system.TbGenerateProject) error {
+	var instances []system.TbGenerateProjectInstance
+	if err := tx.Where("template_project_id = ?", sourceProject.ID).Order("id ASC").Find(&instances).Error; err != nil {
 		return err
 	}
 
-	var paths []system.TbGenerateProjectPath
-	global.GVA_DB.Where("project_id = ?", id).Find(&paths)
-
-	for _, p := range paths {
-		oldPathId := p.ID
-		newPath := system.TbGenerateProjectPath{
-			ProjectId:         int(newProject.ID),
-			ProjectInstanceId: 0,
-			Enabled:           p.Enabled,
-			FileUrl:           p.FileUrl,
-			FileName:          p.FileName,
-			Incremented:       p.Incremented,
+	selectedInstanceMap := make(map[int]int, len(instances))
+	for _, instance := range instances {
+		newInstance := system.TbGenerateProjectInstance{
+			TemplateProjectId:       int(targetProject.ID),
+			ProjectName:             instance.ProjectName,
+			DiskPath:                instance.DiskPath,
+			Remark:                  instance.Remark,
+			UserName:                instance.UserName,
+			SelectedPathSetIdentity: instance.SelectedPathSetIdentity,
 		}
-		global.GVA_DB.Create(&newPath)
-		var oldModel system.TbGenerateProjectPathModel
-		if err := global.GVA_DB.Where("path_id = ?", oldPathId).First(&oldModel).Error; err == nil {
-			newModel := system.TbGenerateProjectPathModel{
-				PathId:  int(newPath.ID),
-				Content: oldModel.Content,
-				Prompt:  oldModel.Prompt,
-			}
-			global.GVA_DB.Create(&newModel)
+		if err := tx.Create(&newInstance).Error; err != nil {
+			return err
+		}
+		selectedInstanceMap[int(instance.ID)] = int(newInstance.ID)
+
+		if err := (&TbGenerateProjectPathService{}).copyGenerateProjectPathScope(tx, int(instance.ID), int(instance.ID), int(newInstance.ID), int(newInstance.ID)); err != nil {
+			return err
 		}
 	}
 
+	if nextSelectedInstanceId := selectedInstanceMap[sourceProject.SelectedProjectInstanceId]; nextSelectedInstanceId > 0 {
+		targetProject.SelectedProjectInstanceId = nextSelectedInstanceId
+		return tx.Model(targetProject).Update("selected_project_instance_id", nextSelectedInstanceId).Error
+	}
+	return nil
+}
+
+func (s *TbGenerateProjectService) copyProjectDbTemplatesTx(tx *gorm.DB, sourceProjectId int, targetProjectId int) error {
 	var templateTypes []system.TbGenerateDbTemplateType
-	global.GVA_DB.Where("project_id = ?", id).Find(&templateTypes)
+	if err := tx.Where("project_id = ?", sourceProjectId).Order("sort ASC, id ASC").Find(&templateTypes).Error; err != nil {
+		return err
+	}
 	for _, templateType := range templateTypes {
 		oldTypeId := templateType.ID
 		newType := system.TbGenerateDbTemplateType{
-			ProjectId: int(newProject.ID),
+			ProjectId: targetProjectId,
 			TypeName:  templateType.TypeName,
+			Prompt:    templateType.Prompt,
 			Sort:      templateType.Sort,
 		}
-		if err := global.GVA_DB.Create(&newType).Error; err != nil {
+		if err := tx.Create(&newType).Error; err != nil {
 			return err
 		}
 
 		var scripts []system.TbGenerateDbTemplateScript
-		global.GVA_DB.Where("type_id = ?", oldTypeId).Find(&scripts)
+		if err := tx.Where("type_id = ?", oldTypeId).Order("sort ASC, id ASC").Find(&scripts).Error; err != nil {
+			return err
+		}
 		for _, script := range scripts {
 			newScript := system.TbGenerateDbTemplateScript{
-				ProjectId:  int(newProject.ID),
+				ProjectId:  targetProjectId,
 				TypeId:     int(newType.ID),
 				ScriptName: script.ScriptName,
 				ScriptKind: script.ScriptKind,
 				Content:    script.Content,
 				Sort:       script.Sort,
 			}
-			if err := global.GVA_DB.Create(&newScript).Error; err != nil {
+			if err := tx.Create(&newScript).Error; err != nil {
 				return err
 			}
 		}
 	}
-
 	return nil
 }
 
@@ -502,6 +557,14 @@ func buildGeneratedFileTarget(root string, fileUrl string, fileName string) (str
 	}
 
 	return filepath.ToSlash(relToRoot), targetPath, nil
+}
+
+func renderGeneratedFileTarget(root string, fileUrl string, fileName string, vars map[string]string) (string, string, error) {
+	return buildGeneratedFileTarget(
+		root,
+		renderCodeGenerationText(fileUrl, vars),
+		renderCodeGenerationText(fileName, vars),
+	)
 }
 
 func buildCodeGenerationTaskPromptContent(module string, tableName string, overwrite bool, projectName string, diskPath string, pathSet int, drafts []generateProjectCodeDraft) string {

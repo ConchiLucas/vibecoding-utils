@@ -4,7 +4,7 @@ import { getPathList, getModelListByPathId, createModel, updateModel, updatePath
 import { getProjectInstance } from '../../api/code_generate_project';
 import Editor from '@monaco-editor/react';
 import toast from 'react-hot-toast';
-import { FileCode, ArrowLeft, Save, RefreshCw, Folder, ChevronDown, ChevronRight, Pencil, Check, X } from 'lucide-react';
+import { FileCode, Save, RefreshCw, Folder, ChevronDown, ChevronRight, Pencil, Check, X } from 'lucide-react';
 import clsx from 'clsx';
 
 const unwrapResponseData = (res: any) => {
@@ -58,6 +58,39 @@ export default function ProjectTemplates() {
   const [renamingNode, setRenamingNode] = useState<any>(null);
   const [renamingValue, setRenamingValue] = useState('');
   const [renamingSaving, setRenamingSaving] = useState(false);
+
+  const closeTemplateEditor = () => {
+    const returnTemplateId = String(searchParams.get('returnTemplateId') || searchParams.get('templateId') || '').trim();
+    const returnProjectInstanceId = String(searchParams.get('returnProjectInstanceId') || projectId || '').trim();
+
+    if (returnTemplateId) {
+      const params = new URLSearchParams();
+      params.set('configProjectId', returnTemplateId);
+      if (returnProjectInstanceId) {
+        params.set('projectInstanceId', returnProjectInstanceId);
+      }
+      const returnView = String(searchParams.get('returnView') || '').trim();
+      const returnPathSetKey = String(searchParams.get('returnPathSetKey') || '').trim();
+      const returnPathSet = String(searchParams.get('returnPathSet') || searchParams.get('pathSet') || '').trim();
+      const returnPathGroupKey = String(searchParams.get('returnPathGroupKey') || '').trim();
+      if (returnView) {
+        params.set('configView', returnView);
+      }
+      if (returnPathSetKey) {
+        params.set('pathSetKey', returnPathSetKey);
+      }
+      if (returnPathSet) {
+        params.set('pathSet', returnPathSet);
+      }
+      if (returnPathGroupKey) {
+        params.set('pathGroupKey', returnPathGroupKey);
+      }
+      navigate(`/code-generate?${params.toString()}`, { replace: true });
+      return;
+    }
+
+    navigate('/code-generate', { replace: true });
+  };
 
   const fetchEnv = async () => {
     try {
@@ -432,10 +465,6 @@ export default function ProjectTemplates() {
       {/* Top Banner */}
       <div className="bg-gradient-to-r from-slate-800 to-slate-900 text-white px-6 py-4 flex items-center justify-between shadow-md z-20">
          <div className="flex items-center gap-4">
-             <button onClick={() => navigate('/code-generate')} className="p-2 hover:bg-white/10 rounded-xl transition-colors flex items-center gap-1 text-sm font-medium border border-slate-700">
-                 <ArrowLeft size={16} /> 返回主版
-             </button>
-             <div className="h-6 w-px bg-slate-700"></div>
              <div>
                 <h1 className="text-lg font-bold tracking-tight text-teal-400">
                   工程逻辑架构树与模型编辑
@@ -443,6 +472,14 @@ export default function ProjectTemplates() {
                 </h1>
              </div>
          </div>
+         <button
+           type="button"
+           onClick={closeTemplateEditor}
+           className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-slate-700 text-slate-300 transition-colors hover:bg-white/10 hover:text-white"
+           title="关闭编辑代码模版"
+         >
+           <X size={18} />
+         </button>
       </div>
 
       <div className="flex flex-1 overflow-hidden">

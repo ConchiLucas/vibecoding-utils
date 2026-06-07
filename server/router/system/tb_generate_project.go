@@ -18,6 +18,7 @@ func (s *TbGenerateProjectRouter) InitTbGenerateProjectRouter(Router *gin.Router
 		tbGenerateProjectRouter.POST("generateCode", tbGenerateProjectApi.GenerateCode)
 		tbGenerateProjectRouter.GET("getTbGenerateProject", tbGenerateProjectApi.GetTbGenerateProject)         // 根据ID获取
 		tbGenerateProjectRouter.GET("getTbGenerateProjectList", tbGenerateProjectApi.GetTbGenerateProjectList) // 获取列表
+		tbGenerateProjectRouter.POST("copy", tbGenerateProjectApi.CopyProject)                                 // 克隆
 		tbGenerateProjectRouter.GET("copy", tbGenerateProjectApi.CopyProject)                                  // 克隆
 	}
 }

@@ -5,6 +5,7 @@ type CopyGenerateProjectPathSetReq struct {
 	ProjectInstanceId int    `json:"projectInstanceId"`
 	PathSet           int    `json:"pathSet"`
 	PathIds           []uint `json:"pathIds"`
+	GroupIds          []uint `json:"groupIds"`
 }
 
 type DeleteGenerateProjectPathSetReq struct {
@@ -12,6 +13,7 @@ type DeleteGenerateProjectPathSetReq struct {
 	ProjectInstanceId int    `json:"projectInstanceId"`
 	PathSet           int    `json:"pathSet"`
 	PathIds           []uint `json:"pathIds"`
+	GroupIds          []uint `json:"groupIds"`
 }
 
 type RenameGenerateProjectPathSetReq struct {
@@ -19,6 +21,7 @@ type RenameGenerateProjectPathSetReq struct {
 	ProjectInstanceId int    `json:"projectInstanceId"`
 	PathSet           int    `json:"pathSet"`
 	PathIds           []uint `json:"pathIds"`
+	GroupIds          []uint `json:"groupIds"`
 	PathSetName       string `json:"pathSetName"`
 }
 

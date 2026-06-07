@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowRight, Check, ChevronLeft, Copy, Edit2, FileCode, Folder, MoveRight, Plus, RefreshCw, Save, Search, Trash2, Wand2, X } from 'lucide-react';
+import { ArrowRight, Check, Copy, Edit2, FileCode, Folder, Plus, RefreshCw, Save, Search, Trash2, Wand2, X } from 'lucide-react';
 import Editor from '@monaco-editor/react';
 import toast from 'react-hot-toast';
+import { getPathGroupDeleteState, getPathGroupSwitchOptions } from './pathGroupActions';
 import {
   createProjectInstance,
   deleteProjectInstance,
@@ -16,13 +17,17 @@ import {
   copyPathSet as copyPathSetApi,
   createModel,
   createPath,
-  deletePath,
+  createPathGroup,
+  deletePathGroup,
   deletePathSet as deletePathSetApi,
+  deletePath,
+  getPathGroupList,
   getModelListByPathId,
   getPathList,
   renamePathSet as renamePathSetApi,
   updateModel,
   updatePath,
+  updatePathGroup,
   updatePathEnabled,
 } from '@/api/path_model';
 
@@ -43,11 +48,22 @@ const emptyPathDraft = (projectId: number) => ({
   ID: 0,
   projectId,
   projectInstanceId: projectId,
+  pathGroupId: 0,
   pathSet: 0,
   fileUrl: '',
   fileName: '',
   enabled: 1,
   incremented: 0,
+});
+
+const emptyPathGroupDraft = (projectId: number) => ({
+  ID: 0,
+  projectId,
+  projectInstanceId: projectId,
+  pathSet: 0,
+  pathSetName: '',
+  basePath: '',
+  sort: 0,
 });
 
 const normalizeRelativeDir = (value: string) => {
@@ -174,6 +190,10 @@ const inferServiceBasePath = (pathObj: any) => {
   if (parts.length === 0) return '.';
   if (parts[0] === '..' || parts[0] === '.') return parts[0];
 
+  if (parts.length >= 3 && /(^|[-_])service$/i.test(parts[0]) && serviceSegmentPattern.test(parts[1]) && parts[2] === 'src') {
+    return parts.slice(0, 3).join('/');
+  }
+
   if (parts.length >= 2 && /(^|[-_])service$/i.test(parts[0]) && serviceSegmentPattern.test(parts[1])) {
     return parts.slice(0, 2).join('/');
   }
@@ -208,12 +228,6 @@ const makePathSetSectionKey = (pathSet: number, copyIndex = 0) => {
 };
 
 const makePathGroupEditKey = (pathSet: number, groupKey: string) => `${pathSet}::${groupKey}`;
-
-async function runInBatches<T>(items: T[], batchSize: number, worker: (item: T) => Promise<any>) {
-  for (let index = 0; index < items.length; index += batchSize) {
-    await Promise.all(items.slice(index, index + batchSize).map(worker));
-  }
-}
 
 const getPathCopySignature = (pathObj: any) => {
   return [
@@ -254,39 +268,77 @@ const splitLegacyCopiedRows = (rows: any[]) => {
     .filter((group) => group.length > 0);
 };
 
-const buildPathGroups = (rows: any[]) => {
-  const groupMap = new Map<string, any>();
-  rows.forEach((pathObj) => {
-    const basePath = inferServiceBasePath(pathObj);
-    const key = basePath || '.';
-    const current = groupMap.get(key) || {
-      key,
-      basePath: key,
-      serviceName: getServiceName(key),
-      paths: [],
-      firstId: Number(pathObj.ID || 0),
-      enabledCount: 0,
-      incrementedCount: 0,
-    };
+const getPathGroupId = (pathObj: any) => Number(pathObj?.pathGroupId || pathObj?.path_group_id || 0);
 
-    current.paths.push(pathObj);
-    current.firstId = Math.min(current.firstId || Number(pathObj.ID || 0), Number(pathObj.ID || 0));
-    if (Number(pathObj.enabled || 0) === 1) current.enabledCount += 1;
-    if (Number(pathObj.incremented || 0) === 1) current.incrementedCount += 1;
-    groupMap.set(key, current);
+const makeStoredPathGroupKey = (group: any) => `group-${Number(group?.ID || 0)}`;
+
+const makeLegacyPathGroupKey = (pathSet: number, basePath: string) => `legacy-${pathSet}-${basePath || '.'}`;
+
+const buildPathGroupStats = (group: any, rows: any[]) => {
+  const pathsInGroup = Array.isArray(rows) ? rows : [];
+  return {
+    ...group,
+    paths: pathsInGroup,
+    firstId: pathsInGroup.reduce((min, pathObj) => Math.min(min, Number(pathObj.ID || min)), Number.MAX_SAFE_INTEGER),
+    enabledCount: pathsInGroup.filter((pathObj) => Number(pathObj.enabled || 0) === 1).length,
+    incrementedCount: pathsInGroup.filter((pathObj) => Number(pathObj.incremented || 0) === 1).length,
+  };
+};
+
+const choosePathGroupBasePath = (inferredKey: string, rows: any[]) => {
+  const commonPrefix = getCommonPathPrefix(rows);
+  const key = normalizeRelativeDir(inferredKey || '');
+  if (key && key.includes('/src') && (commonPrefix === key || commonPrefix.startsWith(`${key}/`))) {
+    return key;
+  }
+  return commonPrefix;
+};
+
+const buildPathGroups = (rows: any[], storedGroups: any[] = [], pathSet = 0) => {
+  const rowMap = new Map<string, any[]>();
+  rows.forEach((pathObj) => {
+    const groupId = getPathGroupId(pathObj);
+    const key = groupId > 0 ? `group-${groupId}` : makeLegacyPathGroupKey(pathSet, inferServiceBasePath(pathObj));
+    const current = rowMap.get(key) || [];
+    current.push(pathObj);
+    rowMap.set(key, current);
   });
 
-  return Array.from(groupMap.values()).map((group) => {
-    const basePath = getCommonPathPrefix(group.paths);
-    return {
+  const groups = storedGroups.map((group) => {
+    const basePath = normalizeRelativeDir(group.basePath || '') || '.';
+    const key = makeStoredPathGroupKey(group);
+    const groupRows = rowMap.get(key) || [];
+    rowMap.delete(key);
+    return buildPathGroupStats({
       ...group,
+      key,
       basePath,
       serviceName: getServiceName(basePath),
-    };
-  }).sort((a, b) => {
+      pathSet: Number(group.pathSet || pathSet || 0),
+      sort: Number(group.sort || 0),
+    }, groupRows);
+  });
+
+  rowMap.forEach((legacyRows, key) => {
+    const inferredKey = legacyRows.length > 0 ? inferServiceBasePath(legacyRows[0]) : key.replace(/^legacy-\d+-/, '');
+    const basePath = choosePathGroupBasePath(inferredKey, legacyRows);
+    groups.push(buildPathGroupStats({
+      ID: 0,
+      key,
+      basePath,
+      serviceName: getServiceName(basePath),
+      pathSet,
+      sort: 0,
+      isLegacy: true,
+    }, legacyRows));
+  });
+
+  return groups.sort((a, b) => {
     if (a.basePath === '..') return -1;
     if (b.basePath === '..') return 1;
-    return Number(a.firstId || 0) - Number(b.firstId || 0);
+    const sortDiff = Number(a.sort || 0) - Number(b.sort || 0);
+    if (sortDiff !== 0) return sortDiff;
+    return Number(a.firstId || Number.MAX_SAFE_INTEGER) - Number(b.firstId || Number.MAX_SAFE_INTEGER);
   });
 };
 
@@ -295,7 +347,12 @@ const getStoredPathSetName = (rows: any[]) => {
   return String(namedRow?.pathSetName || '').trim();
 };
 
-const buildPathSetSections = (rows: any[]) => {
+const getStoredGroupPathSetName = (groups: any[]) => {
+  const namedGroup = groups.find((group) => String(group?.pathSetName || '').trim());
+  return String(namedGroup?.pathSetName || '').trim();
+};
+
+const buildPathSetSections = (rows: any[], storedGroups: any[] = []) => {
   const setMap = new Map<number, any>();
 
   rows.forEach((pathObj) => {
@@ -306,6 +363,17 @@ const buildPathSetSections = (rows: any[]) => {
       paths: [],
     };
     current.paths.push(pathObj);
+    setMap.set(pathSet, current);
+  });
+
+  storedGroups.forEach((group) => {
+    const pathSet = Number(group?.pathSet ?? 0);
+    const current = setMap.get(pathSet) || {
+      key: makePathSetSectionKey(pathSet),
+      pathSet,
+      paths: [],
+    };
+    current.groups = [...(current.groups || []), group];
     setMap.set(pathSet, current);
   });
 
@@ -322,7 +390,7 @@ const buildPathSetSections = (rows: any[]) => {
     if (b.pathSet === 0) return 1;
     return Number(a.pathSet || 0) - Number(b.pathSet || 0);
   }).flatMap((section) => {
-    const splitRows = Number(section.pathSet || 0) === 0
+    const splitRows = Number(section.pathSet || 0) === 0 && !(section.groups || []).length
       ? splitLegacyCopiedRows(section.paths)
       : [section.paths];
     return splitRows.map((pathsInSection, copyIndex) => ({
@@ -331,11 +399,13 @@ const buildPathSetSections = (rows: any[]) => {
       copyIndex,
       paths: pathsInSection,
       pathSetName: getStoredPathSetName(pathsInSection),
+      storedPathGroups: section.groups || [],
       isPrimary: Number(section.pathSet || 0) === 0 && copyIndex === 0,
-      pathGroups: buildPathGroups(pathsInSection),
+      pathGroups: buildPathGroups(pathsInSection, section.groups || [], Number(section.pathSet || 0)),
     }));
   }).map((section, index) => ({
     ...section,
+    pathSetName: section.pathSetName || getStoredGroupPathSetName(section.storedPathGroups || []),
     displayIndex: index,
   }));
 };
@@ -406,11 +476,23 @@ const getPathSetTitle = (section: any) => {
 
 type ProjectConfigDialogProps = {
   project: any;
+  initialProjectInstanceId?: number | null;
+  initialPathSetKey?: string | null;
+  initialPathSet?: number | null;
+  initialPathGroupKey?: string | null;
   onClose: () => void;
   onProjectSaved?: () => Promise<void> | void;
 };
 
-export default function ProjectConfigDialog({ project: templateProject, onClose, onProjectSaved }: ProjectConfigDialogProps) {
+export default function ProjectConfigDialog({
+  project: templateProject,
+  initialProjectInstanceId,
+  initialPathSetKey,
+  initialPathSet,
+  initialPathGroupKey,
+  onClose,
+  onProjectSaved,
+}: ProjectConfigDialogProps) {
   const navigate = useNavigate();
   const templateProjectId = Number(templateProject?.ID || 0);
   const [projectInstances, setProjectInstances] = useState<any[]>([]);
@@ -419,15 +501,19 @@ export default function ProjectConfigDialog({ project: templateProject, onClose,
   const [projectDraft, setProjectDraft] = useState<any>(emptyProjectDraft(templateProject));
   const [projectEditorOpen, setProjectEditorOpen] = useState(false);
   const [paths, setPaths] = useState<any[]>([]);
+  const [pathGroups, setPathGroups] = useState<any[]>([]);
   const [pathDraft, setPathDraft] = useState<any>(emptyPathDraft(0));
   const [pathEditorOpen, setPathEditorOpen] = useState(false);
+  const [pathGroupDraft, setPathGroupDraft] = useState<any>(emptyPathGroupDraft(0));
+  const [pathGroupEditorOpen, setPathGroupEditorOpen] = useState(false);
   const [contentEditorOpen, setContentEditorOpen] = useState(false);
   const [contentPath, setContentPath] = useState<any>(null);
   const [contentModel, setContentModel] = useState<any>(null);
   const [contentDraft, setContentDraft] = useState('');
   const [pathGroupEdits, setPathGroupEdits] = useState<Record<string, string>>({});
-  const [movingPathGroupPickerKey, setMovingPathGroupPickerKey] = useState<string | null>(null);
   const [pathSetNameEdits, setPathSetNameEdits] = useState<Record<string, string>>({});
+  const [editingPathSetNameKey, setEditingPathSetNameKey] = useState<string | null>(null);
+  const [pathSetActionConfirm, setPathSetActionConfirm] = useState<{ action: 'copy' | 'delete'; section: any } | null>(null);
   const [selectedPathSetKey, setSelectedPathSetKey] = useState<string | null>(null);
   const [activePathSetKey, setActivePathSetKey] = useState<string | null>(null);
   const [activePathGroupKey, setActivePathGroupKey] = useState<string | null>(null);
@@ -440,12 +526,12 @@ export default function ProjectConfigDialog({ project: templateProject, onClose,
   const [loadingPaths, setLoadingPaths] = useState(false);
   const [savingProject, setSavingProject] = useState(false);
   const [savingPath, setSavingPath] = useState(false);
+  const [savingPathGroup, setSavingPathGroup] = useState(false);
   const [loadingContent, setLoadingContent] = useState(false);
   const [savingContent, setSavingContent] = useState(false);
   const [loadingPrompt, setLoadingPrompt] = useState(false);
   const [savingPrompt, setSavingPrompt] = useState(false);
   const [savingPathGroupKey, setSavingPathGroupKey] = useState<string | null>(null);
-  const [movingPathGroupKey, setMovingPathGroupKey] = useState<string | null>(null);
   const [savingPathSetNameKey, setSavingPathSetNameKey] = useState<string | null>(null);
   const [copyingPathSet, setCopyingPathSet] = useState<number | null>(null);
   const [deletingProjectId, setDeletingProjectId] = useState<number | null>(null);
@@ -453,6 +539,7 @@ export default function ProjectConfigDialog({ project: templateProject, onClose,
   const [deletingPathSet, setDeletingPathSet] = useState<number | null>(null);
   const pathSetDisplayNumberRef = useRef<Map<string, number>>(new Map());
   const cancelPathSetNameSaveRef = useRef<Set<string>>(new Set());
+  const initialPathDetailAppliedRef = useRef('');
 
   useEffect(() => {
     const previousBodyOverflow = document.body.style.overflow;
@@ -482,6 +569,8 @@ export default function ProjectConfigDialog({ project: templateProject, onClose,
       setProjectInstances([]);
       setSelectedProject(null);
       setProjectDraft(emptyProjectDraft(templateProject));
+      setPaths([]);
+      setPathGroups([]);
       return;
     }
 
@@ -516,7 +605,9 @@ export default function ProjectConfigDialog({ project: templateProject, onClose,
       setSelectedProject(nextProject);
       setProjectDraft(nextProject || emptyProjectDraft(templateProject));
       setPathDraft(emptyPathDraft(Number(nextProject?.ID || 0)));
+      setPathGroupDraft(emptyPathGroupDraft(Number(nextProject?.ID || 0)));
       setPathEditorOpen(false);
+      setPathGroupEditorOpen(false);
       setContentEditorOpen(false);
       setContentPath(null);
       setContentModel(null);
@@ -525,8 +616,8 @@ export default function ProjectConfigDialog({ project: templateProject, onClose,
       setActivePathSetKey(null);
       setActivePathGroupKey(null);
       setPathGroupEdits({});
-      setMovingPathGroupPickerKey(null);
       setPathSetNameEdits({});
+      setEditingPathSetNameKey(null);
       setPromptSummaryOpen(false);
       setPromptSummaryPath(null);
       setPromptModel(null);
@@ -539,40 +630,66 @@ export default function ProjectConfigDialog({ project: templateProject, onClose,
   };
 
   useEffect(() => {
+    initialPathDetailAppliedRef.current = '';
     setProjectInstances([]);
     setSelectedProject(null);
     setProjectDraft(emptyProjectDraft(templateProject));
+    setPaths([]);
+    setPathGroups([]);
     setPathDraft(emptyPathDraft(0));
+    setPathGroupDraft(emptyPathGroupDraft(0));
     setSelectedPathSetKey(null);
     setActivePathSetKey(null);
     setActivePathGroupKey(null);
     setProjectEditorOpen(false);
     setPathEditorOpen(false);
+    setPathGroupEditorOpen(false);
     setContentEditorOpen(false);
     setContentPath(null);
     setContentModel(null);
     setContentDraft('');
     setPathGroupEdits({});
-    setMovingPathGroupPickerKey(null);
     setPathSetNameEdits({});
+    setEditingPathSetNameKey(null);
     setPromptSummaryOpen(false);
     setPromptSummaryPath(null);
     setPromptModel(null);
     setPromptDraft('');
-    fetchProjectInstances(undefined, true);
-  }, [templateProjectId]);
+    fetchProjectInstances(Number(initialProjectInstanceId || 0) || undefined, true);
+  }, [templateProjectId, initialProjectInstanceId, initialPathSetKey, initialPathSet, initialPathGroupKey]);
+
+  const fetchPathGroups = async () => {
+    if (!projectId) {
+      setPathGroups([]);
+      return;
+    }
+    const res: any = await getPathGroupList(projectId);
+    let rows = unwrapResponseData(res);
+    if (!Array.isArray(rows)) rows = [];
+    setPathGroups(rows.filter((item: any) => Number(item.projectInstanceId || 0) === projectId));
+  };
 
   const fetchPaths = async () => {
     if (!projectId) {
       setPaths([]);
       return;
     }
+    const res: any = await getPathList(projectId);
+    let rows = unwrapResponseData(res);
+    if (!Array.isArray(rows)) rows = [];
+    setPaths(rows.filter((item: any) => Number(item.projectInstanceId || 0) === projectId));
+  };
+
+  const fetchPathConfig = async () => {
+    if (!projectId) {
+      setPathGroups([]);
+      setPaths([]);
+      return;
+    }
     setLoadingPaths(true);
     try {
-      const res: any = await getPathList(projectId);
-      let rows = unwrapResponseData(res);
-      if (!Array.isArray(rows)) rows = [];
-      setPaths(rows.filter((item: any) => Number(item.projectInstanceId || 0) === projectId));
+      await fetchPathGroups();
+      await fetchPaths();
     } catch (e) {
       toast.error('加载相对路径失败');
     } finally {
@@ -581,7 +698,7 @@ export default function ProjectConfigDialog({ project: templateProject, onClose,
   };
 
   useEffect(() => {
-    fetchPaths();
+    fetchPathConfig();
   }, [projectId]);
 
   useEffect(() => {
@@ -593,8 +710,8 @@ export default function ProjectConfigDialog({ project: templateProject, onClose,
   }, [projectInstances]);
 
   const pathSetSections = useMemo(() => {
-    return applyStablePathSetDisplayNumbers(buildPathSetSections(paths), pathSetDisplayNumberRef.current);
-  }, [paths]);
+    return applyStablePathSetDisplayNumbers(buildPathSetSections(paths, pathGroups), pathSetDisplayNumberRef.current);
+  }, [paths, pathGroups]);
 
   const primaryPathSetSection = useMemo(() => {
     return pathSetSections.find((item) => item.isPrimary) || pathSetSections[0] || null;
@@ -624,7 +741,7 @@ export default function ProjectConfigDialog({ project: templateProject, onClose,
   const filteredPaths = useMemo(() => {
     const keyword = pathSearch.trim().toLowerCase();
     const activeGroupRows = pathDetailOpen
-      ? (activePathSetSection?.paths || []).filter((item: any) => inferServiceBasePath(item) === activePathGroupKey)
+      ? (activePathGroup?.paths || [])
       : [];
     const rows = [...activeGroupRows].sort((a, b) => Number(a.ID || 0) - Number(b.ID || 0));
     if (!keyword) return rows;
@@ -636,7 +753,11 @@ export default function ProjectConfigDialog({ project: templateProject, onClose,
         formatPathLabel(item).toLowerCase().includes(keyword)
       );
     });
-  }, [activePathSetSection, pathSearch, activePathGroupKey, pathDetailOpen]);
+  }, [activePathGroup, pathSearch, pathDetailOpen]);
+
+  const pathGroupSwitchOptions = useMemo(() => {
+    return getPathGroupSwitchOptions(activePathSetSection?.pathGroups || []);
+  }, [activePathSetSection]);
 
   const filteredPathSetSections = useMemo(() => {
     const keyword = pathSearch.trim().toLowerCase();
@@ -666,6 +787,37 @@ export default function ProjectConfigDialog({ project: templateProject, onClose,
       setActivePathGroupKey(null);
     }
   }, [activePathSetKey, activePathGroupKey, pathSetSections]);
+
+  useEffect(() => {
+    const targetGroupKey = String(initialPathGroupKey || '').trim();
+    if (!projectId || !targetGroupKey || pathSetSections.length === 0) return;
+
+    const targetPathSetKey = String(initialPathSetKey || '').trim();
+    const targetPathSet = Number(initialPathSet || 0);
+    const applyKey = `${projectId}::${targetPathSetKey}::${targetPathSet}::${targetGroupKey}`;
+    if (initialPathDetailAppliedRef.current === applyKey) return;
+
+    const nextSection =
+      (targetPathSetKey
+        ? pathSetSections.find((section) => (
+          section.key === targetPathSetKey &&
+          section.pathGroups.some((group: any) => group.key === targetGroupKey)
+        ))
+        : null) ||
+      pathSetSections.find((section) => (
+        Number(section.pathSet || 0) === targetPathSet &&
+        section.pathGroups.some((group: any) => group.key === targetGroupKey)
+      )) ||
+      pathSetSections.find((section) => section.pathGroups.some((group: any) => group.key === targetGroupKey));
+
+    const nextGroup = nextSection?.pathGroups.find((group: any) => group.key === targetGroupKey);
+    if (!nextSection || !nextGroup) return;
+
+    setSelectedPathSetKey(nextSection.key);
+    setActivePathSetKey(nextSection.key);
+    setActivePathGroupKey(nextGroup.key);
+    initialPathDetailAppliedRef.current = applyKey;
+  }, [projectId, initialPathSetKey, initialPathSet, initialPathGroupKey, pathSetSections]);
 
   const persistSelectedPathSetIdentity = async (identity: string) => {
     if (!projectId || !identity) return;
@@ -724,18 +876,20 @@ export default function ProjectConfigDialog({ project: templateProject, onClose,
     setSelectedProject(nextProject);
     setProjectDraft(nextProject);
     setPathDraft(emptyPathDraft(nextProjectId));
+    setPathGroupDraft(emptyPathGroupDraft(nextProjectId));
     setSelectedPathSetKey(null);
     setActivePathSetKey(null);
     setActivePathGroupKey(null);
     setProjectEditorOpen(false);
     setPathEditorOpen(false);
+    setPathGroupEditorOpen(false);
     setContentEditorOpen(false);
     setContentPath(null);
     setContentModel(null);
     setContentDraft('');
     setPathGroupEdits({});
-    setMovingPathGroupPickerKey(null);
     setPathSetNameEdits({});
+    setEditingPathSetNameKey(null);
     setPromptSummaryOpen(false);
     setPromptSummaryPath(null);
     setPromptModel(null);
@@ -753,20 +907,36 @@ export default function ProjectConfigDialog({ project: templateProject, onClose,
     setProjectEditorOpen(true);
   };
 
+  const openCreatePathGroup = (section = selectedPathSetSection) => {
+    if (!projectId) {
+      toast.error('请先新增项目');
+      return;
+    }
+    setPathGroupDraft({
+      ...emptyPathGroupDraft(projectId),
+      pathSet: Number(section?.pathSet || 0),
+      pathSetName: String(section?.pathSetName || '').trim(),
+    });
+    setPathGroupEditorOpen(true);
+  };
+
   const openCreatePath = (pathSet = 0, basePath?: string) => {
     if (!projectId) {
       toast.error('请先新增项目');
       return;
     }
-    if (Number(pathSet || 0) !== 0) {
-      toast.error('复制的相对路径不支持新增路径');
-      return;
-    }
-    const firstBasePath = primaryPathSetSection?.pathGroups?.[0]?.basePath || '';
+    const targetSection = pathSetSections.find((section) => Number(section.pathSet || 0) === Number(pathSet || 0));
+    const resolvedGroup =
+      (activePathGroup && Number(activePathSetSection?.pathSet || 0) === Number(pathSet || 0) ? activePathGroup : null) ||
+      (basePath ? targetSection?.pathGroups?.find((group: any) => normalizeRelativeDir(group.basePath || '') === normalizeRelativeDir(basePath)) : null) ||
+      targetSection?.pathGroups?.[0] ||
+      null;
+    const firstBasePath = resolvedGroup?.basePath || '';
     setPathDraft({
       ...emptyPathDraft(projectId),
-      pathSet: 0,
-      pathSetName: primaryPathSetSection?.pathSetName || '',
+      pathSet: Number(pathSet || 0),
+      pathSetName: targetSection?.pathSetName || '',
+      pathGroupId: Number(resolvedGroup?.ID || 0),
       fileUrl: basePath ?? firstBasePath,
     });
     setPathEditorOpen(true);
@@ -775,6 +945,22 @@ export default function ProjectConfigDialog({ project: templateProject, onClose,
   const openEditPath = (pathObj: any) => {
     setPathDraft({ ...pathObj });
     setPathEditorOpen(true);
+  };
+
+  const switchActivePathGroup = (nextGroupKey: string) => {
+    if (!nextGroupKey || nextGroupKey === activePathGroupKey) return;
+    const nextGroup = activePathSetSection?.pathGroups.find((group: any) => group.key === nextGroupKey);
+    if (!nextGroup) {
+      toast.error('未找到可切换的公共相对路径');
+      return;
+    }
+    const currentSuffix = getPathParentSuffix(pathDraft, activePathGroup?.basePath || '');
+    setActivePathGroupKey(nextGroup.key);
+    setPathDraft({
+      ...pathDraft,
+      pathGroupId: Number(nextGroup.ID || 0),
+      fileUrl: buildPathParentWithSuffix(nextGroup.basePath || '', currentSuffix),
+    });
   };
 
   const openPathPromptDialog = async (pathObj: any) => {
@@ -918,6 +1104,7 @@ export default function ProjectConfigDialog({ project: templateProject, onClose,
         projectId,
         projectInstanceId: projectId,
         pathSet: Number(pathDraft.pathSet ?? 0),
+        pathGroupId: Number(pathDraft.pathGroupId || activePathGroup?.ID || 0),
         fileUrl: nextFileUrl,
         fileName: nextFileName,
         enabled: Number(pathDraft.enabled ?? 1),
@@ -932,11 +1119,43 @@ export default function ProjectConfigDialog({ project: templateProject, onClose,
       }
       setPathDraft(emptyPathDraft(projectId));
       setPathEditorOpen(false);
-      await fetchPaths();
+      await fetchPathConfig();
     } catch (e) {
       toast.error('保存相对路径失败');
     } finally {
       setSavingPath(false);
+    }
+  };
+
+  const savePathGroupDraft = async () => {
+    if (!projectId) {
+      toast.error('请先选择项目');
+      return;
+    }
+    const nextBasePath = normalizeRelativeDir(pathGroupDraft.basePath || '');
+    if (!nextBasePath) {
+      toast.error('相对路径不能为空');
+      return;
+    }
+
+    setSavingPathGroup(true);
+    try {
+      await createPathGroup({
+        ...pathGroupDraft,
+        projectId,
+        projectInstanceId: projectId,
+        pathSet: Number(pathGroupDraft.pathSet || 0),
+        pathSetName: String(pathGroupDraft.pathSetName || '').trim(),
+        basePath: nextBasePath,
+      });
+      toast.success('相对路径已新增');
+      setPathGroupDraft(emptyPathGroupDraft(projectId));
+      setPathGroupEditorOpen(false);
+      await fetchPathConfig();
+    } catch (e) {
+      toast.error('新增相对路径失败');
+    } finally {
+      setSavingPathGroup(false);
     }
   };
 
@@ -968,6 +1187,7 @@ export default function ProjectConfigDialog({ project: templateProject, onClose,
   const savePathSetName = async (section: any, rawName: string) => {
     if (cancelPathSetNameSaveRef.current.has(section.key)) {
       cancelPathSetNameSaveRef.current.delete(section.key);
+      setEditingPathSetNameKey(null);
       return;
     }
     if (!projectId) {
@@ -980,30 +1200,37 @@ export default function ProjectConfigDialog({ project: templateProject, onClose,
     const currentDisplayName = getPathSetTitle(section);
     const edited = Object.prototype.hasOwnProperty.call(pathSetNameEdits, section.key);
 
-    if (!edited && nextName === currentDisplayName) return;
+    if (!edited && nextName === currentDisplayName) {
+      setEditingPathSetNameKey(null);
+      return;
+    }
     if (nextName === currentStoredName) {
       setPathSetNameEdits((prev) => {
         const next = { ...prev };
         delete next[section.key];
         return next;
       });
+      setEditingPathSetNameKey(null);
       return;
     }
 
     const pathIds = (section.paths || []).map((pathObj: any) => Number(pathObj.ID || 0)).filter(Boolean);
-    if (pathIds.length === 0) {
+    const groupIds = (section.pathGroups || []).map((group: any) => Number(group.ID || 0)).filter(Boolean);
+    if (pathIds.length === 0 && groupIds.length === 0) {
       toast.error('暂无路径，无法保存名称');
       return;
     }
 
     setSavingPathSetNameKey(section.key);
     const pathIdSet = new Set(pathIds);
+    const groupIdSet = new Set(groupIds);
     try {
       const renameRes: any = await renamePathSetApi({
         projectId,
         projectInstanceId: projectId,
         pathSet: Number(section.pathSet || 0),
         pathIds,
+        groupIds,
         pathSetName: nextName,
       });
       if (typeof renameRes?.code !== 'undefined' && Number(renameRes.code) !== 0) {
@@ -1013,13 +1240,17 @@ export default function ProjectConfigDialog({ project: templateProject, onClose,
       setPaths((prev) => prev.map((pathObj) => (
         pathIdSet.has(Number(pathObj.ID || 0)) ? { ...pathObj, pathSetName: nextName } : pathObj
       )));
+      setPathGroups((prev) => prev.map((group) => (
+        groupIdSet.has(Number(group.ID || 0)) ? { ...group, pathSetName: nextName } : group
+      )));
       setPathSetNameEdits((prev) => {
         const next = { ...prev };
         delete next[section.key];
         return next;
       });
+      setEditingPathSetNameKey(null);
       toast.success('相对路径名称已更新');
-      await fetchPaths();
+      await fetchPathConfig();
     } catch (e) {
       toast.error('重命名相对路径失败');
       setPathSetNameEdits((prev) => ({ ...prev, [section.key]: currentDisplayName }));
@@ -1046,28 +1277,38 @@ export default function ProjectConfigDialog({ project: templateProject, onClose,
       return;
     }
 
-    const groupPaths = Array.isArray(group?.paths) ? group.paths : [];
     setSavingPathGroupKey(editKey);
     try {
-      await Promise.all(groupPaths.map((pathObj: any) => {
-        const nextFileUrl = replacePathPrefix(pathObj.fileUrl || '', oldBasePath, nextBasePath);
-        const nextFileName = replacePathPrefix(pathObj.fileName || '', oldBasePath, nextBasePath);
-        return updatePath({
-          ...pathObj,
+      if (Number(group.ID || 0) > 0) {
+        await updatePathGroup({
+          ...group,
           projectId,
           projectInstanceId: projectId,
-          pathSet: getPathSet(pathObj),
-          fileUrl: nextFileUrl,
-          fileName: nextFileName || normalizeFileName(pathObj.fileName || ''),
+          pathSet: Number(section.pathSet || 0),
+          basePath: nextBasePath,
         });
-      }));
+      } else {
+        const groupPaths = Array.isArray(group?.paths) ? group.paths : [];
+        await Promise.all(groupPaths.map((pathObj: any) => {
+          const nextFileUrl = replacePathPrefix(pathObj.fileUrl || '', oldBasePath, nextBasePath);
+          const nextFileName = replacePathPrefix(pathObj.fileName || '', oldBasePath, nextBasePath);
+          return updatePath({
+            ...pathObj,
+            projectId,
+            projectInstanceId: projectId,
+            pathSet: getPathSet(pathObj),
+            fileUrl: nextFileUrl,
+            fileName: nextFileName || normalizeFileName(pathObj.fileName || ''),
+          });
+        }));
+      }
       toast.success('相对路径已更新');
       setPathGroupEdits((prev) => {
         const next = { ...prev };
         delete next[editKey];
         return next;
       });
-      await fetchPaths();
+      await fetchPathConfig();
     } catch (e) {
       toast.error('保存相对路径失败');
       setPathGroupEdits((prev) => ({ ...prev, [editKey]: oldBasePath }));
@@ -1076,48 +1317,50 @@ export default function ProjectConfigDialog({ project: templateProject, onClose,
     }
   };
 
-  const movePathGroup = async (section: any, group: any, rawTargetBasePath: string) => {
+  const removePathGroup = async (section: any, group: any) => {
     const editKey = makePathGroupEditKey(Number(section.pathSet || 0), group.key);
-    const oldBasePath = normalizeRelativeDir(group?.basePath || '');
-    const targetBasePath = normalizeRelativeDir(rawTargetBasePath || '');
-
-    if (!targetBasePath) {
-      toast.error('请选择目标子目录');
-      return;
-    }
-    if (oldBasePath === targetBasePath) {
-      toast.error('不能移动到当前子目录');
+    const deleteState = getPathGroupDeleteState(group);
+    if (!deleteState.canDelete) {
+      toast.error(deleteState.reason);
       return;
     }
 
-    const groupPaths = Array.isArray(group?.paths) ? group.paths : [];
-    if (groupPaths.length === 0) {
-      toast.error('当前子目录暂无可移动内容');
-      return;
-    }
-
-    setMovingPathGroupKey(editKey);
+    setSavingPathGroupKey(editKey);
     try {
-      await Promise.all(groupPaths.map((pathObj: any) => {
-        const nextFileUrl = replacePathPrefix(pathObj.fileUrl || '', oldBasePath, targetBasePath);
-        const nextFileName = replacePathPrefix(pathObj.fileName || '', oldBasePath, targetBasePath);
-        return updatePath({
-          ...pathObj,
-          projectId,
-          projectInstanceId: projectId,
-          pathSet: getPathSet(pathObj),
-          fileUrl: nextFileUrl,
-          fileName: nextFileName || normalizeFileName(pathObj.fileName || ''),
-        });
-      }));
-      toast.success('子目录内容已移动');
-      setMovingPathGroupPickerKey(null);
-      await fetchPaths();
+      if (Number(group.ID || 0) > 0) {
+        await deletePathGroup(group);
+      }
+      setPathGroupEdits((prev) => {
+        const next = { ...prev };
+        delete next[editKey];
+        return next;
+      });
+      if (activePathSetKey === section.key && activePathGroupKey === group.key) {
+        setActivePathSetKey(null);
+        setActivePathGroupKey(null);
+      }
+      toast.success('空子目录已删除');
+      await fetchPathConfig();
     } catch (e) {
-      toast.error('移动子目录内容失败');
+      toast.error('删除子目录失败');
     } finally {
-      setMovingPathGroupKey(null);
+      setSavingPathGroupKey(null);
     }
+  };
+
+  const openCopyPathSetConfirm = (section: any) => {
+    if (!projectId) {
+      toast.error('请先选择项目');
+      return;
+    }
+    const sourcePaths = Array.isArray(section?.paths) ? section.paths : [];
+    const sourceGroups = Array.isArray(section?.pathGroups) ? section.pathGroups : [];
+    if (sourcePaths.length === 0 && sourceGroups.length === 0) {
+      toast.error('请先在当前相对路径中新增路径');
+      return;
+    }
+    selectPathSetSection(section);
+    setPathSetActionConfirm({ action: 'copy', section });
   };
 
   const copyPathSet = async (section: any) => {
@@ -1126,41 +1369,33 @@ export default function ProjectConfigDialog({ project: templateProject, onClose,
       return;
     }
     const sourcePaths = Array.isArray(section?.paths) ? section.paths : [];
-    if (sourcePaths.length === 0) {
+    const sourceGroups = Array.isArray(section?.pathGroups) ? section.pathGroups : [];
+    if (sourcePaths.length === 0 && sourceGroups.length === 0) {
       toast.error('请先在当前相对路径中新增路径');
       return;
     }
 
-    const nextPathSet = paths.reduce((max, item) => Math.max(max, getPathSet(item)), 0) + 1;
+    const nextPathSet = Math.max(
+      paths.reduce((max, item) => Math.max(max, getPathSet(item)), 0),
+      pathGroups.reduce((max, group) => Math.max(max, Number(group.pathSet || 0)), 0),
+    ) + 1;
     setCopyingPathSet(Number(section.pathSet || 0));
     try {
       let copiedPathSet = nextPathSet;
-      try {
-        const copyRes: any = await copyPathSetApi({
-          projectId,
-          projectInstanceId: projectId,
-          pathSet: Number(section.pathSet || 0),
-          pathIds: sourcePaths.map((pathObj: any) => Number(pathObj.ID || 0)).filter(Boolean),
-        });
-        if (typeof copyRes?.code !== 'undefined' && Number(copyRes.code) !== 0) {
-          throw new Error(copyRes.msg || 'copy failed');
-        }
-        const copyData = unwrapResponseData(copyRes);
-        copiedPathSet = Number(copyData?.pathSet || copiedPathSet);
-      } catch (apiError) {
-        await runInBatches(sourcePaths, 16, (pathObj: any) => createPath({
-          projectId,
-          projectInstanceId: projectId,
-          pathSet: nextPathSet,
-          pathSetName: String(pathObj.pathSetName || section.pathSetName || '').trim(),
-          fileUrl: normalizeRelativeDir(pathObj.fileUrl || ''),
-          fileName: normalizeFileName(pathObj.fileName || ''),
-          enabled: Number(pathObj.enabled ?? 1),
-          incremented: Number(pathObj.incremented ?? 0),
-        }));
+      const copyRes: any = await copyPathSetApi({
+        projectId,
+        projectInstanceId: projectId,
+        pathSet: Number(section.pathSet || 0),
+        pathIds: sourcePaths.map((pathObj: any) => Number(pathObj.ID || 0)).filter(Boolean),
+        groupIds: sourceGroups.map((group: any) => Number(group.ID || 0)).filter(Boolean),
+      });
+      if (typeof copyRes?.code !== 'undefined' && Number(copyRes.code) !== 0) {
+        throw new Error(copyRes.msg || 'copy failed');
       }
+      const copyData = unwrapResponseData(copyRes);
+      copiedPathSet = Number(copyData?.pathSet || copiedPathSet);
       toast.success('相对路径配置已复制');
-      await fetchPaths();
+      await fetchPathConfig();
       setSelectedPathSetKey(makePathSetSectionKey(copiedPathSet));
       persistSelectedPathSetIdentity(`path-set-${copiedPathSet}`);
     } catch (e) {
@@ -1170,34 +1405,34 @@ export default function ProjectConfigDialog({ project: templateProject, onClose,
     }
   };
 
-  const removePathSet = async (section: any) => {
+  const openRemovePathSetConfirm = (section: any) => {
     if (section?.isPrimary) return;
-    const sectionTitle = getPathSetTitle(section);
-    if (!confirm(`确定删除「${sectionTitle}」及其所有路径吗？`)) return;
+    setPathSetActionConfirm({ action: 'delete', section });
+  };
 
-    const deleteIds = (section.paths || []).map((pathObj: any) => Number(pathObj.ID || 0)).filter(Boolean);
-    if (deleteIds.length === 0) {
-      toast.error('该相对路径配置暂无可删除路径');
+  const confirmPathSetAction = () => {
+    if (!pathSetActionConfirm) return;
+    const { action, section } = pathSetActionConfirm;
+    setPathSetActionConfirm(null);
+    if (action === 'copy') {
+      selectPathSetSection(section);
+      copyPathSet(section);
       return;
     }
+    removePathSet(section);
+  };
+
+  const removePathSet = async (section: any) => {
+    if (section?.isPrimary) return;
 
     setDeletingPathSet(Number(section.pathSet || 0));
     try {
-      try {
-        const deleteRes: any = await deletePathSetApi({
-          projectId,
-          projectInstanceId: projectId,
-          pathSet: Number(section.pathSet || 0),
-          pathIds: deleteIds,
-        });
-        if (typeof deleteRes?.code !== 'undefined' && Number(deleteRes.code) !== 0) {
-          throw new Error(deleteRes.msg || 'delete failed');
-        }
-      } catch (apiError) {
-        await runInBatches(section.paths || [], 16, (pathObj: any) => deletePath(pathObj));
-      }
-      const deleteIdSet = new Set(deleteIds);
-      setPaths((prev) => prev.filter((pathObj) => !deleteIdSet.has(Number(pathObj.ID || 0))));
+      await deletePathSetApi({
+        projectId,
+        projectInstanceId: projectId,
+        pathSet: Number(section.pathSet || 0),
+        groupIds: (section.pathGroups || []).map((group: any) => Number(group.ID || 0)).filter(Boolean),
+      });
       if (activePathSetKey === section.key) {
         setActivePathSetKey(null);
         setActivePathGroupKey(null);
@@ -1206,8 +1441,8 @@ export default function ProjectConfigDialog({ project: templateProject, onClose,
         setSelectedPathSetKey(makePathSetSectionKey(0));
         persistSelectedPathSetIdentity('path-set-primary');
       }
-      await fetchPaths();
-      toast.success(`相对路径配置已删除，共 ${deleteIds.length} 条路径`);
+      toast.success('相对路径配置已删除');
+      await fetchPathConfig();
     } catch (e) {
       toast.error('删除相对路径配置失败');
     } finally {
@@ -1256,6 +1491,15 @@ export default function ProjectConfigDialog({ project: templateProject, onClose,
     }
     const params = new URLSearchParams();
     params.set('templateId', String(templateProjectId || ''));
+    params.set('returnTemplateId', String(templateProjectId || ''));
+    params.set('returnProjectInstanceId', String(projectId || ''));
+    if (pathDetailOpen && activePathGroupKey) {
+      const returnSection = activePathSetSection || section;
+      params.set('returnView', 'pathDetail');
+      params.set('returnPathSetKey', String(returnSection?.key || ''));
+      params.set('returnPathSet', String(Number(returnSection?.pathSet || section?.pathSet || 0)));
+      params.set('returnPathGroupKey', String(activePathGroupKey || ''));
+    }
     if (section) {
       params.set('pathSet', String(Number(section.pathSet || 0)));
       params.set('pathSetName', getPathSetTitle(section));
@@ -1283,14 +1527,6 @@ export default function ProjectConfigDialog({ project: templateProject, onClose,
               title="新增项目"
             >
               <Plus size={18} />
-            </button>
-            <button
-              type="button"
-              onClick={onClose}
-              className="flex h-9 w-9 items-center justify-center rounded-lg text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-900"
-              title="关闭"
-            >
-              <X size={18} />
             </button>
           </div>
         </div>
@@ -1383,7 +1619,15 @@ export default function ProjectConfigDialog({ project: templateProject, onClose,
               className="inline-flex h-9 items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 text-sm font-bold text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <FileCode size={15} />
-              编辑引擎
+              编辑代码模版
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex h-9 w-9 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-400 transition-colors hover:bg-gray-50 hover:text-gray-900"
+              title="关闭"
+            >
+              <X size={18} />
             </button>
           </div>
         </div>
@@ -1416,6 +1660,7 @@ export default function ProjectConfigDialog({ project: templateProject, onClose,
                   const deletingThisSet = deletingPathSet === Number(section.pathSet || 0);
                   const savingThisSetName = savingPathSetNameKey === section.key;
                   const sectionNameEditValue = pathSetNameEdits[section.key] ?? sectionTitle;
+                  const editingThisSetName = editingPathSetNameKey === section.key;
 
                   return (
                     <div
@@ -1424,42 +1669,62 @@ export default function ProjectConfigDialog({ project: templateProject, onClose,
                       onClick={() => selectPathSetSection(section)}
                       className={`cursor-pointer overflow-hidden rounded-lg border bg-white transition-all ${sectionSelected ? 'border-gray-900 shadow-sm ring-2 ring-gray-900/10' : 'border-gray-200 hover:border-gray-300 hover:shadow-sm'}`}
                     >
-                      <div className={`flex items-center justify-between gap-4 border-b px-4 py-2 transition-colors ${sectionSelected ? 'border-gray-900 bg-gray-900 text-white' : 'border-gray-200 bg-gray-50 text-gray-900'}`}>
-                        <div className="min-w-0">
+                      <div className={`flex flex-wrap items-center justify-between gap-4 border-b px-4 py-2 transition-colors ${sectionSelected ? 'border-gray-900 bg-gray-900 text-white' : 'border-gray-200 bg-gray-50 text-gray-900'}`}>
+                        <div className="min-w-0 flex-1 basis-56">
                           <div className="flex min-w-0 items-center gap-1.5 text-sm font-extrabold">
                             <Folder size={15} className={`shrink-0 ${sectionSelected ? 'text-white/70' : 'text-gray-400'}`} />
-                            <input
-                              type="text"
-                              value={sectionNameEditValue}
-                              disabled={savingThisSetName}
-                              onClick={(event) => event.stopPropagation()}
-                              onFocus={() => selectPathSetSection(section)}
-                              onChange={(event) => setPathSetNameEdits((prev) => ({ ...prev, [section.key]: event.target.value }))}
-                              onBlur={(event) => savePathSetName(section, event.target.value)}
-                              onKeyDown={(event) => {
-                                if (event.key === 'Enter') {
-                                  event.currentTarget.blur();
-                                }
-                                if (event.key === 'Escape') {
-                                  event.preventDefault();
-                                  event.currentTarget.value = sectionTitle;
-                                  cancelPathSetNameSaveRef.current.add(section.key);
+                            {editingThisSetName ? (
+                              <input
+                                type="text"
+                                value={sectionNameEditValue}
+                                disabled={savingThisSetName}
+                                autoFocus
+                                onClick={(event) => event.stopPropagation()}
+                                onFocus={() => selectPathSetSection(section)}
+                                onChange={(event) => setPathSetNameEdits((prev) => ({ ...prev, [section.key]: event.target.value }))}
+                                onBlur={() => {
+                                  setEditingPathSetNameKey(null);
                                   setPathSetNameEdits((prev) => {
                                     const next = { ...prev };
                                     delete next[section.key];
                                     return next;
                                   });
-                                  event.currentTarget.blur();
-                                }
-                              }}
-                              className={`min-w-0 flex-1 truncate rounded-md border border-transparent bg-transparent px-1 py-0.5 text-sm font-extrabold outline-none transition focus:border-gray-300 focus:bg-white focus:text-gray-900 focus:ring-2 focus:ring-black/5 disabled:opacity-60 ${sectionSelected ? 'text-white placeholder:text-white/40' : 'text-gray-900 placeholder:text-gray-400'}`}
-                              title="点击重命名"
-                            />
+                                }}
+                                onKeyDown={(event) => {
+                                  if (event.key === 'Enter') {
+                                    event.preventDefault();
+                                    void savePathSetName(section, event.currentTarget.value);
+                                  }
+                                  if (event.key === 'Escape') {
+                                    event.preventDefault();
+                                    setEditingPathSetNameKey(null);
+                                    setPathSetNameEdits((prev) => {
+                                      const next = { ...prev };
+                                      delete next[section.key];
+                                      return next;
+                                    });
+                                  }
+                                }}
+                                className={`min-w-0 flex-1 truncate rounded-md border border-gray-300 bg-white px-2 py-0.5 text-sm font-extrabold text-gray-900 outline-none transition focus:ring-2 focus:ring-black/5 disabled:opacity-60`}
+                                title="按 Enter 保存"
+                              />
+                            ) : (
+                              <span
+                                className="min-w-0 flex-1 truncate px-1 py-0.5"
+                                title="双击重命名"
+                                onDoubleClick={(event) => {
+                                  event.stopPropagation();
+                                  selectPathSetSection(section);
+                                  setPathSetNameEdits((prev) => ({ ...prev, [section.key]: sectionTitle }));
+                                  setEditingPathSetNameKey(section.key);
+                                }}
+                              >
+                                {sectionTitle}
+                              </span>
+                            )}
                             {savingThisSetName ? (
                               <RefreshCw size={13} className="shrink-0 animate-spin opacity-70" />
-                            ) : (
-                              <Edit2 size={12} className={`shrink-0 ${sectionSelected ? 'text-white/45' : 'text-gray-300'}`} />
-                            )}
+                            ) : null}
                           </div>
                           <div className={`mt-0.5 truncate text-xs font-bold ${sectionSelected ? 'text-white/60' : 'text-gray-400'}`}>
                             {section.paths.length} 条路径 / {section.pathGroups.length} 个子服务
@@ -1467,27 +1732,26 @@ export default function ProjectConfigDialog({ project: templateProject, onClose,
                         </div>
 
                         <div className="flex shrink-0 items-center gap-2">
-                          {section.isPrimary ? (
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              selectPathSetSection(section);
+                              openCreatePathGroup(section);
+                            }}
+                            disabled={!projectId}
+                            className={`inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-sm font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${sectionSelected ? 'bg-white text-gray-900 hover:bg-white/90' : 'bg-gray-900 text-white hover:bg-gray-800'}`}
+                            title={`在 ${sectionTitle} 中新增公共相对路径`}
+                          >
+                            <Plus size={15} />
+                            新增路径
+                          </button>
+                          {!section.isPrimary && (
                             <button
                               type="button"
                               onClick={(event) => {
                                 event.stopPropagation();
-                                selectPathSetSection(section);
-                                openCreatePath(0);
-                              }}
-                              disabled={!projectId}
-                              className={`inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-sm font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${sectionSelected ? 'bg-white text-gray-900 hover:bg-white/90' : 'bg-gray-900 text-white hover:bg-gray-800'}`}
-                              title="在第一个相对路径中新增路径"
-                            >
-                              <Plus size={15} />
-                              新增路径
-                            </button>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                removePathSet(section);
+                                openRemovePathSetConfirm(section);
                               }}
                               disabled={deletingThisSet}
                               className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-3 text-sm font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${sectionSelected ? 'border-white/20 bg-white/10 text-white hover:bg-red-500/20 hover:text-white' : 'border-gray-200 bg-white text-gray-700 hover:bg-red-50 hover:text-red-600'}`}
@@ -1501,8 +1765,7 @@ export default function ProjectConfigDialog({ project: templateProject, onClose,
                             type="button"
                             onClick={(event) => {
                               event.stopPropagation();
-                              selectPathSetSection(section);
-                              copyPathSet(section);
+                              openCopyPathSetConfirm(section);
                             }}
                             disabled={!projectId || copyingThisSet || section.paths.length === 0}
                             className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-3 text-sm font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${sectionSelected ? 'border-white/20 bg-white/10 text-white hover:bg-white/15' : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'}`}
@@ -1531,9 +1794,6 @@ export default function ProjectConfigDialog({ project: templateProject, onClose,
                               const editKey = makePathGroupEditKey(Number(section.pathSet || 0), group.key);
                               const editingValue = pathGroupEdits[editKey] ?? group.basePath;
                               const savingThisGroup = savingPathGroupKey === editKey;
-                              const movingThisGroup = movingPathGroupKey === editKey;
-                              const targetGroups = section.pathGroups.filter((item: any) => normalizeRelativeDir(item.basePath || '') !== normalizeRelativeDir(group.basePath || ''));
-                              const pickerOpen = movingPathGroupPickerKey === editKey;
 
                               return (
                                 <div
@@ -1574,45 +1834,17 @@ export default function ProjectConfigDialog({ project: templateProject, onClose,
                                   </div>
 
                                   <div className="flex min-w-0 items-center justify-end gap-2">
-                                    {pickerOpen && (
-                                      <select
-                                        autoFocus
-                                        disabled={movingThisGroup}
-                                        defaultValue=""
-                                        onClick={(event) => event.stopPropagation()}
-                                        onBlur={() => {
-                                          if (!movingThisGroup) setMovingPathGroupPickerKey(null);
-                                        }}
-                                        onChange={(event) => {
-                                          event.stopPropagation();
-                                          movePathGroup(section, group, event.target.value);
-                                        }}
-                                        className="h-8 min-w-0 flex-1 rounded-lg border border-gray-200 bg-white px-2 text-xs font-bold text-gray-700 outline-none transition focus:border-gray-300 focus:ring-2 focus:ring-black/5 disabled:opacity-60"
-                                      >
-                                        <option value="">移动到...</option>
-                                        {targetGroups.map((targetGroup: any) => (
-                                          <option key={targetGroup.key} value={targetGroup.basePath}>
-                                            {targetGroup.basePath}
-                                          </option>
-                                        ))}
-                                      </select>
-                                    )}
                                     <button
                                       type="button"
                                       onClick={(event) => {
                                         event.stopPropagation();
-                                        if (targetGroups.length === 0) {
-                                          toast.error('暂无其他子目录可移动');
-                                          return;
-                                        }
-                                        setMovingPathGroupPickerKey((current) => current === editKey ? null : editKey);
+                                        removePathGroup(section, group);
                                       }}
-                                      disabled={movingThisGroup || targetGroups.length === 0}
-                                      className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 text-sm font-bold text-gray-700 transition-colors hover:bg-gray-50 hover:text-gray-950 disabled:cursor-not-allowed disabled:opacity-50"
-                                      title="移动当前子目录下所有内容"
+                                      className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 text-sm font-bold text-gray-700 transition-colors hover:bg-red-50 hover:text-red-600"
+                                      title="删除空子目录"
                                     >
-                                      {movingThisGroup ? <RefreshCw size={14} className="animate-spin" /> : <MoveRight size={14} />}
-                                      移动
+                                      <Trash2 size={14} />
+                                      删除
                                     </button>
                                     <button
                                       type="button"
@@ -1647,17 +1879,6 @@ export default function ProjectConfigDialog({ project: templateProject, onClose,
         <div data-testid="path-detail-dialog" className="fixed inset-0 z-[60] flex h-screen w-screen flex-col overflow-hidden bg-white text-gray-900">
           <div className="flex h-16 items-center justify-between gap-4 border-b border-gray-200 px-6">
             <div className="flex min-w-0 items-center gap-3">
-              <button
-                type="button"
-                onClick={() => {
-                  setActivePathSetKey(null);
-                  setActivePathGroupKey(null);
-                }}
-                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-gray-200 text-gray-500 transition-colors hover:bg-gray-50 hover:text-gray-900"
-                title="返回相对路径配置"
-              >
-                <ChevronLeft size={18} />
-              </button>
               <div className="min-w-0">
                 <h3 className="truncate text-lg font-extrabold text-gray-950">相对路径明细</h3>
                 <p className="mt-0.5 truncate text-xs text-gray-400" title={activePathGroup?.basePath || selectedProject?.projectName || ''}>
@@ -1679,12 +1900,32 @@ export default function ProjectConfigDialog({ project: templateProject, onClose,
               </div>
               <button
                 type="button"
+                onClick={() => openCreatePath(Number(activePathSetSection?.pathSet || 0), activePathGroup?.basePath || '')}
+                disabled={!projectId || !activePathGroup}
+                className="inline-flex h-9 items-center gap-2 rounded-lg bg-gray-900 px-3 text-sm font-bold text-white transition-colors hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Plus size={15} />
+                新增文件
+              </button>
+              <button
+                type="button"
                 onClick={() => openEditor(activePathSetSection || selectedPathSetSection)}
                 disabled={!projectId}
                 className="inline-flex h-9 items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 text-sm font-bold text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <FileCode size={15} />
-                编辑引擎
+                编辑代码模版
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setActivePathSetKey(null);
+                  setActivePathGroupKey(null);
+                }}
+                className="flex h-9 w-9 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-400 transition-colors hover:bg-gray-50 hover:text-gray-900"
+                title="关闭"
+              >
+                <X size={18} />
               </button>
             </div>
           </div>
@@ -1730,7 +1971,7 @@ export default function ProjectConfigDialog({ project: templateProject, onClose,
                         <div className="min-w-0">
                           <div className={`mb-1 flex items-center gap-1.5 text-xs font-bold ${active ? 'text-white/60' : 'text-gray-400'}`}>
                             <FileCode size={13} />
-                            编辑引擎文件
+                            编辑代码模版文件
                           </div>
                           <div className="truncate font-mono text-sm font-semibold" title={formatPathFileLabel(pathObj)}>
                             {formatPathFileLabel(pathObj)}
@@ -1794,6 +2035,64 @@ export default function ProjectConfigDialog({ project: templateProject, onClose,
               </div>
             )}
           </section>
+        </div>
+      )}
+
+      {pathSetActionConfirm && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-[460px] overflow-hidden rounded-xl border border-gray-200 bg-white shadow-2xl">
+            <div className="flex items-start justify-between gap-4 border-b border-gray-100 px-6 py-5">
+              <div className="min-w-0">
+                <h4 className="text-lg font-extrabold text-gray-950">
+                  {pathSetActionConfirm.action === 'copy' ? '确认复制配置' : '确认删除配置'}
+                </h4>
+                <p className="mt-1 truncate text-sm font-bold text-gray-400" title={getPathSetTitle(pathSetActionConfirm.section)}>
+                  {getPathSetTitle(pathSetActionConfirm.section)}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPathSetActionConfirm(null)}
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-900"
+                title="关闭"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="px-6 py-5 text-sm font-medium leading-6 text-gray-600">
+              {pathSetActionConfirm.action === 'copy' ? (
+                <p>
+                  确认复制「{getPathSetTitle(pathSetActionConfirm.section)}」吗？系统会复制该配置下的子目录、文件路径、文件内容和提示词。
+                </p>
+              ) : (
+                <p>
+                  确认删除「{getPathSetTitle(pathSetActionConfirm.section)}」吗？系统会删除该配置下的子目录、文件路径、文件内容和提示词，删除后不可恢复。
+                </p>
+              )}
+            </div>
+
+            <div className="flex justify-end gap-3 border-t border-gray-100 bg-gray-50 px-6 py-4">
+              <button
+                type="button"
+                onClick={() => setPathSetActionConfirm(null)}
+                className="rounded-lg px-4 py-2 text-sm font-bold text-gray-600 transition-colors hover:bg-white hover:text-gray-900"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={confirmPathSetAction}
+                className={`rounded-lg px-4 py-2 text-sm font-extrabold text-white transition-colors ${
+                  pathSetActionConfirm.action === 'delete'
+                    ? 'bg-red-600 hover:bg-red-700'
+                    : 'bg-gray-900 hover:bg-gray-800'
+                }`}
+              >
+                {pathSetActionConfirm.action === 'copy' ? '确认复制' : '确认删除'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -1971,7 +2270,7 @@ export default function ProjectConfigDialog({ project: templateProject, onClose,
           >
             <div className="flex items-start justify-between gap-4 border-b border-white/10 bg-[#0f172a] px-6 py-4">
               <div className="min-w-0">
-                <div className="text-xs font-bold uppercase text-gray-400">编辑引擎文件内容</div>
+                <div className="text-xs font-bold uppercase text-gray-400">编辑代码模版文件内容</div>
                 <h4 className="mt-1 truncate text-lg font-extrabold text-white" title={formatPathLabel(contentPath || {})}>
                   {formatPathFileLabel(contentPath || {})}
                 </h4>
@@ -2029,6 +2328,56 @@ export default function ProjectConfigDialog({ project: templateProject, onClose,
         </div>
       )}
 
+      {pathGroupEditorOpen && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm">
+          <div
+            data-testid="path-group-editor-dialog"
+            className="flex max-h-[92vh] w-full max-w-[560px] flex-col overflow-hidden rounded-xl border border-white/10 bg-[#1f1f1f] text-gray-100 shadow-2xl"
+          >
+            <div className="flex items-start justify-between gap-4 border-b border-white/10 bg-[#111111] px-7 py-5">
+              <div className="min-w-0">
+                <h4 className="text-xl font-extrabold text-white">新增路径</h4>
+                <p className="mt-1 truncate text-sm font-bold text-gray-400">
+                  {getPathSetTitle(selectedPathSetSection || primaryPathSetSection || {})}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPathGroupEditorOpen(false)}
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-gray-400 transition-colors hover:bg-white/10 hover:text-white"
+                title="关闭"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="bg-[#242424] px-7 py-6">
+              <label className="mb-2.5 block text-sm font-extrabold text-gray-400">公共相对路径</label>
+              <input
+                type="text"
+                value={pathGroupDraft.basePath || ''}
+                onChange={(event) => setPathGroupDraft({ ...pathGroupDraft, basePath: event.target.value })}
+                className="w-full rounded-lg border border-white/15 bg-[#111111] px-4 py-3 font-mono text-lg font-bold text-white outline-none transition placeholder:text-gray-600 focus:border-white/30 focus:ring-2 focus:ring-white/10"
+                placeholder="c12-mtp-web-service/src/main/java"
+                autoFocus
+              />
+            </div>
+
+            <div className="border-t border-white/10 bg-[#171717] p-5">
+              <button
+                type="button"
+                onClick={savePathGroupDraft}
+                disabled={savingPathGroup}
+                className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-[#0f172a] px-4 py-3 text-base font-extrabold text-white transition-colors hover:bg-[#111c34] disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {savingPathGroup ? <RefreshCw size={18} className="animate-spin" /> : <Save size={18} />}
+                保存路径
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {pathEditorOpen && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm">
           <div
@@ -2039,7 +2388,7 @@ export default function ProjectConfigDialog({ project: templateProject, onClose,
               <div className="min-w-0">
                 <h4 className="text-xl font-extrabold text-white">{pathDraft.ID ? '编辑路径' : '新增路径'}</h4>
                 <p className="mt-1 truncate font-mono text-sm font-bold text-gray-400" title={formatPathLabel(pathDraft)}>
-                  {pathDraft.ID ? formatPathLabel(pathDraft) : '编辑引擎文件路径'}
+                  {pathDraft.ID ? formatPathLabel(pathDraft) : '编辑代码模版文件路径'}
                 </p>
               </div>
               <div className="flex shrink-0 items-center gap-1">
@@ -2059,13 +2408,28 @@ export default function ProjectConfigDialog({ project: templateProject, onClose,
                 {activePathGroup ? (
                   <>
                     <div>
-                      <label className="mb-2.5 block text-sm font-extrabold text-gray-400">公共父级</label>
-                      <div
-                        className="break-all rounded-lg border border-white/15 bg-[#111111] px-4 py-3 font-mono text-lg font-bold text-gray-300"
-                        title={activePathGroup.basePath || '/'}
-                      >
-                        {activePathGroup.basePath || '/'}
-                      </div>
+                      <label className="mb-2.5 block text-sm font-extrabold text-gray-400">公共相对路径</label>
+                      {pathGroupSwitchOptions.length > 1 ? (
+                        <select
+                          value={activePathGroup.key}
+                          onChange={(event) => switchActivePathGroup(event.target.value)}
+                          className="w-full rounded-lg border border-white/15 bg-[#111111] px-4 py-3 font-mono text-lg font-bold text-white outline-none transition focus:border-white/30 focus:ring-2 focus:ring-white/10"
+                          title={activePathGroup.basePath || '/'}
+                        >
+                          {pathGroupSwitchOptions.map((option) => (
+                            <option key={option.key} value={option.key}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <div
+                          className="break-all rounded-lg border border-white/15 bg-[#111111] px-4 py-3 font-mono text-lg font-bold text-gray-300"
+                          title={activePathGroup.basePath || '/'}
+                        >
+                          {activePathGroup.basePath || '/'}
+                        </div>
+                      )}
                     </div>
 
                     <div>

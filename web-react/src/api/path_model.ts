@@ -13,6 +13,24 @@ export const createPath = (data: any) => {
   return api.post('/tbgenerateprojectpath/createTbGenerateProjectPath', data);
 };
 
+export const getPathGroupList = (projectId: number) => {
+  return api.get('/tbgenerateprojectpath/getPathGroupList', {
+    params: { projectInstanceId: projectId },
+  });
+};
+
+export const createPathGroup = (data: any) => {
+  return api.post('/tbgenerateprojectpath/createPathGroup', data);
+};
+
+export const updatePathGroup = (data: any) => {
+  return api.put('/tbgenerateprojectpath/updatePathGroup', data);
+};
+
+export const deletePathGroup = (data: any) => {
+  return api.delete('/tbgenerateprojectpath/deletePathGroup', { data });
+};
+
 export const updatePath = (data: any) => {
   return api.put('/tbgenerateprojectpath/updateTbGenerateProjectPath', data);
 };

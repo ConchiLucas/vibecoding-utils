@@ -1,11 +1,20 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Plus, Copy, ClipboardCopy, Database, FileCode, Edit2, Trash2, Search, Folder, Check, X, Wand2, RefreshCw } from 'lucide-react';
 import { getProjectList, createProject, updateProject, deleteProject, copyProject, generateProjectCode } from '@/api/code_generate_project';
 import { getDbTemplateScripts, getDbTemplateTypes } from '@/api/db_template';
 import toast from 'react-hot-toast';
 import ProjectConfigDialog from './ProjectConfigDialog';
+import { buildDbTemplateSqlCopyText, buildDbTemplateSqlSection } from './dbTemplateCopy';
+import {
+  getProjectTypeLabel,
+  matchesProjectCardSearch,
+  normalizeProjectType,
+  PROJECT_TYPE_BACKEND,
+  PROJECT_TYPE_FRONTEND,
+  shouldShowDbTemplateActions,
+} from './projectDashboardActions';
 
 const unwrapResponseData = (res: any) => {
   return res?.data?.data ?? res?.data ?? [];
@@ -59,13 +68,7 @@ const buildDbTemplateSqlSections = async (project: any) => {
     scripts
       .filter((script: any) => String(script.content || '').trim())
       .forEach((script: any) => {
-        sections.push([
-          `-- 项目：${project.projectName || projectId}`,
-          `-- 业务类型：${typeObj.typeName || '-'}`,
-          `-- 脚本：${script.scriptName || typeObj.typeName || '-'}`,
-          '',
-          String(script.content || '').trim(),
-        ].join('\n'));
+        sections.push(buildDbTemplateSqlSection(project, typeObj, script));
       });
   }
 
@@ -90,21 +93,34 @@ const buildGenerateCodexHandoffText = (result: any) => {
 
 export default function ProjectDashboard() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [projects, setProjects] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [currentProject, setCurrentProject] = useState<any>({});
+  const [projectModalMode, setProjectModalMode] = useState<'create' | 'edit' | 'clone'>('create');
   const [configProject, setConfigProject] = useState<any | null>(null);
+  const [configProjectInstanceId, setConfigProjectInstanceId] = useState<number | null>(null);
+  const [configPathDetailTarget, setConfigPathDetailTarget] = useState<{
+    pathSetKey: string;
+    pathSet: number;
+    pathGroupKey: string;
+  } | null>(null);
   const [generateProject, setGenerateProject] = useState<any | null>(null);
   const [generateDraft, setGenerateDraft] = useState({ module: '', tableName: '', overwrite: false });
   const [generateResult, setGenerateResult] = useState<any | null>(null);
   const [generatingTemplateProjectId, setGeneratingTemplateProjectId] = useState<number | null>(null);
   const [copyingTemplateProjectId, setCopyingTemplateProjectId] = useState<number | null>(null);
+  const [dbSqlPreviewOpen, setDbSqlPreviewOpen] = useState(false);
+  const [dbSqlPreviewTitle, setDbSqlPreviewTitle] = useState('');
+  const [dbSqlPreviewContent, setDbSqlPreviewContent] = useState('');
+  const [copyingDbSqlPreview, setCopyingDbSqlPreview] = useState(false);
   const [selectedBusinessType, setSelectedBusinessType] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [editingBusinessType, setEditingBusinessType] = useState<string | null>(null);
   const [editingBusinessTypeName, setEditingBusinessTypeName] = useState('');
   const [savingBusinessType, setSavingBusinessType] = useState(false);
+  const [savingProject, setSavingProject] = useState(false);
   const businessTypeInputRef = useRef<HTMLInputElement>(null);
 
   const fetchProjects = async () => {
@@ -121,6 +137,28 @@ export default function ProjectDashboard() {
   useEffect(() => {
     fetchProjects();
   }, []);
+
+  useEffect(() => {
+    const configProjectId = Number(searchParams.get('configProjectId') || 0);
+    if (!configProjectId || loading) return;
+
+    const projectInstanceId = Number(searchParams.get('projectInstanceId') || 0);
+    const configView = String(searchParams.get('configView') || '').trim();
+    const pathSetKey = String(searchParams.get('pathSetKey') || '').trim();
+    const pathSet = Number(searchParams.get('pathSet') || 0);
+    const pathGroupKey = String(searchParams.get('pathGroupKey') || '').trim();
+    const nextProject = projects.find((project) => Number(project.ID || 0) === configProjectId);
+    if (nextProject) {
+      setConfigProjectInstanceId(projectInstanceId || null);
+      setConfigPathDetailTarget(configView === 'pathDetail' && pathGroupKey ? {
+        pathSetKey,
+        pathSet,
+        pathGroupKey,
+      } : null);
+      setConfigProject(nextProject);
+    }
+    setSearchParams(new URLSearchParams(), { replace: true });
+  }, [loading, projects, searchParams, setSearchParams]);
 
   const businessTypes = useMemo(() => {
     const counts = new Map<string, number>();
@@ -154,17 +192,35 @@ export default function ProjectDashboard() {
     const keyword = searchQuery.trim().toLowerCase();
     return projects.filter((project) => {
       const typeOk = selectedBusinessType === null || getProjectBusinessType(project) === selectedBusinessType;
-      const searchOk = !keyword ||
-        String(project.projectName || '').toLowerCase().includes(keyword) ||
-        String(project.diskPath || '').toLowerCase().includes(keyword) ||
-        String(project.remark || '').toLowerCase().includes(keyword);
+      const searchOk = matchesProjectCardSearch(project, keyword);
       return typeOk && searchOk;
     });
   }, [projects, searchQuery, selectedBusinessType]);
 
   const openCreateProject = () => {
+    setProjectModalMode('create');
     setCurrentProject({
       businessType: selectedBusinessType && selectedBusinessType !== DEFAULT_BUSINESS_TYPE ? selectedBusinessType : '',
+      projectType: PROJECT_TYPE_BACKEND,
+    });
+    setShowModal(true);
+  };
+
+  const openEditProject = (project: any) => {
+    setProjectModalMode('edit');
+    setCurrentProject(project);
+    setShowModal(true);
+  };
+
+  const openCloneProject = (project: any) => {
+    setProjectModalMode('clone');
+    setCurrentProject({
+      sourceProjectId: Number(project.ID || 0),
+      projectName: `${String(project.projectName || '').trim() || '未命名卡片'}_copy`,
+      businessType: String(project.businessType || '').trim(),
+      projectType: normalizeProjectType(project.projectType),
+      remark: String(project.remark || '').trim(),
+      userName: project.userName || 'conchi',
     });
     setShowModal(true);
   };
@@ -237,13 +293,25 @@ export default function ProjectDashboard() {
   };
 
   const handleSave = async () => {
+    setSavingProject(true);
     try {
       const payload = {
         ...currentProject,
         businessType: String(currentProject.businessType || '').trim(),
+        projectType: normalizeProjectType(currentProject.projectType),
         projectConfigId: 0,
       };
-      if (currentProject.ID) {
+      if (projectModalMode === 'clone') {
+        await copyProject({
+          sourceProjectId: Number(currentProject.sourceProjectId || 0),
+          projectName: String(payload.projectName || '').trim(),
+          businessType: payload.businessType,
+          projectType: payload.projectType,
+          remark: String(payload.remark || '').trim(),
+          userName: currentProject.userName || 'conchi',
+        });
+        toast.success('克隆成功');
+      } else if (currentProject.ID) {
         await updateProject(payload);
         toast.success('更新成功');
       } else {
@@ -255,6 +323,8 @@ export default function ProjectDashboard() {
       setSelectedBusinessType(payload.businessType || DEFAULT_BUSINESS_TYPE);
     } catch (e) {
       toast.error('保存失败');
+    } finally {
+      setSavingProject(false);
     }
   };
 
@@ -267,16 +337,6 @@ export default function ProjectDashboard() {
       } catch (e) {
         toast.error('删除失败');
       }
-    }
-  };
-
-  const handleCopy = async (id: string) => {
-    try {
-      await copyProject(id);
-      toast.success('复制成功');
-      fetchProjects();
-    } catch (e) {
-      toast.error('复制失败');
     }
   };
 
@@ -341,12 +401,29 @@ export default function ProjectDashboard() {
         return;
       }
 
-      await copyTextToClipboard(sections.join('\n\n\n'));
+      const copyText = buildDbTemplateSqlCopyText(sections);
+      await copyTextToClipboard(copyText);
+      setDbSqlPreviewTitle(project.projectName || `Project ${projectId}`);
+      setDbSqlPreviewContent(copyText);
+      setDbSqlPreviewOpen(true);
       toast.success('数据库模板 SQL 已复制');
     } catch (e) {
       toast.error('复制数据库模板失败');
     } finally {
       setCopyingTemplateProjectId(null);
+    }
+  };
+
+  const handleCopyDbSqlPreview = async () => {
+    if (!dbSqlPreviewContent.trim()) return;
+    setCopyingDbSqlPreview(true);
+    try {
+      await copyTextToClipboard(dbSqlPreviewContent);
+      toast.success('数据库模板 SQL 已复制');
+    } catch (e) {
+      toast.error('复制数据库模板失败');
+    } finally {
+      setCopyingDbSqlPreview(false);
     }
   };
 
@@ -487,17 +564,24 @@ export default function ProjectDashboard() {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
             <AnimatePresence>
-              {filteredProjects.map((p: any) => (
-                <motion.div
-                  layout
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, scale: 0.96 }}
-                  key={p.ID}
-                  data-testid="code-project-card"
-                  onClick={() => setConfigProject(p)}
-                  className="group min-w-0 bg-white rounded-lg shadow-sm border border-gray-200 hover:border-gray-300 hover:shadow-md transition-all duration-200 overflow-hidden flex flex-col cursor-pointer"
-                >
+              {filteredProjects.map((p: any) => {
+                const showDbTemplateActions = shouldShowDbTemplateActions(p);
+
+                return (
+                  <motion.div
+                    layout
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, scale: 0.96 }}
+                    key={p.ID}
+                    data-testid="code-project-card"
+                    onClick={() => {
+                      setConfigProjectInstanceId(null);
+                      setConfigPathDetailTarget(null);
+                      setConfigProject(p);
+                    }}
+                    className="group min-w-0 bg-white rounded-lg shadow-sm border border-gray-200 hover:border-gray-300 hover:shadow-md transition-all duration-200 overflow-hidden flex flex-col cursor-pointer"
+                  >
                   <div className="p-5">
                     <div className="flex justify-between items-start gap-3 mb-4">
                       <div className="flex min-w-0 items-center gap-3">
@@ -513,8 +597,7 @@ export default function ProjectDashboard() {
                         <button
                           onClick={(event) => {
                             event.stopPropagation();
-                            setCurrentProject(p);
-                            setShowModal(true);
+                            openEditProject(p);
                           }}
                           className="p-1.5 text-gray-400 hover:text-teal-600 hover:bg-teal-50 rounded-md transition-colors"
                           title="编辑卡片"
@@ -535,9 +618,14 @@ export default function ProjectDashboard() {
                     </div>
 
                     <div className="space-y-3">
-                      <div className="inline-flex max-w-full items-center gap-1.5 px-2 py-1 rounded-md bg-gray-100 text-xs font-medium text-gray-600">
-                        <Folder size={12} className="text-gray-400" />
-                        <span className="truncate" title={getProjectBusinessType(p)}>{getProjectBusinessType(p)}</span>
+                      <div className="flex flex-wrap gap-1.5">
+                        <div className="inline-flex max-w-full items-center gap-1.5 px-2 py-1 rounded-md bg-gray-100 text-xs font-medium text-gray-600">
+                          <Folder size={12} className="text-gray-400" />
+                          <span className="truncate" title={getProjectBusinessType(p)}>{getProjectBusinessType(p)}</span>
+                        </div>
+                        <div className="inline-flex items-center rounded-md bg-slate-900 px-2 py-1 text-xs font-bold text-white">
+                          {getProjectTypeLabel(p.projectType)}
+                        </div>
                       </div>
                       <div className="text-sm text-gray-500 line-clamp-2 min-h-[2.5rem]">
                         {p.remark || <span className="italic text-gray-400">暂无备注说明</span>}
@@ -546,59 +634,66 @@ export default function ProjectDashboard() {
                   </div>
 
                   <div className="mt-auto border-t border-gray-100 bg-gray-50/50 p-4 flex flex-col gap-2">
-                    <button
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        openGenerateDialog(p);
-                      }}
-                      className="flex w-full min-w-0 justify-center items-center gap-1.5 py-2 px-2 text-sm text-slate-950 bg-teal-100 hover:bg-teal-200 rounded-md transition-colors font-bold border border-teal-300"
-                    >
-                      <Wand2 size={15} /> <span className="truncate">生成代码</span>
-                    </button>
-                    <div className="flex gap-2">
-                      <button
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          navigate(`/code-generate/${p.ID}/db-templates`);
-                        }}
-                        className="flex-1 min-w-0 flex justify-center items-center gap-1.5 py-2 px-2 text-sm text-cyan-800 bg-cyan-50 hover:bg-cyan-100 rounded-md transition-colors font-bold border border-cyan-200"
-                      >
-                        <Database size={15} /> <span className="truncate">数据库模板</span>
-                      </button>
-                      <button
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          handleCopyDbTemplateSql(p);
-                        }}
-                        disabled={copyingTemplateProjectId === Number(p.ID)}
-                        className="flex-1 min-w-0 flex justify-center items-center gap-1.5 py-2 px-2 text-sm text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-md transition-colors font-bold border border-emerald-200 disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        <ClipboardCopy size={15} /> <span className="truncate">{copyingTemplateProjectId === Number(p.ID) ? '复制中' : '复制 SQL'}</span>
-                      </button>
+                    <div className="flex min-h-[38px] gap-2">
+                      {showDbTemplateActions && (
+                        <>
+                          <button
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              navigate(`/code-generate/${p.ID}/db-templates`);
+                            }}
+                            className="flex-1 min-w-0 flex justify-center items-center gap-1.5 py-2 px-2 text-sm text-cyan-800 bg-cyan-50 hover:bg-cyan-100 rounded-md transition-colors font-bold border border-cyan-200"
+                          >
+                            <Database size={15} /> <span className="truncate">数据库模板</span>
+                          </button>
+                          <button
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              handleCopyDbTemplateSql(p);
+                            }}
+                            disabled={copyingTemplateProjectId === Number(p.ID)}
+                            className="flex-1 min-w-0 flex justify-center items-center gap-1.5 py-2 px-2 text-sm text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-md transition-colors font-bold border border-emerald-200 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            <ClipboardCopy size={15} /> <span className="truncate">{copyingTemplateProjectId === Number(p.ID) ? '复制中' : '复制 SQL'}</span>
+                          </button>
+                        </>
+                      )}
                     </div>
                     <div className="flex gap-2">
                       <button
                         onClick={(event) => {
                           event.stopPropagation();
+                          setConfigProjectInstanceId(null);
+                          setConfigPathDetailTarget(null);
                           setConfigProject(p);
                         }}
                         className="flex-1 min-w-0 flex justify-center items-center gap-1.5 py-2 px-2 text-sm text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded-md transition-colors font-bold border border-indigo-200"
                       >
-                        <FileCode size={15} /> <span className="truncate">编辑引擎</span>
+                        <FileCode size={15} /> <span className="truncate">编辑代码模版</span>
                       </button>
                       <button
                         onClick={(event) => {
                           event.stopPropagation();
-                          handleCopy(p.ID);
+                          openGenerateDialog(p);
                         }}
-                        className="flex-1 min-w-0 flex justify-center items-center gap-1.5 py-2 px-2 text-sm text-gray-600 bg-white hover:bg-gray-50 border border-gray-200 rounded-md transition-colors"
+                        className="flex-1 min-w-0 flex justify-center items-center gap-1.5 py-2 px-2 text-sm text-slate-950 bg-teal-100 hover:bg-teal-200 rounded-md transition-colors font-bold border border-teal-300"
                       >
-                        <Copy size={15} /> <span className="truncate">克隆</span>
+                        <Wand2 size={15} /> <span className="truncate">生成代码</span>
                       </button>
                     </div>
+                    <button
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        openCloneProject(p);
+                      }}
+                      className="flex w-full min-w-0 justify-center items-center gap-1.5 py-2 px-2 text-sm text-gray-600 bg-white hover:bg-gray-50 border border-gray-200 rounded-md transition-colors"
+                    >
+                      <Copy size={15} /> <span className="truncate">克隆</span>
+                    </button>
                   </div>
-                </motion.div>
-              ))}
+                  </motion.div>
+                );
+              })}
             </AnimatePresence>
           </div>
         )}
@@ -607,7 +702,15 @@ export default function ProjectDashboard() {
       {configProject && (
         <ProjectConfigDialog
           project={configProject}
-          onClose={() => setConfigProject(null)}
+          initialProjectInstanceId={configProjectInstanceId}
+          initialPathSetKey={configPathDetailTarget?.pathSetKey || null}
+          initialPathSet={configPathDetailTarget?.pathSet || null}
+          initialPathGroupKey={configPathDetailTarget?.pathGroupKey || null}
+          onClose={() => {
+            setConfigProject(null);
+            setConfigProjectInstanceId(null);
+            setConfigPathDetailTarget(null);
+          }}
           onProjectSaved={fetchProjects}
         />
       )}
@@ -643,9 +746,11 @@ export default function ProjectDashboard() {
                     <X size={18} />
                   </button>
                 </div>
-                <div className="mt-3 truncate rounded-md bg-slate-50 px-3 py-2 font-mono text-xs font-semibold text-slate-500" title={generateResult?.diskPath || generateProject.diskPath || ''}>
-                  {generateResult?.diskPath || generateProject.diskPath || '未配置磁盘输出路径'}
-                </div>
+                {generateResult?.diskPath && (
+                  <div className="mt-3 truncate rounded-md bg-slate-50 px-3 py-2 font-mono text-xs font-semibold text-slate-500" title={generateResult.diskPath || ''}>
+                    {generateResult.diskPath}
+                  </div>
+                )}
               </div>
 
               <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
@@ -823,7 +928,9 @@ export default function ProjectDashboard() {
               initial={{ opacity: 0, scale: 0.95, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: 20 }}
               className="relative w-full max-w-lg bg-white rounded-lg shadow-2xl p-6"
             >
-              <h2 className="text-xl font-bold text-slate-800 mb-6">{currentProject.ID ? '编辑代码卡片' : '新建代码卡片'}</h2>
+              <h2 className="text-xl font-bold text-slate-800 mb-6">
+                {projectModalMode === 'clone' ? '克隆代码卡片' : currentProject.ID ? '编辑代码卡片' : '新建代码卡片'}
+              </h2>
               <div className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-2">项目名称</label>
@@ -853,14 +960,29 @@ export default function ProjectDashboard() {
                   </datalist>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-2">落盘路径</label>
-                  <input
-                    type="text"
-                    value={currentProject.diskPath || ''}
-                    onChange={e => setCurrentProject({ ...currentProject, diskPath: e.target.value })}
-                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/50 transition-all"
-                    placeholder="输入代码生成的根目录路径"
-                  />
+                  <label className="block text-sm font-medium text-slate-700 mb-2">项目类型</label>
+                  <div className="grid grid-cols-2 gap-2 rounded-lg bg-slate-100 p-1">
+                    {[
+                      { value: PROJECT_TYPE_BACKEND, label: '后端' },
+                      { value: PROJECT_TYPE_FRONTEND, label: '前端' },
+                    ].map((option) => {
+                      const active = normalizeProjectType(currentProject.projectType) === option.value;
+                      return (
+                        <button
+                          key={option.value}
+                          type="button"
+                          onClick={() => setCurrentProject({ ...currentProject, projectType: option.value })}
+                          className={`rounded-md px-3 py-2 text-sm font-bold transition-colors ${
+                            active
+                              ? 'bg-slate-900 text-white shadow-sm'
+                              : 'text-slate-500 hover:bg-white hover:text-slate-800'
+                          }`}
+                        >
+                          {option.label}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-2">项目描述</label>
@@ -875,19 +997,69 @@ export default function ProjectDashboard() {
               <div className="mt-8 flex justify-end gap-3">
                 <button
                   onClick={() => setShowModal(false)}
+                  disabled={savingProject}
                   className="px-5 py-2.5 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors font-medium"
                 >
                   取消
                 </button>
                 <button
                   onClick={handleSave}
-                  className="px-5 py-2.5 bg-slate-800 hover:bg-slate-900 text-white rounded-lg transition-colors font-medium shadow-lg shadow-slate-900/20"
+                  disabled={savingProject}
+                  className="px-5 py-2.5 bg-slate-800 hover:bg-slate-900 text-white rounded-lg transition-colors font-medium shadow-lg shadow-slate-900/20 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  保存设置
+                  {savingProject ? '保存中...' : '保存设置'}
                 </button>
               </div>
             </motion.div>
           </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {dbSqlPreviewOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[60] flex flex-col bg-slate-950 text-white"
+          >
+            <div className="flex min-h-[72px] items-center justify-between border-b border-slate-800 bg-slate-900 px-6">
+              <div className="min-w-0">
+                <div className="text-xs font-bold uppercase tracking-wider text-emerald-300">数据库模板 SQL</div>
+                <h2 className="mt-1 truncate text-lg font-extrabold text-white" title={dbSqlPreviewTitle}>
+                  {dbSqlPreviewTitle || '复制内容'}
+                </h2>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleCopyDbSqlPreview}
+                  disabled={copyingDbSqlPreview || !dbSqlPreviewContent.trim()}
+                  className="inline-flex items-center gap-2 rounded-lg bg-emerald-400 px-4 py-2 text-sm font-bold text-slate-950 transition-colors hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {copyingDbSqlPreview ? <RefreshCw size={16} className="animate-spin" /> : <ClipboardCopy size={16} />}
+                  复制
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDbSqlPreviewOpen(false)}
+                  className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-slate-700 text-slate-300 transition-colors hover:bg-slate-800 hover:text-white"
+                  title="关闭"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+            </div>
+
+            <div className="min-h-0 flex-1 bg-slate-950 p-5">
+              <textarea
+                value={dbSqlPreviewContent}
+                readOnly
+                spellCheck={false}
+                className="h-full w-full resize-none rounded-lg border border-slate-800 bg-[#101418] p-5 font-mono text-sm font-semibold leading-6 text-slate-100 outline-none selection:bg-emerald-300/25"
+              />
+            </div>
+          </motion.div>
         )}
       </AnimatePresence>
 

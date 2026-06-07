@@ -37,6 +37,31 @@ func TestBuildGeneratedFileTargetBuildsRelativePath(t *testing.T) {
 	}
 }
 
+func TestRenderGeneratedFileTargetReplacesPathPlaceholders(t *testing.T) {
+	root := t.TempDir()
+	vars := buildCodeGenerationVars("btStation", "BtStation")
+
+	relativePath, targetPath, err := renderGeneratedFileTarget(root, "src/main/java/{{module}}", "{{TableName}}.java", vars)
+	if err != nil {
+		t.Fatalf("renderGeneratedFileTarget returned error: %v", err)
+	}
+	if relativePath != "src/main/java/btStation/BtStation.java" {
+		t.Fatalf("relativePath = %q", relativePath)
+	}
+	if !strings.HasPrefix(targetPath, filepath.Clean(root)+string(filepath.Separator)) {
+		t.Fatalf("targetPath %q is not under root %q", targetPath, root)
+	}
+}
+
+func TestRenderCodeGenerationTextReplacesTemplateContentPlaceholders(t *testing.T) {
+	vars := buildCodeGenerationVars("btStation", "BtStation")
+	got := renderCodeGenerationText("package {{module}};\npublic class {{TableName}}Item {}", vars)
+	want := "package btStation;\npublic class BtStationItem {}"
+	if got != want {
+		t.Fatalf("renderCodeGenerationText = %q, want %q", got, want)
+	}
+}
+
 func TestBuildCodeGenerationTaskPromptContentIncludesTargets(t *testing.T) {
 	drafts := []generateProjectCodeDraft{
 		{

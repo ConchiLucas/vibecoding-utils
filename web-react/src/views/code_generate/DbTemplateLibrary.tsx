@@ -23,6 +23,7 @@ const unwrapResponseData = (res: any) => {
 const emptyType = (projectId: number) => ({
   projectId,
   typeName: '',
+  prompt: '',
   sort: 0,
 });
 
@@ -131,7 +132,12 @@ export default function DbTemplateLibrary() {
       return;
     }
     try {
-      const payload = { ...typeDraft, projectId: numericProjectId, typeName: typeDraft.typeName.trim() };
+      const payload = {
+        ...typeDraft,
+        projectId: numericProjectId,
+        typeName: typeDraft.typeName.trim(),
+        prompt: String(typeDraft.prompt || '').trim(),
+      };
       const res: any = payload.ID ? await updateDbTemplateType(payload) : await createDbTemplateType(payload);
       const saved = unwrapResponseData(res);
       toast.success(payload.ID ? '业务类型已更新' : '业务类型已创建');
@@ -343,26 +349,37 @@ export default function DbTemplateLibrary() {
 
       {showTypeModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl">
+          <div className="max-h-[92vh] w-full max-w-5xl rounded-3xl bg-white p-9 shadow-2xl">
             <h2 className="mb-5 text-xl font-bold text-slate-800">{typeDraft.ID ? '编辑业务类型' : '新增业务类型'}</h2>
-            <div className="space-y-4">
-              <div>
-                <label className="mb-1.5 block text-sm font-medium text-slate-700">业务类型名称</label>
-                <input
-                  value={typeDraft.typeName || ''}
-                  onChange={(event) => setTypeDraft({ ...typeDraft, typeName: event.target.value })}
-                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm outline-none transition focus:border-cyan-400 focus:ring-2 focus:ring-cyan-500/20"
-                  placeholder="建表 SQL / 字典 SQL / 菜单按钮 SQL"
-                  autoFocus
-                />
+            <div className="space-y-5">
+              <div className="grid gap-5 md:grid-cols-[minmax(0,1fr)_220px]">
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-slate-700">业务类型名称</label>
+                  <input
+                    value={typeDraft.typeName || ''}
+                    onChange={(event) => setTypeDraft({ ...typeDraft, typeName: event.target.value })}
+                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-base font-semibold outline-none transition focus:border-cyan-400 focus:ring-2 focus:ring-cyan-500/20"
+                    placeholder="建表 SQL / 字典 SQL / 菜单按钮 SQL"
+                    autoFocus
+                  />
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-slate-700">排序</label>
+                  <input
+                    type="number"
+                    value={typeDraft.sort ?? 0}
+                    onChange={(event) => setTypeDraft({ ...typeDraft, sort: Number(event.target.value) })}
+                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-base outline-none transition focus:border-cyan-400 focus:ring-2 focus:ring-cyan-500/20"
+                  />
+                </div>
               </div>
               <div>
-                <label className="mb-1.5 block text-sm font-medium text-slate-700">排序</label>
-                <input
-                  type="number"
-                  value={typeDraft.sort ?? 0}
-                  onChange={(event) => setTypeDraft({ ...typeDraft, sort: Number(event.target.value) })}
-                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm outline-none transition focus:border-cyan-400 focus:ring-2 focus:ring-cyan-500/20"
+                <label className="mb-1.5 block text-sm font-medium text-slate-700">提示词</label>
+                <textarea
+                  value={typeDraft.prompt || ''}
+                  onChange={(event) => setTypeDraft({ ...typeDraft, prompt: event.target.value })}
+                  className="min-h-[380px] w-full resize-y rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-6 outline-none transition focus:border-cyan-400 focus:ring-2 focus:ring-cyan-500/20"
+                  placeholder="输入该业务类型的生成说明、约束或示例要求..."
                 />
               </div>
             </div>

@@ -29,6 +29,22 @@ func (a *TbGenerateProjectPathApi) CreateTbGenerateProjectPath(c *gin.Context) {
 	}
 }
 
+func (a *TbGenerateProjectPathApi) CreatePathGroup(c *gin.Context) {
+	var req system.TbGenerateProjectPathGroup
+	err := c.ShouldBindJSON(&req)
+	if err != nil {
+		response.FailWithMessage(err.Error(), c)
+		return
+	}
+	err = tbGenerateProjectPathService.CreatePathGroup(&req)
+	if err != nil {
+		global.GVA_LOG.Error("创建路径分组失败!", zap.Error(err))
+		response.FailWithMessage(err.Error(), c)
+	} else {
+		response.OkWithData(req, c)
+	}
+}
+
 func (a *TbGenerateProjectPathApi) DeleteTbGenerateProjectPath(c *gin.Context) {
 	var req system.TbGenerateProjectPath
 	err := c.ShouldBindJSON(&req)
@@ -40,6 +56,22 @@ func (a *TbGenerateProjectPathApi) DeleteTbGenerateProjectPath(c *gin.Context) {
 	if err != nil {
 		global.GVA_LOG.Error("删除失败!", zap.Error(err))
 		response.FailWithMessage("删除失败", c)
+	} else {
+		response.OkWithMessage("删除成功", c)
+	}
+}
+
+func (a *TbGenerateProjectPathApi) DeletePathGroup(c *gin.Context) {
+	var req system.TbGenerateProjectPathGroup
+	err := c.ShouldBindJSON(&req)
+	if err != nil {
+		response.FailWithMessage(err.Error(), c)
+		return
+	}
+	err = tbGenerateProjectPathService.DeletePathGroup(req)
+	if err != nil {
+		global.GVA_LOG.Error("删除路径分组失败!", zap.Error(err))
+		response.FailWithMessage(err.Error(), c)
 	} else {
 		response.OkWithMessage("删除成功", c)
 	}
@@ -58,6 +90,22 @@ func (a *TbGenerateProjectPathApi) DeletePathSet(c *gin.Context) {
 		response.FailWithMessage("删除路径配置失败", c)
 	} else {
 		response.OkWithData(gin.H{"deletedCount": deletedCount}, c)
+	}
+}
+
+func (a *TbGenerateProjectPathApi) UpdatePathGroup(c *gin.Context) {
+	var req system.TbGenerateProjectPathGroup
+	err := c.ShouldBindJSON(&req)
+	if err != nil {
+		response.FailWithMessage(err.Error(), c)
+		return
+	}
+	err = tbGenerateProjectPathService.UpdatePathGroup(&req)
+	if err != nil {
+		global.GVA_LOG.Error("更新路径分组失败!", zap.Error(err))
+		response.FailWithMessage(err.Error(), c)
+	} else {
+		response.OkWithMessage("更新成功", c)
 	}
 }
 
@@ -152,6 +200,28 @@ func (a *TbGenerateProjectPathApi) GetTbGenerateProjectPathList(c *gin.Context) 
 	if err != nil {
 		global.GVA_LOG.Error("查询列表失败!", zap.Error(err))
 		response.FailWithMessage("查询列表失败", c)
+	} else {
+		response.OkWithData(res, c)
+	}
+}
+
+func (a *TbGenerateProjectPathApi) GetPathGroupList(c *gin.Context) {
+	projectId := 0
+	if v := c.Query("projectId"); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil {
+			projectId = parsed
+		}
+	}
+	projectInstanceId := 0
+	if v := c.Query("projectInstanceId"); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil {
+			projectInstanceId = parsed
+		}
+	}
+	res, err := tbGenerateProjectPathService.GetPathGroupList(projectId, projectInstanceId)
+	if err != nil {
+		global.GVA_LOG.Error("查询路径分组失败!", zap.Error(err))
+		response.FailWithMessage("查询路径分组失败", c)
 	} else {
 		response.OkWithData(res, c)
 	}

@@ -105,6 +105,30 @@ func (s *TbGenerateProjectInstanceService) createDefaultFromTemplate(templatePro
 }
 
 func (s *TbGenerateProjectInstanceService) cloneTemplatePaths(tx *gorm.DB, templateProjectId int, instanceProjectId int) error {
+	if err := (&TbGenerateProjectPathService{}).ensurePathGroupsForLegacyPathsTx(tx, templateProjectId, 0); err != nil {
+		return err
+	}
+
+	var templateGroups []system.TbGenerateProjectPathGroup
+	if err := tx.Where("project_id = ? AND (project_instance_id = 0 OR project_instance_id IS NULL)", templateProjectId).Order("path_set ASC, sort ASC, id ASC").Find(&templateGroups).Error; err != nil {
+		return err
+	}
+	groupIdMap := make(map[int]int, len(templateGroups))
+	for _, templateGroup := range templateGroups {
+		newGroup := system.TbGenerateProjectPathGroup{
+			ProjectId:         instanceProjectId,
+			ProjectInstanceId: instanceProjectId,
+			PathSet:           templateGroup.PathSet,
+			PathSetName:       templateGroup.PathSetName,
+			BasePath:          templateGroup.BasePath,
+			Sort:              templateGroup.Sort,
+		}
+		if err := tx.Create(&newGroup).Error; err != nil {
+			return err
+		}
+		groupIdMap[int(templateGroup.ID)] = int(newGroup.ID)
+	}
+
 	var templatePaths []system.TbGenerateProjectPath
 	if err := tx.Where("project_id = ? AND (project_instance_id = 0 OR project_instance_id IS NULL)", templateProjectId).Order("id ASC").Find(&templatePaths).Error; err != nil {
 		return err
@@ -115,6 +139,9 @@ func (s *TbGenerateProjectInstanceService) cloneTemplatePaths(tx *gorm.DB, templ
 		newPath := system.TbGenerateProjectPath{
 			ProjectId:         instanceProjectId,
 			ProjectInstanceId: instanceProjectId,
+			PathSet:           templatePath.PathSet,
+			PathSetName:       templatePath.PathSetName,
+			PathGroupId:       groupIdMap[templatePath.PathGroupId],
 			FileUrl:           templatePath.FileUrl,
 			FileName:          templatePath.FileName,
 			Enabled:           templatePath.Enabled,
@@ -153,6 +180,9 @@ func deleteGenerateProjectInstancePaths(tx *gorm.DB, projectId int) error {
 		if err := tx.Unscoped().Delete(&p).Error; err != nil {
 			return err
 		}
+	}
+	if err := tx.Where("project_instance_id = ?", projectId).Unscoped().Delete(&system.TbGenerateProjectPathGroup{}).Error; err != nil {
+		return err
 	}
 	return nil
 }

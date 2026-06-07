@@ -137,12 +137,22 @@ func (a *TbGenerateProjectApi) GetTbGenerateProjectList(c *gin.Context) {
 }
 
 func (a *TbGenerateProjectApi) CopyProject(c *gin.Context) {
-	id := c.Query("id")
-	if err := tbGenerateProjectService.CopyProject(id); err != nil {
+	var req systemReq.CopyGenerateProjectReq
+	if c.Request.Method == http.MethodGet {
+		if parsed, err := strconv.Atoi(strings.TrimSpace(c.Query("id"))); err == nil {
+			req.SourceProjectId = parsed
+		}
+	} else if err := c.ShouldBindJSON(&req); err != nil {
+		response.FailWithMessage(err.Error(), c)
+		return
+	}
+
+	res, err := tbGenerateProjectService.CopyProject(req)
+	if err != nil {
 		global.GVA_LOG.Error("克隆失败", zap.Error(err))
 		response.FailWithMessage("克隆失败", c)
 	} else {
-		response.OkWithMessage("克隆成功", c)
+		response.OkWithData(res, c)
 	}
 }
 

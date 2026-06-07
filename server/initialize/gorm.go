@@ -75,6 +75,7 @@ func RegisterTables() {
 		system.TbGenerateProjectInstance{},
 		system.TbGenerateDbTemplateType{},
 		system.TbGenerateDbTemplateScript{},
+		system.TbGenerateProjectPathGroup{},
 		system.TbGenerateProjectPath{},
 		system.TbGenerateProjectPathModel{},
 		system.TbAIConfig{},

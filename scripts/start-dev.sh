@@ -15,16 +15,20 @@ port_in_use() {
   lsof -iTCP:"$1" -sTCP:LISTEN -n -P >/dev/null 2>&1
 }
 
-find_free_port() {
+require_free_port() {
   local port="$1"
-  while port_in_use "$port"; do
-    port=$((port + 1))
-  done
-  printf '%s\n' "$port"
+  local label="$2"
+  if port_in_use "$port"; then
+    echo "${label} port ${port} is already in use. Stop the existing dev service before restarting." >&2
+    exit 1
+  fi
 }
 
-BACKEND_PORT="$(find_free_port "$BACKEND_PORT_START")"
-FRONTEND_PORT="$(find_free_port "$FRONTEND_PORT_START")"
+BACKEND_PORT="$BACKEND_PORT_START"
+FRONTEND_PORT="$FRONTEND_PORT_START"
+
+require_free_port "$BACKEND_PORT" "Backend"
+require_free_port "$FRONTEND_PORT" "Frontend"
 
 mkdir -p "$(dirname "$CONFIG_PATH")" "$GOCACHE_DIR"
 

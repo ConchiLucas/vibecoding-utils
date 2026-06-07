@@ -27,8 +27,8 @@ export const deleteProject = (data: any) => {
     return api.delete(`/tbgenerateproject/deleteTbGenerateProject`, { data })
 }
 
-export const copyProject = (id: string) => {
-    return api.get(`/tbgenerateproject/copy?id=${id}`)
+export const copyProject = (data: any) => {
+    return api.post('/tbgenerateproject/copy', data)
 }
 
 export const generateProjectCode = (data: any) => {
