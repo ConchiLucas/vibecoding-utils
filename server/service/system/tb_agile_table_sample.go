@@ -18,12 +18,12 @@ func (s *TbAgileTableSampleService) List(scope systemReq.AgileTableSampleScope, 
 	if err := ensureAgileTableSampleTable(); err != nil {
 		return nil, err
 	}
-	if scope.ProjectConfigID == 0 || scope.ConnectionID == 0 {
+	if scope.ConnectionID == 0 {
 		return []system.TbAgileTableSample{}, nil
 	}
 	var list []system.TbAgileTableSample
 	err := global.GVA_DB.
-		Where("project_config_id = ? AND connection_id = ? AND user_name = ?", scope.ProjectConfigID, scope.ConnectionID, userName).
+		Where("connection_id = ? AND user_name = ?", scope.ConnectionID, userName).
 		Order("sort_index asc, id asc").
 		Find(&list).Error
 	return list, err
@@ -32,9 +32,6 @@ func (s *TbAgileTableSampleService) List(scope systemReq.AgileTableSampleScope, 
 func (s *TbAgileTableSampleService) Save(req systemReq.AgileTableSampleSave, userName string) ([]system.TbAgileTableSample, error) {
 	if err := ensureAgileTableSampleTable(); err != nil {
 		return nil, err
-	}
-	if req.ProjectConfigID == 0 {
-		return nil, fmt.Errorf("缺少项目配置")
 	}
 	if req.ConnectionID == 0 {
 		return nil, fmt.Errorf("缺少数据源")
@@ -45,7 +42,7 @@ func (s *TbAgileTableSampleService) Save(req systemReq.AgileTableSampleSave, use
 	businessName := strings.TrimSpace(req.HistoryName)
 	err := global.GVA_DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.
-			Where("project_config_id = ? AND connection_id = ? AND user_name = ?", req.ProjectConfigID, req.ConnectionID, userName).
+			Where("connection_id = ? AND user_name = ?", req.ConnectionID, userName).
 			Delete(&system.TbAgileTableSample{}).Error; err != nil {
 			return err
 		}
@@ -96,10 +93,11 @@ func (s *TbAgileTableSampleService) Save(req systemReq.AgileTableSampleSave, use
 				BusinessName:    businessName,
 			}
 			if err := tx.
-				Where("project_config_id = ? AND connection_id = ? AND user_name = ? AND business_name = ?", req.ProjectConfigID, req.ConnectionID, userName, businessName).
+				Where("connection_id = ? AND user_name = ? AND business_name = ?", req.ConnectionID, userName, businessName).
 				Assign(system.TbAgileTableSampleHistory{
-					TableCount:    len(historyTables),
-					TableSnapshot: string(snapshot),
+					ProjectConfigID: req.ProjectConfigID,
+					TableCount:      len(historyTables),
+					TableSnapshot:   string(snapshot),
 				}).
 				FirstOrCreate(&history).Error; err != nil {
 				return err
@@ -117,13 +115,13 @@ func (s *TbAgileTableSampleService) History(scope systemReq.AgileTableSampleScop
 	if err := ensureAgileTableSampleTable(); err != nil {
 		return nil, err
 	}
-	if scope.ProjectConfigID == 0 || scope.ConnectionID == 0 {
+	if scope.ConnectionID == 0 {
 		return []systemResp.AgileTableSampleHistory{}, nil
 	}
 
 	var records []system.TbAgileTableSampleHistory
 	if err := global.GVA_DB.
-		Where("project_config_id = ? AND connection_id = ? AND user_name = ? AND business_name <> ?", scope.ProjectConfigID, scope.ConnectionID, userName, "").
+		Where("connection_id = ? AND user_name = ? AND business_name <> ?", scope.ConnectionID, userName, "").
 		Order("id desc").
 		Find(&records).Error; err != nil {
 		return nil, err

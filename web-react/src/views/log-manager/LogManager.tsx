@@ -76,11 +76,26 @@ function isScriptLaunchCommand(command?: string) {
 }
 
 function isDockerComposeLaunchRoute(route: LogProjectRoute) {
+  const backendType = String(route.routeType || '').trim();
+  if (backendType) return backendType === 'docker_compose';
+  if (isFileLogRoute(route)) return false;
   const launchCommand = route.localExecuteCommand || route.localStartCommand;
   const commandText = `${route.localExecuteCommand || ''} ${route.localStartCommand || ''}`.toLowerCase();
   const directComposeCommand = /\b(docker\s+compose|docker-compose)\b/.test(commandText);
   const composeMarked = Boolean(route.dockerComposeDeploy) || route.buildType === 'docker_compose_deploy';
   return !isScriptLaunchCommand(launchCommand) && (directComposeCommand || composeMarked);
+}
+
+function isFileLogRoute(route: LogProjectRoute) {
+  const backendType = String(route.routeType || '').trim();
+  if (backendType) return backendType === 'file_log';
+  return route.buildType === 'file_log' || Boolean(String(route.logFilePath || '').trim());
+}
+
+function isScriptRoute(route: LogProjectRoute) {
+  const backendType = String(route.routeType || '').trim();
+  if (backendType) return backendType === 'script';
+  return !isDockerComposeLaunchRoute(route) && !isFileLogRoute(route);
 }
 
 function sortLogRoutes(routes: LogProjectRoute[]) {
@@ -162,7 +177,7 @@ export default function LogManager() {
   }, [selectedProject]);
 
   const serviceRoutes = useMemo(
-    () => localRoutes.filter(route => !isDockerComposeLaunchRoute(route)),
+    () => localRoutes.filter(isScriptRoute),
     [localRoutes]
   );
 
@@ -684,6 +699,14 @@ export default function LogManager() {
                   </div>
                 ))
               )}
+            </div>
+          ) : dockerComposeRoutes.length === 0 ? (
+            <div className="flex min-h-[360px] items-center justify-center rounded-2xl border border-dashed border-gray-300 bg-white">
+              <div className="text-center">
+                <Layers size={36} className="mx-auto mb-3 text-gray-300" />
+                <h3 className="text-base font-bold text-gray-900">暂无 Docker 日志入口</h3>
+                <p className="mt-1 text-sm text-gray-400">当前项目没有配置 Docker Compose 路线</p>
+              </div>
             </div>
           ) : (
             <div className="grid grid-cols-1 xl:grid-cols-2 2xl:grid-cols-3 gap-5">

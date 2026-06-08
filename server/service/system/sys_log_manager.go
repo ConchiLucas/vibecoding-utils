@@ -20,6 +20,12 @@ import (
 
 type LogManagerService struct{}
 
+const (
+	logRouteTypeScript        = "script"
+	logRouteTypeFileLog       = "file_log"
+	logRouteTypeDockerCompose = "docker_compose"
+)
+
 type DockerServiceSummary struct {
 	ProjectID   uint   `json:"projectId"`
 	RouteID     uint   `json:"routeId"`
@@ -27,6 +33,8 @@ type DockerServiceSummary struct {
 	ServiceName string `json:"serviceName"`
 	WorkDir     string `json:"workDir"`
 	Source      string `json:"source"`
+	LogFilePath string `json:"logFilePath"`
+	RouteType   string `json:"routeType"`
 }
 
 func (s *LogManagerService) GetLogProjectPage(req request.TbLogProjectSearch) (list []system.TbLogProject, total int64, err error) {
@@ -58,6 +66,11 @@ func (s *LogManagerService) GetLogProjectPage(req request.TbLogProjectSearch) (l
 			return db.Order("sort asc, id asc")
 		}).
 		Find(&list).Error
+	if err == nil {
+		for i := range list {
+			annotateLogProjectRoutes(&list[i])
+		}
+	}
 	return
 }
 
@@ -116,6 +129,7 @@ func (s *LogManagerService) SaveOrUpdateLogRoute(route system.TbLogProjectRoute)
 			"local_execute_command": route.LocalExecuteCommand,
 			"local_start_command":   route.LocalStartCommand,
 			"local_stop_command":    route.LocalStopCommand,
+			"log_file_path":         route.LogFilePath,
 			"build_type":            route.BuildType,
 			"docker_compose_deploy": route.DockerComposeDeploy,
 			"color":                 route.Color,
@@ -138,6 +152,9 @@ func (s *LogManagerService) GetLogProjectById(projectId uint) (system.TbLogProje
 		}).
 		Where("id = ?", projectId).
 		First(&project).Error
+	if err == nil {
+		annotateLogProjectRoutes(&project)
+	}
 	return project, err
 }
 
@@ -152,7 +169,7 @@ func (s *LogManagerService) StreamProjectServiceGroup(projectId uint, action str
 		return err
 	}
 
-	routes := scopedLogRoutes(localLogRoutes(project.Routes), scope)
+	routes := executableLogRoutes(scopedLogRoutes(localLogRoutes(project.Routes), scope))
 	if len(routes) == 0 {
 		return fmt.Errorf("当前日志项目没有可执行的%s路线", logRouteScopeLabel(scope))
 	}
@@ -208,6 +225,17 @@ func (s *LogManagerService) StreamDockerLogs(ctx context.Context, projectId uint
 	}
 
 	localProjectPath := resolveLogRouteWorkDir(project, route)
+	if isFileLogRoute(route) {
+		command, args, workDir, err := buildFileLogCommand(project, route)
+		if err != nil {
+			return err
+		}
+		sendLog(logCh, fmt.Sprintf("📋 日志项目: %s", project.ProjectName))
+		sendLog(logCh, fmt.Sprintf("📋 服务路线: %s", route.RouteName))
+		sendLog(logCh, fmt.Sprintf("📄 日志文件: %s", args[len(args)-1]))
+		sendLog(logCh, fmt.Sprintf("📄 日志命令: %s %s", command, strings.Join(args, " ")))
+		return streamCommandLines(ctx, workDir, command, args, logCh)
+	}
 	if localProjectPath == "" {
 		return fmt.Errorf("项目本地路径为空，无法定位 Docker 日志")
 	}
@@ -231,6 +259,35 @@ func (s *LogManagerService) ListDockerServices(projectId uint, scope string) ([]
 	seen := map[string]struct{}{}
 	for _, route := range routes {
 		workDir := resolveLogRouteWorkDir(project, route)
+		if isFileLogRoute(route) {
+			logFilePath := resolveLogFilePath(project, route)
+			if strings.TrimSpace(logFilePath) == "" {
+				continue
+			}
+			key := fmt.Sprintf("%d:file:%s", route.ID, logFilePath)
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			serviceName := strings.TrimSpace(route.RouteName)
+			if serviceName == "" {
+				serviceName = filepath.Base(logFilePath)
+			}
+			result = append(result, DockerServiceSummary{
+				ProjectID:   project.ID,
+				RouteID:     route.ID,
+				RouteName:   route.RouteName,
+				ServiceName: serviceName,
+				WorkDir:     workDir,
+				Source:      "file-log",
+				LogFilePath: logFilePath,
+				RouteType:   logRouteTypeFileLog,
+			})
+			continue
+		}
+		if !isLogDockerComposeRoute(route, workDir) {
+			continue
+		}
 		services := composeServices(workDir)
 		if serviceName, ok := routeSpecificComposeService(route, services); ok {
 			services = []string{serviceName}
@@ -255,10 +312,30 @@ func (s *LogManagerService) ListDockerServices(projectId uint, scope string) ([]
 				ServiceName: serviceName,
 				WorkDir:     workDir,
 				Source:      source,
+				RouteType:   logRouteTypeDockerCompose,
 			})
 		}
 	}
 	return result, nil
+}
+
+func annotateLogProjectRoutes(project *system.TbLogProject) {
+	if project == nil {
+		return
+	}
+	for i := range project.Routes {
+		project.Routes[i].RouteType = logRouteType(project.Routes[i])
+	}
+}
+
+func logRouteType(route system.TbLogProjectRoute) string {
+	if isFileLogRoute(route) {
+		return logRouteTypeFileLog
+	}
+	if isDirectDockerComposeLogRoute(route) {
+		return logRouteTypeDockerCompose
+	}
+	return logRouteTypeScript
 }
 
 func routeSpecificComposeService(route system.TbLogProjectRoute, services []string) (string, bool) {
@@ -275,6 +352,9 @@ func routeSpecificComposeService(route system.TbLogProjectRoute, services []stri
 }
 
 func executeLogRoute(ctx context.Context, project system.TbLogProject, route system.TbLogProjectRoute, action string, logCh chan string) error {
+	if isFileLogRoute(route) {
+		return fmt.Errorf("文件日志路线不支持启动或关闭")
+	}
 	workDir := resolveLogRouteWorkDir(project, route)
 	if strings.TrimSpace(workDir) == "" {
 		return fmt.Errorf("服务目录为空")
@@ -381,19 +461,30 @@ func scopedLogRoutes(routes []system.TbLogProjectRoute, scope string) []system.T
 
 	result := make([]system.TbLogProjectRoute, 0, len(routes))
 	for _, route := range routes {
-		isDockerCompose := isDirectDockerComposeLogRoute(route)
+		routeType := logRouteType(route)
 		switch normalizedScope {
 		case "docker":
-			if isDockerCompose {
+			if routeType == logRouteTypeDockerCompose {
 				result = append(result, route)
 			}
 		case "service":
-			if !isDockerCompose {
+			if routeType == logRouteTypeScript || routeType == logRouteTypeFileLog {
 				result = append(result, route)
 			}
 		default:
 			result = append(result, route)
 		}
+	}
+	return result
+}
+
+func executableLogRoutes(routes []system.TbLogProjectRoute) []system.TbLogProjectRoute {
+	result := make([]system.TbLogProjectRoute, 0, len(routes))
+	for _, route := range routes {
+		if isFileLogRoute(route) {
+			continue
+		}
+		result = append(result, route)
 	}
 	return result
 }
@@ -439,6 +530,9 @@ func isScriptLaunchCommand(command string) bool {
 }
 
 func isDirectDockerComposeLogRoute(route system.TbLogProjectRoute) bool {
+	if isFileLogRoute(route) {
+		return false
+	}
 	commandText := strings.ToLower(route.LocalExecuteCommand + " " + route.LocalStartCommand)
 	directComposeCommand := strings.Contains(commandText, "docker compose") || strings.Contains(commandText, "docker-compose")
 	composeMarked := route.DockerComposeDeploy || route.BuildType == "docker_compose_deploy"
@@ -460,6 +554,38 @@ func resolveLogRouteWorkDir(project system.TbLogProject, route system.TbLogProje
 		return path
 	}
 	return strings.TrimSpace(project.LocalProjectPath)
+}
+
+func isFileLogRoute(route system.TbLogProjectRoute) bool {
+	return strings.EqualFold(strings.TrimSpace(route.BuildType), "file_log") ||
+		strings.TrimSpace(route.LogFilePath) != ""
+}
+
+func resolveLogFilePath(project system.TbLogProject, route system.TbLogProjectRoute) string {
+	logFilePath := strings.TrimSpace(route.LogFilePath)
+	if logFilePath == "" {
+		return ""
+	}
+	if filepath.IsAbs(logFilePath) {
+		return filepath.Clean(logFilePath)
+	}
+	workDir := resolveLogRouteWorkDir(project, route)
+	if strings.TrimSpace(workDir) == "" {
+		return filepath.Clean(logFilePath)
+	}
+	return filepath.Join(workDir, logFilePath)
+}
+
+func buildFileLogCommand(project system.TbLogProject, route system.TbLogProjectRoute) (string, []string, string, error) {
+	logFilePath := resolveLogFilePath(project, route)
+	if strings.TrimSpace(logFilePath) == "" {
+		return "", nil, "", fmt.Errorf("日志文件路径未配置")
+	}
+	workDir := resolveLogRouteWorkDir(project, route)
+	if strings.TrimSpace(workDir) == "" {
+		workDir = filepath.Dir(logFilePath)
+	}
+	return "tail", []string{"-n", dockerLogTailLines, "-f", logFilePath}, workDir, nil
 }
 
 func buildLogDockerLogCommand(project system.TbLogProject, route system.TbLogProjectRoute, localProjectPath string, serviceName string) (string, []string, string) {

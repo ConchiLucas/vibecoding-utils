@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
-import { AlertCircle, Bookmark, Database, FolderOpen, Loader2, Pencil, Plus, RefreshCcw, Table2, Trash2, X } from 'lucide-react';
+import { AlertCircle, Bookmark, Database, Loader2, Pencil, Plus, RefreshCcw, Table2, Trash2, X } from 'lucide-react';
 import DatabaseBrowser, { DatabaseTableSelection } from '../../components/DatabaseBrowser';
 import { getTbConnectionList, getRemoteTablePreview, ColumnPreview, TbConnection } from '../../api/sysConnection';
 import {
@@ -45,7 +45,6 @@ const asHistoryList = (value: unknown): AgileTableSampleHistory[] => {
 };
 
 export default function AgileTableSamplesManager() {
-  const activeProject = useProjectStore(state => state.activeProject);
   const activeProjectId = useProjectStore(state => state.activeProjectId);
   const activeConnectionId = useProjectStore(state => state.activeConnectionId);
   const setActiveConnectionId = useProjectStore(state => state.setActiveConnectionId);
@@ -183,7 +182,7 @@ export default function AgileTableSamplesManager() {
   }, []);
 
   const loadSamples = useCallback(async () => {
-    if (!activeProjectId || !activeConnectionId) {
+    if (!activeConnectionId) {
       setSamples([]);
       setPreviewMap({});
       setActiveBusinessName('');
@@ -192,7 +191,7 @@ export default function AgileTableSamplesManager() {
     setSamplesLoading(true);
     try {
       const res = await getAgileTableSamples({
-        projectConfigId: activeProjectId,
+        projectConfigId: activeProjectId || undefined,
         connectionId: activeConnectionId,
       });
       const nextSamples = asSampleList(res.data);
@@ -210,7 +209,7 @@ export default function AgileTableSamplesManager() {
   }, [activeProjectId, activeConnectionId, loadPreviews]);
 
   const loadHistory = useCallback(async (silent = false) => {
-    if (!activeProjectId || !activeConnectionId) {
+    if (!activeConnectionId) {
       setHistories([]);
       setActiveHistoryId(null);
       return;
@@ -218,7 +217,7 @@ export default function AgileTableSamplesManager() {
     setHistoryLoading(true);
     try {
       const res = await getAgileTableSampleHistory({
-        projectConfigId: activeProjectId,
+        projectConfigId: activeProjectId || undefined,
         connectionId: activeConnectionId,
       });
       const nextHistories = asHistoryList(res.data);
@@ -249,8 +248,8 @@ export default function AgileTableSamplesManager() {
   }, [loadSamples]);
 
   const persistSelections = async (tables: DatabaseTableSelection[], historyName?: string) => {
-    if (!activeProjectId || !activeConnectionId) {
-      toast.error('请先选择项目和数据源');
+    if (!activeConnectionId) {
+      toast.error('请先选择数据源');
       return false;
     }
     const normalizedBusinessName = historyName?.trim() || '';
@@ -265,7 +264,7 @@ export default function AgileTableSamplesManager() {
     setSaving(true);
     try {
       const res = await saveAgileTableSamples({
-        projectConfigId: activeProjectId,
+        projectConfigId: activeProjectId || undefined,
         connectionId: activeConnectionId,
         historyName: normalizedBusinessName || undefined,
         tables: scopedTables,
@@ -446,19 +445,15 @@ export default function AgileTableSamplesManager() {
           <div>
             <div className="ats-title-row">
               <h1>表样本</h1>
-              {activeProject ? (
-                <div className="ats-project-chip" title={`当前项目：${activeProject}`}>
-                  <FolderOpen size={15} />
-                  <span className="ats-project-chip-label">项目</span>
-                  <span className="ats-project-chip-name">{activeProject}</span>
-                </div>
-              ) : null}
             </div>
             <div className="ats-subtitle">
-              {!activeProject ? <span>未选择项目</span> : null}
               {activeConnection ? (
                 <span>{activeConnection.envName || '默认环境'} / {activeConnection.connectionName}</span>
-              ) : null}
+              ) : !activeProjectId ? (
+                <span>请先选择项目以加载数据源</span>
+              ) : (
+                <span>请选择数据源</span>
+              )}
               {activeBusinessName ? (
                 <span title={activeBusinessName}>{activeBusinessName}</span>
               ) : null}
@@ -487,7 +482,7 @@ export default function AgileTableSamplesManager() {
             type="button"
             className="ats-button ats-button-secondary"
             onClick={openHistory}
-            disabled={!activeProjectId || !activeConnectionId || connectionLoading}
+            disabled={!activeConnectionId || connectionLoading}
           >
             <Bookmark size={16} />
             业务方案
@@ -496,7 +491,7 @@ export default function AgileTableSamplesManager() {
             type="button"
             className="ats-button ats-button-secondary"
             onClick={openEditBrowser}
-            disabled={!activeProjectId || !activeConnectionId || connectionLoading || saving}
+            disabled={!activeConnectionId || connectionLoading || saving}
           >
             <Pencil size={16} />
             编辑当前页面
@@ -505,7 +500,7 @@ export default function AgileTableSamplesManager() {
             type="button"
             className="ats-button ats-button-primary"
             onClick={openCreateBrowser}
-            disabled={!activeProjectId || !activeConnectionId || connectionLoading || saving}
+            disabled={!activeConnectionId || connectionLoading || saving}
           >
             {saving ? <Loader2 size={16} className="ats-spin" /> : <Plus size={16} />}
             新建业务方案
@@ -515,7 +510,7 @@ export default function AgileTableSamplesManager() {
 
       <main className="ats-content">
         {!activeProjectId ? (
-          <div className="ats-empty">请先选择项目</div>
+          <div className="ats-empty">请先选择项目以加载数据源</div>
         ) : connectionLoading ? (
           <div className="ats-empty">
             <Loader2 size={20} className="ats-spin" />

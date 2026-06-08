@@ -7,6 +7,11 @@ interface ProjectState {
   activeConnectionId: number | null;
   setActiveProject: (name: string, id?: number) => void;
   setActiveConnectionId: (id: number | null) => void;
+  hydrateActiveSelection: (selection: {
+    activeProject?: string;
+    activeProjectId?: number | null;
+    activeConnectionId?: number | null;
+  }) => void;
 }
 
 export const useProjectStore = create<ProjectState>()(
@@ -27,6 +32,17 @@ export const useProjectStore = create<ProjectState>()(
         };
       }),
       setActiveConnectionId: (id) => set({ activeConnectionId: id }),
+      hydrateActiveSelection: (selection) => set((state) => ({
+        activeProject: Object.prototype.hasOwnProperty.call(selection, 'activeProject')
+          ? selection.activeProject || ''
+          : state.activeProject,
+        activeProjectId: Object.prototype.hasOwnProperty.call(selection, 'activeProjectId')
+          ? selection.activeProjectId ?? null
+          : state.activeProjectId,
+        activeConnectionId: Object.prototype.hasOwnProperty.call(selection, 'activeConnectionId')
+          ? selection.activeConnectionId ?? null
+          : state.activeConnectionId,
+      })),
     }),
     {
       name: 'easy-test-active-project',

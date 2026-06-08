@@ -43,11 +43,13 @@ type TbLogProjectRoute struct {
 	LocalExecuteCommand string `json:"localExecuteCommand" form:"localExecuteCommand" gorm:"column:local_execute_command;type:varchar(1024);comment:启动命令"`
 	LocalStartCommand   string `json:"localStartCommand" form:"localStartCommand" gorm:"column:local_start_command;type:varchar(1024);comment:附加启动命令"`
 	LocalStopCommand    string `json:"localStopCommand" form:"localStopCommand" gorm:"column:local_stop_command;type:varchar(1024);comment:关闭命令"`
+	LogFilePath         string `json:"logFilePath" form:"logFilePath" gorm:"column:log_file_path;type:varchar(1024);comment:日志文件路径"`
 	BuildType           string `json:"buildType" form:"buildType" gorm:"column:build_type;type:varchar(128);comment:构建模式"`
 	DockerComposeDeploy bool   `json:"dockerComposeDeploy" form:"dockerComposeDeploy" gorm:"column:docker_compose_deploy;comment:是否docker-compose发布"`
 	Color               string `json:"color" form:"color" gorm:"column:color;type:varchar(255);comment:按钮展示色"`
 	Icon                string `json:"icon" form:"icon" gorm:"column:icon;type:varchar(64);comment:图标"`
 	Sort                int    `json:"sort" form:"sort" gorm:"column:sort;comment:排序"`
+	RouteType           string `json:"routeType" gorm:"-"`
 }
 
 func (TbLogProjectRoute) TableName() string {

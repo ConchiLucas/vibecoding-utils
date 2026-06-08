@@ -2,9 +2,11 @@ import React from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import Header from './Header';
 import AIChatWidget from '../../components/AIChatWidget/AIChatWidget';
+import { usePersistedProjectSelection } from '../../hooks/usePersistedProjectSelection';
 
 export default function Layout() {
   const location = useLocation();
+  usePersistedProjectSelection();
   const isFullWidthRoute = 
     location.pathname === '/projects' || 
     location.pathname === '/script-manager' || 

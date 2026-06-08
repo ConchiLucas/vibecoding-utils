@@ -173,7 +173,18 @@ func (userService *UserService) SetSelfInfo(req system.TbUser) error {
 //@return: err error
 
 func (userService *UserService) SetSelfSetting(req common.JSONMap, uid uint) error {
-	return global.GVA_DB.Model(&system.TbUser{}).Where("id = ?", uid).Update("origin_setting", req).Error
+	var user system.TbUser
+	if err := global.GVA_DB.Select("id", "origin_setting").Where("id = ?", uid).First(&user).Error; err != nil {
+		return err
+	}
+	nextSetting := common.JSONMap{}
+	for key, value := range user.OriginSetting {
+		nextSetting[key] = value
+	}
+	for key, value := range req {
+		nextSetting[key] = value
+	}
+	return global.GVA_DB.Model(&system.TbUser{}).Where("id = ?", uid).Update("origin_setting", nextSetting).Error
 }
 
 //@author: [piexlmax](https://github.com/piexlmax)

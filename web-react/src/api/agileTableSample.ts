@@ -3,7 +3,7 @@ import { ApiResponse } from './sysDict';
 
 export interface AgileTableSampleRecord {
   ID: number;
-  projectConfigId: number;
+  projectConfigId?: number;
   connectionId: number;
   databaseName: string;
   tableName: string;
@@ -23,7 +23,7 @@ export interface AgileTableSampleItem {
 
 export interface AgileTableSampleHistory {
   ID: number;
-  projectConfigId: number;
+  projectConfigId?: number;
   connectionId: number;
   userName?: string;
   historyName?: string;
@@ -33,12 +33,12 @@ export interface AgileTableSampleHistory {
   UpdatedAt?: string;
 }
 
-export const getAgileTableSamples = (params: { projectConfigId: number; connectionId: number }) => {
+export const getAgileTableSamples = (params: { projectConfigId?: number; connectionId: number }) => {
   return service.get<any, ApiResponse<AgileTableSampleRecord[]>>('/agileTableSample/list', { params });
 };
 
 export const saveAgileTableSamples = (data: {
-  projectConfigId: number;
+  projectConfigId?: number;
   connectionId: number;
   historyName?: string;
   tables: AgileTableSampleItem[];
@@ -46,6 +46,6 @@ export const saveAgileTableSamples = (data: {
   return service.post<any, ApiResponse<AgileTableSampleRecord[]>>('/agileTableSample/save', data);
 };
 
-export const getAgileTableSampleHistory = (params: { projectConfigId: number; connectionId: number }) => {
+export const getAgileTableSampleHistory = (params: { projectConfigId?: number; connectionId: number }) => {
   return service.get<any, ApiResponse<AgileTableSampleHistory[]>>('/agileTableSample/history', { params });
 };

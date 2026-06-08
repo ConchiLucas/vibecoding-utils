@@ -9,11 +9,13 @@ export interface LogProjectRoute {
   localExecuteCommand?: string;
   localStartCommand?: string;
   localStopCommand?: string;
+  logFilePath?: string;
   buildType?: string;
   dockerComposeDeploy?: boolean;
   color?: string;
   icon?: string;
   sort?: number;
+  routeType?: 'script' | 'file_log' | 'docker_compose';
 }
 
 export interface LogProject {
@@ -41,6 +43,8 @@ export interface DockerServiceSummary {
   serviceName: string;
   workDir: string;
   source: string;
+  logFilePath?: string;
+  routeType?: 'script' | 'file_log' | 'docker_compose';
 }
 
 export const getLogProjectPage = (data: any) => {

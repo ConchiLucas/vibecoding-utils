@@ -53,40 +53,6 @@
   flex-wrap: wrap;
 }
 
-.ats-project-chip {
-  height: 32px;
-  max-width: 220px;
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 0 11px;
-  border-radius: 10px;
-  border: 1px solid #c7d2fe;
-  background: #eef2ff;
-  color: #4338ca;
-  font-size: 12px;
-  font-weight: 800;
-  box-shadow: 0 8px 18px rgba(79, 70, 229, 0.10);
-  min-width: 0;
-}
-
-.ats-project-chip svg {
-  flex-shrink: 0;
-  color: #6366f1;
-}
-
-.ats-project-chip-label {
-  flex-shrink: 0;
-  color: #818cf8;
-}
-
-.ats-project-chip-name {
-  min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
 .ats-subtitle {
   margin-top: 4px;
   display: flex;
