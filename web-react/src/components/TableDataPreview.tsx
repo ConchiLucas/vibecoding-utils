@@ -79,6 +79,70 @@ function renderCellValue(cell?: TableDataCell) {
   return cell.value;
 }
 
+function isIdColumn(columnName: string) {
+  const normalized = columnName.trim().replace(/^[`"\[]|[`"\]]$/g, '').toLowerCase();
+  return normalized === 'id';
+}
+
+function formatSqlIdentifier(identifier: string) {
+  const trimmed = identifier.trim();
+  if (/^[A-Za-z_][A-Za-z0-9_$]*$/.test(trimmed)) return trimmed;
+  return `"${trimmed.replace(/"/g, '""')}"`;
+}
+
+function formatTableIdentifier(name: string) {
+  return name.split('.').map(formatSqlIdentifier).join('.');
+}
+
+function formatSqlValue(cell?: TableDataCell) {
+  if (!cell || cell.isNull) return 'NULL';
+  return `'${String(cell.value ?? '').replace(/'/g, "''")}'`;
+}
+
+function buildInsertSQL(tableName: string, columns: TableDataColumn[], row: TableDataRow) {
+  const insertColumns = columns
+    .map((column, index) => ({ column, cell: row.cells[index] }))
+    .filter(item => !isIdColumn(item.column.name));
+
+  if (insertColumns.length === 0) {
+    return '';
+  }
+
+  const columnSQL = insertColumns.map(item => formatSqlIdentifier(item.column.name)).join(', ');
+  const valueSQL = insertColumns.map(item => formatSqlValue(item.cell)).join(', ');
+  return `INSERT INTO ${formatTableIdentifier(tableName)} (${columnSQL}) VALUES (${valueSQL});`;
+}
+
+async function copyTextToClipboard(text: string) {
+  const copyWithTextArea = () => {
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.setAttribute('readonly', 'readonly');
+    textarea.style.position = 'fixed';
+    textarea.style.left = '-9999px';
+    textarea.style.top = '0';
+    document.body.appendChild(textarea);
+    textarea.select();
+
+    try {
+      return document.execCommand('copy');
+    } finally {
+      document.body.removeChild(textarea);
+    }
+  };
+
+  if (copyWithTextArea()) {
+    return true;
+  }
+
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return true;
+  }
+
+  return false;
+}
+
 export default function TableDataPreview({
   open,
   onClose,
@@ -477,6 +541,25 @@ export default function TableDataPreview({
     setDeleteConfirmOpen(true);
   };
 
+  const handleCopyInsertSQL = async (row: TableDataRow) => {
+    const insertSQL = buildInsertSQL(tableName, tableColumns, row);
+    if (!insertSQL) {
+      toast.error('没有可复制的字段');
+      return;
+    }
+    try {
+      const copied = await copyTextToClipboard(insertSQL);
+      if (copied) {
+        toast.success('已复制 INSERT SQL');
+      } else {
+        toast.error('复制失败');
+      }
+    } catch (e) {
+      console.error(e);
+      toast.error('复制失败');
+    }
+  };
+
   const handleConfirmDelete = async () => {
     if (!deleteTarget) return;
 
@@ -542,8 +625,12 @@ export default function TableDataPreview({
   const handleCopyDDL = async () => {
     if (!ddlSQL) return;
     try {
-      await navigator.clipboard.writeText(ddlSQL);
-      toast.success('已复制建表 SQL');
+      const copied = await copyTextToClipboard(ddlSQL);
+      if (copied) {
+        toast.success('已复制建表 SQL');
+      } else {
+        toast.error('复制失败');
+      }
     } catch (e) {
       console.error(e);
       toast.error('复制失败');
@@ -752,12 +839,34 @@ export default function TableDataPreview({
     <div className="tdp-overlay" onClick={handleCloseAll}>
       <div className="tdp-modal tdp-modal-fullscreen" onClick={e => e.stopPropagation()}>
         <div className="tdp-header">
-          <div className="tdp-header-left">
-            <h2 className="tdp-title">
-              <FileSpreadsheet size={18} className="tdp-title-icon" />
-              数据表数据
-            </h2>
-            <span className="tdp-subtitle">{databaseName} → {tableName}</span>
+          <div className="tdp-header-left tdp-header-left-inline">
+            <div className="tdp-heading-copy">
+              <h2 className="tdp-title">
+                <FileSpreadsheet size={18} className="tdp-title-icon" />
+                数据表数据
+              </h2>
+              <span className="tdp-subtitle">{databaseName} → {tableName}</span>
+            </div>
+            <div className="tdp-header-tools">
+              <button
+                className="tdp-action-btn"
+                disabled={loading}
+                onClick={handleOpenDDL}
+                title="查看建表 SQL"
+              >
+                <Code2 size={16} />
+                建表 SQL
+              </button>
+              <button
+                className="tdp-action-btn tdp-action-primary"
+                disabled={loading || generating}
+                onClick={handleOpenGenerate}
+                title="调用默认 AI 造数"
+              >
+                {generating ? <Loader2 size={16} className="tdp-spinner" /> : <Sparkles size={16} />}
+                造数
+              </button>
+            </div>
           </div>
           <button className="tdp-close" onClick={handleCloseAll}>
             <X size={18} />
@@ -802,24 +911,6 @@ export default function TableDataPreview({
                 </button>
               </form>
             )}
-            <button
-              className="tdp-action-btn"
-              disabled={loading}
-              onClick={handleOpenDDL}
-              title="查看建表 SQL"
-            >
-              <Code2 size={16} />
-              建表 SQL
-            </button>
-            <button
-              className="tdp-action-btn tdp-action-primary"
-              disabled={loading || generating}
-              onClick={handleOpenGenerate}
-              title="调用默认 AI 造数"
-            >
-              {generating ? <Loader2 size={16} className="tdp-spinner" /> : <Sparkles size={16} />}
-              造数
-            </button>
           </div>
         </div>
 
@@ -889,6 +980,15 @@ export default function TableDataPreview({
                         >
                           <Eye size={15} />
                           查看
+                        </button>
+                        <button
+                          type="button"
+                          className="tdp-row-action-btn"
+                          onClick={() => handleCopyInsertSQL(row)}
+                          title="复制 INSERT SQL（自动去除 id 字段）"
+                        >
+                          <Copy size={15} />
+                          复制
                         </button>
                         <button
                           type="button"

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
-import { AlertCircle, Bookmark, Database, Loader2, Pencil, Plus, RefreshCcw, Table2, Trash2, X } from 'lucide-react';
+import { AlertCircle, Bookmark, Database, FolderOpen, Loader2, Pencil, Plus, RefreshCcw, Table2, Trash2, X } from 'lucide-react';
 import DatabaseBrowser, { DatabaseTableSelection } from '../../components/DatabaseBrowser';
 import { getTbConnectionList, getRemoteTablePreview, ColumnPreview, TbConnection } from '../../api/sysConnection';
 import {
@@ -444,9 +444,18 @@ export default function AgileTableSamplesManager() {
             <Database size={20} />
           </div>
           <div>
-            <h1>表样本</h1>
+            <div className="ats-title-row">
+              <h1>表样本</h1>
+              {activeProject ? (
+                <div className="ats-project-chip" title={`当前项目：${activeProject}`}>
+                  <FolderOpen size={15} />
+                  <span className="ats-project-chip-label">项目</span>
+                  <span className="ats-project-chip-name">{activeProject}</span>
+                </div>
+              ) : null}
+            </div>
             <div className="ats-subtitle">
-              <span>{activeProject || '未选择项目'}</span>
+              {!activeProject ? <span>未选择项目</span> : null}
               {activeConnection ? (
                 <span>{activeConnection.envName || '默认环境'} / {activeConnection.connectionName}</span>
               ) : null}

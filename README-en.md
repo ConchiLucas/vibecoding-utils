@@ -135,12 +135,12 @@ Run from the repository root:
 The script will:
 
 - Generate a temporary backend config from `server/config.template.yaml`.
-- Pick available ports for the backend and frontend.
+- Start the backend and frontend on fixed default ports: backend `23638`, frontend `29527`.
 - Start the backend with `go run ./cmd/http`.
-- Start the frontend with Vite and set `VITE_BASE_API` to the actual backend URL.
+- Start the frontend with Vite and set `VITE_BASE_API` to the backend URL.
 - Run `npm ci` first if `web-react/node_modules` does not exist.
 
-The terminal prints the actual URLs, for example:
+The terminal prints the fixed URLs:
 
 ```text
 Backend:  http://localhost:23638
@@ -153,7 +153,7 @@ Stop recorded development services:
 ./scripts/restart-dev.sh stop
 ```
 
-Start with fixed ports:
+Temporarily override ports:
 
 ```bash
 BACKEND_PORT=8008 FRONTEND_PORT=5175 ./scripts/restart-dev.sh restart

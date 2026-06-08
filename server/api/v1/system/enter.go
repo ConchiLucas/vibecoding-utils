@@ -9,6 +9,7 @@ type ApiGroup struct {
 	ProjectApi
 	ProjectScriptApi
 	ScriptManagerApi
+	LogManagerApi
 	ProjectRouteApi
 	ProjectGroupApi
 	TbDictDataApi
@@ -47,6 +48,7 @@ var (
 	projectScriptService              = service.ServiceGroupApp.SystemServiceGroup.ProjectScriptService
 	scriptManagerService              = service.ServiceGroupApp.SystemServiceGroup.ScriptManagerService
 	deployService                     = service.ServiceGroupApp.SystemServiceGroup.DeployService
+	logManagerService                 = service.ServiceGroupApp.SystemServiceGroup.LogManagerService
 	projectRouteService               = service.ServiceGroupApp.SystemServiceGroup.ProjectRouteService
 	projectGroupService               = service.ServiceGroupApp.SystemServiceGroup.ProjectGroupService
 	tbDictDataService                 = service.ServiceGroupApp.SystemServiceGroup.TbDictDataService

@@ -8,6 +8,7 @@ type ServiceGroup struct {
 	ProjectScriptService
 	ScriptManagerService
 	DeployService
+	LogManagerService
 	ProjectRouteService
 	ProjectGroupService
 	TbDictDataService

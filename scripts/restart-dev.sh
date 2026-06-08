@@ -2,6 +2,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+DEFAULT_BACKEND_PORT="${DEFAULT_BACKEND_PORT:-23638}"
+DEFAULT_FRONTEND_PORT="${DEFAULT_FRONTEND_PORT:-29527}"
 PORT_MIN="${PORT_MIN:-20000}"
 PORT_MAX="${PORT_MAX:-30000}"
 PID_FILE="${PID_FILE:-/private/tmp/vibecoding-utils-dev.pids}"
@@ -13,10 +15,12 @@ usage() {
   echo "Usage: $0 [restart|start|stop]"
   echo
   echo "Environment:"
+  echo "  DEFAULT_BACKEND_PORT=23638"
+  echo "  DEFAULT_FRONTEND_PORT=29527"
   echo "  PORT_MIN=20000"
   echo "  PORT_MAX=30000"
-  echo "  BACKEND_PORT=<fixed backend port>"
-  echo "  FRONTEND_PORT=<fixed frontend port>"
+  echo "  BACKEND_PORT=<override backend port>"
+  echo "  FRONTEND_PORT=<override frontend port>"
   echo "  PID_FILE=/private/tmp/vibecoding-utils-dev.pids"
   echo "  CONFIG_PATH=/private/tmp/vibecoding-utils-dev-config.yaml"
 }
@@ -29,8 +33,17 @@ is_positive_integer() {
 }
 
 validate_port_range() {
+  if ! is_positive_integer "$DEFAULT_BACKEND_PORT" || ! is_positive_integer "$DEFAULT_FRONTEND_PORT"; then
+    echo "DEFAULT_BACKEND_PORT and DEFAULT_FRONTEND_PORT must be positive integers" >&2
+    exit 1
+  fi
   if ! is_positive_integer "$PORT_MIN" || ! is_positive_integer "$PORT_MAX"; then
     echo "PORT_MIN and PORT_MAX must be positive integers" >&2
+    exit 1
+  fi
+  if [ "$DEFAULT_BACKEND_PORT" -lt 1 ] || [ "$DEFAULT_BACKEND_PORT" -gt 65535 ] ||
+     [ "$DEFAULT_FRONTEND_PORT" -lt 1 ] || [ "$DEFAULT_FRONTEND_PORT" -gt 65535 ]; then
+    echo "Invalid default ports: backend=${DEFAULT_BACKEND_PORT}, frontend=${DEFAULT_FRONTEND_PORT}" >&2
     exit 1
   fi
   if [ "$PORT_MIN" -lt 1 ] || [ "$PORT_MAX" -gt 65535 ] || [ "$PORT_MIN" -gt "$PORT_MAX" ]; then
@@ -154,8 +167,25 @@ wait_for_http() {
 start_services() {
   validate_port_range
 
-  BACKEND_PORT="${BACKEND_PORT:-$(pick_random_port)}"
-  FRONTEND_PORT="${FRONTEND_PORT:-$(pick_random_port "$BACKEND_PORT")}"
+  BACKEND_PORT="${BACKEND_PORT:-$DEFAULT_BACKEND_PORT}"
+  FRONTEND_PORT="${FRONTEND_PORT:-$DEFAULT_FRONTEND_PORT}"
+
+  if ! is_positive_integer "$BACKEND_PORT" || ! is_positive_integer "$FRONTEND_PORT"; then
+    echo "BACKEND_PORT and FRONTEND_PORT must be positive integers" >&2
+    exit 1
+  fi
+  if [ "$BACKEND_PORT" = "$FRONTEND_PORT" ]; then
+    echo "BACKEND_PORT and FRONTEND_PORT must be different: ${BACKEND_PORT}" >&2
+    exit 1
+  fi
+  if port_in_use "$BACKEND_PORT"; then
+    echo "Backend port ${BACKEND_PORT} is already in use. Stop that process or override BACKEND_PORT." >&2
+    exit 1
+  fi
+  if port_in_use "$FRONTEND_PORT"; then
+    echo "Frontend port ${FRONTEND_PORT} is already in use. Stop that process or override FRONTEND_PORT." >&2
+    exit 1
+  fi
 
   write_backend_config
 

@@ -602,6 +602,16 @@ export default function InterfaceManager() {
                  <button onClick={() => loadData(1, selectedServerName, selectedInterfaceName, selectedProjectName)} className="px-5 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition">查询</button>
              </div>
              <div className="flex items-center gap-3">
+                 {activeProject && (
+                   <div
+                    className="hidden lg:inline-flex h-10 max-w-[220px] items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-3 text-sm font-semibold text-indigo-700"
+                    title={`当前项目：${activeProject}`}
+                   >
+                    <Folder size={16} className="shrink-0 text-indigo-500" />
+                    <span className="shrink-0 text-xs font-bold text-indigo-400">项目</span>
+                    <span className="min-w-0 truncate">{activeProject}</span>
+                   </div>
+                 )}
                  <button 
                   onClick={() => {
                      loadEnvList();

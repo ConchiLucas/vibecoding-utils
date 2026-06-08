@@ -132,12 +132,12 @@ VibeDeploy 是一个面向多项目研发、数据库分析、代码生成和部
 脚本会自动完成：
 
 - 从 `server/config.template.yaml` 生成临时配置文件。
-- 随机选择可用端口启动后端和前端。
+- 使用固定端口启动后端和前端，默认后端 `23638`、前端 `29527`。
 - 后端使用 `go run ./cmd/http` 启动纯 HTTP 服务。
-- 前端使用 Vite 启动，并把 `VITE_BASE_API` 指向实际后端端口。
+- 前端使用 Vite 启动，并把 `VITE_BASE_API` 指向后端端口。
 - 如果 `web-react/node_modules` 不存在，会先执行 `npm ci`。
 
-启动后终端会输出实际地址，例如：
+启动后终端会输出固定地址：
 
 ```text
 Backend:  http://localhost:23638
@@ -150,7 +150,7 @@ Frontend: http://localhost:29527
 ./scripts/restart-dev.sh stop
 ```
 
-固定端口启动：
+临时覆盖端口：
 
 ```bash
 BACKEND_PORT=8008 FRONTEND_PORT=5175 ./scripts/restart-dev.sh restart

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { Search, Database, GitMerge, Clock, LayoutGrid, FileSearch, Play, X, Loader2, Code2, History, Trash2, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Eye } from 'lucide-react';
+import { Search, Database, GitMerge, Clock, LayoutGrid, FileSearch, Play, X, Loader2, Code2, History, Trash2, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Eye, FolderOpen } from 'lucide-react';
 import Editor, { type OnMount } from '@monaco-editor/react';
 import toast from 'react-hot-toast';
 import DatabaseBrowser from '@/components/DatabaseBrowser';
@@ -24,7 +24,7 @@ import { useProjectStore } from '@/stores/useProjectStore';
 import { resolveSelectedConnectionId } from '@/views/config-manager/ConfigManagerSelection';
 
 export default function KeywordsManager() {
-  const { activeProjectId, activeConnectionId, setActiveConnectionId } = useProjectStore();
+  const { activeProject, activeProjectId, activeConnectionId, setActiveConnectionId } = useProjectStore();
   const [keyword, setKeyword] = useState('');
   const [databaseName, setDatabaseName] = useState('');
   const [tableName, setTableName] = useState('');
@@ -349,6 +349,16 @@ export default function KeywordsManager() {
             <h1 className="text-2xl font-extrabold text-slate-900">选择数据库配置</h1>
             <p className="mt-1 text-sm text-slate-500">选择一个数据源后进入关键字探查详情</p>
           </div>
+          {activeProject && (
+            <div
+              className="inline-flex h-10 max-w-[220px] items-center gap-2 self-start rounded-xl border border-indigo-200 bg-indigo-50 px-3 text-sm font-semibold text-indigo-700"
+              title={`当前项目：${activeProject}`}
+            >
+              <FolderOpen size={16} className="shrink-0 text-indigo-500" />
+              <span className="shrink-0 text-xs font-bold text-indigo-400">项目</span>
+              <span className="min-w-0 truncate">{activeProject}</span>
+            </div>
+          )}
         </div>
 
         <div className="grid gap-4 xl:grid-cols-2">

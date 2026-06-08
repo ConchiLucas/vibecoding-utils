@@ -1,14 +1,12 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { useUserStore } from '../../stores/useUserStore';
-import { useProjectStore } from '../../stores/useProjectStore';
-import { CloudLightning, Terminal, LogOut, Key, ArrowLeft, User, Route, GitMerge, Settings, FileCode, Moon, Sun, FolderOpen, Sparkles, Send, Database } from 'lucide-react';
+import { CloudLightning, Terminal, LogOut, Key, ArrowLeft, User, Route, GitMerge, Settings, FileCode, Moon, Sun, Sparkles, Send, Database, ScrollText } from 'lucide-react';
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
 
 export default function Header() {
   const userInfo = useUserStore((state) => state.userInfo);
-  const activeProject = useProjectStore((state) => state.activeProject);
   const logout = useUserStore((state) => state.logout);
   const navigate = useNavigate();
   const location = useLocation();
@@ -60,6 +58,7 @@ export default function Header() {
     { name: '配置管理', path: '/config', icon: Settings },
     { name: '表样本', path: '/agile-table-samples', icon: Database },
     { name: '敏捷请求', path: '/agile-request', icon: Send },
+    { name: '日志管理', path: '/log-manager', icon: ScrollText },
   ];
 
   const isScriptRoute = location.pathname.includes('/scripts');
@@ -111,18 +110,6 @@ export default function Header() {
 
         {/* User Profile & Context Actions (Right) */}
         <div className="flex items-center gap-3 z-10">
-          {/* Active Project Badge */}
-          {activeProject && (
-            <div
-              onClick={() => navigate('/config')}
-              title="点击管理项目配置"
-              className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 cursor-pointer transition-colors group"
-            >
-              <FolderOpen size={13} className="text-indigo-500 shrink-0" />
-              <span className="text-[11px] text-indigo-400 font-semibold tracking-wide uppercase leading-none">项目</span>
-              <span className="text-xs font-bold text-indigo-700 max-w-[120px] truncate leading-none">{activeProject}</span>
-            </div>
-          )}
           {/* Theme Toggle */}
           <button
             onClick={() => setIsDark(!isDark)}

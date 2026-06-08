@@ -8,10 +8,25 @@ interface DeployLogPanelProps {
   envKey: string;
   routeName: string;
   mode?: 'deploy' | 'stop' | 'logs';
+  streamPath?: string;
+  panelTitle?: string;
+  introText?: string;
+  allowCloseWhileRunning?: boolean;
   onClose: () => void;
 }
 
-export default function DeployLogPanel({ projectId, projectName, envKey, routeName, mode = 'deploy', onClose }: DeployLogPanelProps) {
+export default function DeployLogPanel({
+  projectId,
+  projectName,
+  envKey,
+  routeName,
+  mode = 'deploy',
+  streamPath,
+  panelTitle,
+  introText,
+  allowCloseWhileRunning = false,
+  onClose
+}: DeployLogPanelProps) {
   const [logs, setLogs] = useState<string[]>([]);
   const [status, setStatus] = useState<'connecting' | 'running' | 'success' | 'error'>('connecting');
   const [errorMsg, setErrorMsg] = useState('');
@@ -46,7 +61,13 @@ export default function DeployLogPanel({ projectId, projectName, envKey, routeNa
       sseBaseUrl = import.meta.env.VITE_BASE_API || '/api';
     }
 
-    const url = `${sseBaseUrl}/project/${streamEndpoint}/${projectId}?env=${envKey}&token=${encodeURIComponent(token || '')}`;
+    const withToken = (path: string) => {
+      const joiner = path.includes('?') ? '&' : '?';
+      return `${sseBaseUrl}${path}${joiner}token=${encodeURIComponent(token || '')}`;
+    };
+    const url = streamPath
+      ? withToken(streamPath)
+      : `${sseBaseUrl}/project/${streamEndpoint}/${projectId}?env=${encodeURIComponent(envKey)}&token=${encodeURIComponent(token || '')}`;
 
     const es = new EventSource(url);
     eventSourceRef.current = es;
@@ -54,7 +75,7 @@ export default function DeployLogPanel({ projectId, projectName, envKey, routeNa
     es.onopen = () => {
       setStatus('running');
       const action = mode === 'logs' ? '读取 Docker 日志' : mode === 'stop' ? '关闭' : '部署';
-      setLogs(prev => [...prev, `🚀 已连接，开始${action} [${projectName}] - ${routeName}...`]);
+      setLogs(prev => [...prev, introText || `🚀 已连接，开始${action} [${projectName}] - ${routeName}...`]);
     };
 
     es.addEventListener('log', (e: MessageEvent) => {
@@ -90,7 +111,7 @@ export default function DeployLogPanel({ projectId, projectName, envKey, routeNa
     return () => {
       es.close();
     };
-  }, [projectId, envKey, projectName, routeName, mode]);
+  }, [projectId, envKey, projectName, routeName, mode, streamPath, introText]);
 
   const isStop = mode === 'stop';
   const isDockerLogs = mode === 'logs';
@@ -113,7 +134,7 @@ export default function DeployLogPanel({ projectId, projectName, envKey, routeNa
               <Terminal size={16} />
             </div>
             <div>
-              <h3 className="text-sm font-bold text-white leading-tight">{isDockerLogs ? 'Docker 实时日志' : isStop ? '关闭日志' : '部署日志'}</h3>
+              <h3 className="text-sm font-bold text-white leading-tight">{panelTitle || (isDockerLogs ? 'Docker 实时日志' : isStop ? '关闭日志' : '部署日志')}</h3>
               <p className="text-xs text-gray-400">{projectName} · {routeName}</p>
             </div>
           </div>
@@ -169,11 +190,11 @@ export default function DeployLogPanel({ projectId, projectName, envKey, routeNa
             <button
               onClick={onClose}
               className={`px-4 py-1.5 text-xs font-medium rounded-lg transition-colors ${
-                !isDockerLogs && (status === 'running' || status === 'connecting')
+                !allowCloseWhileRunning && !isDockerLogs && (status === 'running' || status === 'connecting')
                   ? 'bg-gray-700 text-gray-400 cursor-not-allowed'
                   : 'bg-white text-gray-900 hover:bg-gray-200'
               }`}
-              disabled={!isDockerLogs && (status === 'running' || status === 'connecting')}
+              disabled={!allowCloseWhileRunning && !isDockerLogs && (status === 'running' || status === 'connecting')}
             >
               关闭
             </button>
