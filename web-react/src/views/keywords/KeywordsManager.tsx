@@ -3,6 +3,7 @@ import { Search, Database, GitMerge, Clock, LayoutGrid, FileSearch, Play, X, Loa
 import Editor, { type OnMount } from '@monaco-editor/react';
 import toast from 'react-hot-toast';
 import DatabaseBrowser from '@/components/DatabaseBrowser';
+import TableDataPreview from '@/components/TableDataPreview';
 import RelateManager from '@/views/relate-manager/RelateManager';
 import { fuzzyQuery, getClientData, getHistoryTableNames, getPreferColumnValueList } from '@/api/sysKeywords';
 import {
@@ -40,6 +41,10 @@ export default function KeywordsManager() {
   const [showSqlQuery, setShowSqlQuery] = useState(false);
   const [showRelateSettings, setShowRelateSettings] = useState(false);
   const [showKeywordDetail, setShowKeywordDetail] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewConnId, setPreviewConnId] = useState(0);
+  const [previewDbName, setPreviewDbName] = useState('');
+  const [previewTableName, setPreviewTableName] = useState('');
   const rightPanelRef = useRef<HTMLDivElement>(null);
 
   const handleSelectTable = (tblName: string, shouldScroll = false) => {
@@ -302,6 +307,16 @@ export default function KeywordsManager() {
   const openConnectionDatabaseBrowser = (conn: TbConnection) => {
     setActiveConnectionId(conn.ID);
     setShowDbBrowser(true);
+  };
+
+  const openTablePreview = (value: string, connectionId?: number) => {
+    const parsed = splitDatabaseTable(value);
+    if (!parsed.database || !parsed.table) return;
+
+    setPreviewDbName(parsed.database);
+    setPreviewTableName(parsed.table);
+    setPreviewConnId(connectionId || selectedConnection?.ID || activeConnectionId || 0);
+    setPreviewOpen(true);
   };
 
   const openConnectionRelateSettings = (conn: TbConnection) => {
@@ -724,9 +739,19 @@ export default function KeywordsManager() {
         onEnvironmentChange={() => undefined}
         projectId={activeProjectId || 0}
         focusedConnectionId={selectedConnectionId ? Number(selectedConnectionId) : undefined}
-        onTableSelect={(value) => {
+        autoClose={false}
+        onTableSelect={(value, connectionId) => {
           applyDatabaseTableValue(value);
+          openTablePreview(value, connectionId);
         }}
+      />
+
+      <TableDataPreview
+        open={previewOpen}
+        onClose={() => setPreviewOpen(false)}
+        connectionId={previewConnId}
+        databaseName={previewDbName}
+        tableName={previewTableName}
       />
 
       <DatabaseQueryModal
