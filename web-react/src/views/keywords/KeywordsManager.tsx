@@ -381,7 +381,18 @@ export default function KeywordsManager() {
                       <p className="mt-0.5 truncate font-mono text-xs text-slate-500">{conn.connectionType}</p>
                     </div>
                   </div>
-                  <div className="flex shrink-0 items-center gap-1">
+                  <div className="flex shrink-0 items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        openConnectionDatabaseBrowser(conn);
+                      }}
+                      className="inline-flex h-10 items-center gap-2 rounded-xl border border-emerald-500 bg-emerald-500 px-4 text-sm font-bold text-white shadow-lg shadow-emerald-500/20 transition hover:border-emerald-600 hover:bg-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
+                      title="浏览数据库"
+                    >
+                      <Eye size={16} /> 浏览
+                    </button>
                     <button
                       type="button"
                       onClick={(event) => {
@@ -392,17 +403,6 @@ export default function KeywordsManager() {
                       title="数据库查询"
                     >
                       <FileSearch size={14} /> 查询
-                    </button>
-                    <button
-                      type="button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        openConnectionDatabaseBrowser(conn);
-                      }}
-                      className="inline-flex h-9 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-600 shadow-sm transition hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
-                      title="浏览数据库"
-                    >
-                      <Eye size={14} /> 浏览
                     </button>
                     <button
                       type="button"

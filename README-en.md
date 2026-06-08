@@ -1,317 +1,234 @@
+# VibeDeploy
 
-<div align=center>
-<img src="http://qmplusimg.henrongyi.top/gvalogo.jpg" width="300" height="300" />
-</div>
-<div align=center>
-<img src="https://img.shields.io/badge/golang-1.18-blue"/>
-<img src="https://img.shields.io/badge/gin-1.9.1-lightBlue"/>
-<img src="https://img.shields.io/badge/vue-3.3.4-brightgreen"/>
-<img src="https://img.shields.io/badge/element--plus-2.3.8-green"/>
-<img src="https://img.shields.io/badge/gorm-1.25.2-red"/>
-</div>
+English | [Simplified Chinese](./README.md)
 
-English | [简体中文](./README.md)
+VibeDeploy is a local workbench for multi-project development, database analysis, code generation, deployment operations, and API debugging. It uses a Go + Gin backend and a React frontend. The repository keeps part of the easy-deploy foundation, but the current product experience is centered on project cards, deployment routes, script workflows, database browsing, table lineage, and AI-assisted generation.
 
-[gitee](https://gitee.com/pixelmax/easy-deploy): https://gitee.com/pixelmax/easy-deploy
+This is not just an admin-template repository. It is a practical console for keeping project metadata, deployment commands, database structure, API documentation, script workflows, and generation settings in one place.
 
-[github](https://github.com/flipped-aurora/easy-deploy): https://github.com/flipped-aurora/easy-deploy
+## What The Project Pool Is For
 
-# Project Guidelines
-[Online Documentation](https://www.easy-deploy.com/) : https://www.easy-deploy.com/
+The "Project Pool" navigation entry is the main "my projects" area in this app. It does not contain the business source code itself. Instead, each card represents how a business project is managed inside VibeDeploy.
 
-[From the environment to the deployment of teaching videos](https://www.bilibili.com/video/BV1fV411y7dT)
+You can use it to:
 
-[Development Steps](https://www.easy-deploy.com/guide/start-quickly/env.html) (Contributor:  <a href="https://github.com/LLemonGreen">LLemonGreen</a> And <a href="https://github.com/fkk0509">Fann</a>)
+- Maintain project metadata, such as name, language, group, description, access URL, and local path.
+- Configure deployment routes, such as local full deployment, local incremental deployment, remote incremental deployment, and dependency image builds.
+- Run and stop deployment commands directly from project cards.
+- View live deployment logs.
+- Bind remote routes to server configuration.
+- Open project script management when a project needs attached deployment or helper scripts.
 
-## 1. Basic Introduction
+In short, the Project Pool is the operational entry point for project management and deployment actions. The actual business code still lives in the local path or repository you configure.
 
-### 1.1 Project Introduction
+## Main Features
 
-> easy-deploy is a backstage management system based on [vue](https://vuejs.org) and [gin](https://gin-gonic.com), which separates the front and rear of the full stack. It integrates jwt authentication, dynamic routing, dynamic menu, casbin authentication, form generator, code generator and other functions. It provides a variety of sample files, allowing you to focus more time on business development.
+### Project Pool
 
-[Online Demo](http://demo.easy-deploy.com): http://demo.easy-deploy.com
+- Project groups, search, creation, editing, and deletion.
+- Per-project deployment routes with custom commands and presentation colors.
+- Local execution, remote execution, image build, and incremental deployment modes.
+- Deployment log panel for real-time command output.
 
-username：admin
+### Configuration Management
 
-password：123456
+- Active project management.
+- Database connection management with environment labels.
+- Server connection management.
+- AI provider, model, Base URL, API key, and default provider configuration.
 
-### 1.2 Contributing Guide
+### Database Browser And SQL Query
 
-Hi! Thank you for choosing easy-deploy.
+- Browse remote databases, tables, and table comments.
+- Preview table data, field comments, primary-key markers, and DDL.
+- Edit, delete, or generate table data where the backend supports write operations.
+- Run read-only SQL queries and keep successful query history.
+- The codebase includes support paths for MySQL, PostgreSQL, Oracle, SQL Server, SQLite, and ClickHouse. Write capability depends on the specific backend implementation.
 
-easy-deploy is a full-stack (frontend and backend separation) framework for developers, designers and product managers.
+### Table Relations
 
-We are excited that you are interested in contributing to easy-deploy. Before submitting your contribution though, please make sure to take a moment and read through the following guidelines.
+- Open database browsing, SQL query, and table-relation settings from a data-source card.
+- Explore related data paths by keyword.
+- Maintain field-level table relations.
+- View incoming and outgoing lineage grouped by table.
+- Import AI-analyzed table relations through a dedicated API.
 
-#### 1.2.1 Issue Guidelines
+### Code Generation
 
-- Issues are exclusively for bug reports, feature requests and design-related topics. Other questions may be closed directly. If any questions come up when you are using Element, please hit [Gitter](https://gitter.im/element-en/Lobby) for help.
+- Manage generation project cards grouped by business type.
+- Configure frontend/backend project type, instances, path groups, models, and templates.
+- Maintain database template scripts and generate SQL snippets.
+- After generation, show absolute file paths and a prompt URL that can be handed to Codex.
 
-- Before submitting an issue, please check if similar problems have already been issued.
+### Script Library
 
-#### 1.2.2 Pull Request Guidelines
+- Manage script categories, workflows, and ordered steps.
+- Step types include local execution, local upload, target download, and target execution.
+- Resource bindings can inject database, server, or custom variables.
+- Multi-stage pipelines inject server environment variables so scripts can reference stage information directly.
 
-- Fork this repository to your own account. Do not create branches here.
+### Interface Forwarding And API Testing
 
-- Commit info should be formatted as `[File Name]: Info about commit.` (e.g. `README.md: Fix xxx bug`)
+- Import Swagger JSON and build a project/service/interface tree.
+- Manage interface environments, users, headers, request params, response params, and logs.
+- Use the built-in interface test panel for backend debugging and integration work.
 
-- <font color=red>Make sure PRs are created to `develop` branch instead of `master` branch.</font>
+### Table Samples And Agile Requests
 
-- If your PR fixes a bug, please provide a description about the related bug.
+- Save common business table selections as reusable table-sample plans.
+- Use Agile Request as a lightweight API client.
+- Import requests from Chrome "Copy as fetch".
+- Persist request history in the backend for later review and reuse.
 
-- Merging a PR takes two maintainers: one approves the changes after reviewing, and then the other reviews and merges.
+## Tech Stack
 
-### 1.3 Version list
+| Layer | Technologies |
+| --- | --- |
+| Frontend | React 18, Vite 5, TypeScript, Zustand, Tailwind CSS, Monaco Editor |
+| Backend | Go 1.24, Gin, Gorm, Viper, Zap |
+| Database / Connections | MySQL, PostgreSQL, Oracle, SQL Server, SQLite, ClickHouse, optional Redis |
+| Desktop | Wails v2 |
+| Build / Deployment | Docker, docker compose, Makefile, Kubernetes templates |
 
-- master: 2.0 code, for prod
-- develop: 2.0 dev code, for test
-- [easy-deploy_v2_dev](https://github.com/flipped-aurora/easy-deploy/tree/easy-deploy_v2_dev) (v2.0 [GormV1](https://v1.gorm.io) Stable branch)
-- [gva_gormv2_dev](https://github.com/flipped-aurora/easy-deploy/tree/gva_gormv2_dev) (v2.0 [GormV2](https://v2.gorm.io) Development branch)
+## Repository Layout
 
-## 2. Getting started
-
+```text
+.
+├── web-react/                  # React frontend
+│   ├── src/api/                # Frontend API wrappers
+│   ├── src/components/         # Shared components, such as database browser and table preview
+│   ├── src/views/              # Product pages
+│   └── package.json
+├── server/                     # Go backend and Wails desktop entry
+│   ├── api/v1/                 # HTTP APIs
+│   ├── cmd/http/               # Pure HTTP development entry
+│   ├── config/                 # Config structures
+│   ├── initialize/             # Initialization, routing, database setup
+│   ├── model/                  # Data models
+│   ├── resource/               # Code-generation and deployment templates
+│   ├── router/                 # Gin router registration
+│   ├── service/                # Business logic
+│   └── wails.json
+├── docs/                       # Feature and packaging notes
+├── scripts/restart-dev.sh      # Local frontend/backend startup script
+├── docker-compose.yml
+└── Makefile
 ```
-- node version > v8.6.0
-- golang version >= v1.14
-- IDE recommendation: Goland
-- initialization project: different versions of the database are not initialized. See synonyms at initialization https://www.easy-deploy.com/docs/first
-- Replace the Qiniuyun public key, private key, warehouse name and default url address in the project to avoid data confusion in the test file.
-```
 
-### 2.1 server project
+## Local Development
 
-use `Goland` And other editing tools，open server catalogue，You can't open it. `easy-deploy` root directory
+### Requirements
+
+- Go 1.24+
+- Node.js 18+
+- npm 9+
+- A usable system database configuration. The default template is `server/config.template.yaml`.
+
+### Start Both Services
+
+Run from the repository root:
 
 ```bash
-# clone the project
-git clone https://github.com/flipped-aurora/easy-deploy.git
+./scripts/restart-dev.sh restart
+```
 
-# open server catalogue
+The script will:
+
+- Generate a temporary backend config from `server/config.template.yaml`.
+- Pick available ports for the backend and frontend.
+- Start the backend with `go run ./cmd/http`.
+- Start the frontend with Vite and set `VITE_BASE_API` to the actual backend URL.
+- Run `npm ci` first if `web-react/node_modules` does not exist.
+
+The terminal prints the actual URLs, for example:
+
+```text
+Backend:  http://localhost:23638
+Frontend: http://localhost:29527
+```
+
+Stop recorded development services:
+
+```bash
+./scripts/restart-dev.sh stop
+```
+
+Start with fixed ports:
+
+```bash
+BACKEND_PORT=8008 FRONTEND_PORT=5175 ./scripts/restart-dev.sh restart
+```
+
+The development login page is prefilled with:
+
+```text
+username: admin
+password: 123456
+```
+
+Whether this account works depends on your local database initialization.
+
+### Manual Startup
+
+Backend:
+
+```bash
 cd server
-
-# use go mod And install the go dependency package
-go generate
-
-# Compile 
-go build -o server main.go (windows the compile command is go build -o server.exe main.go )
-
-# Run binary
-./server (windows The run command is server.exe)
+go run ./cmd/http -c /path/to/config.yaml
 ```
 
-### 2.1 web project
+Frontend:
 
 ```bash
-# enter the project directory
-cd web
-
-# install dependency
+cd web-react
 npm install
-
-# develop
-npm run serve
+VITE_BASE_API=http://localhost:8008 npm run dev
 ```
 
-### 2.2 Server
+## Build
+
+Build the frontend:
 
 ```bash
-# using go.mod
-
-# install go modules
-go list (go mod tidy)
-
-# build the server
-go build
+cd web-react
+npm run build
 ```
 
-### 2.3 API docs auto-generation using swagger
+The output goes to:
 
-#### 2.3.1 install swagger 
+```text
+server/frontend/dist
+```
 
-##### (1) Using VPN or outside mainland China
-````
-go get -u github.com/swaggo/swag/cmd/swag
-````
+Build the backend HTTP entry:
 
-##### (2) In mainland China
-
-In mainland China, access to go.org/x is prohibited，we recommend [goproxy.io](https://goproxy.io/zh/) or [goproxy.cn](https://goproxy.cn)
-
-````bash
-# If you are using a version of Go 1.13 - 1.15 Need to set up manually GO111MODULE=on, The opening mode is as follows, If your Go version is 1.16 ~ Latest edition You can ignore the following step one
-# Step one、Enable Go Modules Function
-go env -w GO111MODULE=on 
-# Step two、Configuration GOPROXY Environment variable
-go env -w GOPROXY=https://goproxy.cn,https://goproxy.io,direct
-
-# If you dislike trouble,You can use the go generate Automatically execute code before compilation, But this can't be used command line terminal of `Goland` or `Vscode` 
+```bash
 cd server
-go generate -run "go env -w .*?"
-
-# Use the following command to download swag
-go get -u github.com/swaggo/swag/cmd/swag
-````
-
-#### 2.3.2 API docs generation
-
-````
-cd server
-swag init
-````
-
-> After executing the above command，server directory will appear in the docs folder `docs.go`, `swagger.json`, `swagger.yaml` Three file updates，After starting the go service, type in the browser [http://localhost:8888/swagger/index.html](http://localhost:8888/swagger/index.html) You can view swagger document
-
-
-## 3. Technical selection
-
-- Frontend: using [Element](https://github.com/ElemeFE/element) based on [Vue](https://vuejs.org)，to code the page.
-- Backend: using [Gin](https://gin-gonic.com/) to quickly build basic RESTful API. [Gin](https://gin-gonic.com/)is a web framework written in Go (Golang).
-- DB: `MySql`(5.6.44)，using [gorm](http://gorm.io)` to implement data manipulation, added support for SQLite databases.
-- Cache: using `Redis` to implement the recording of the JWT token of the currently active user and implement the multi-login restriction.
-- API: using Swagger to auto generate APIs docs。
-- Config: using [fsnotify](https://github.com/fsnotify/fsnotify) and [viper](https://github.com/spf13/viper) to implement `yaml` config file。
-- Log: using [zap](https://github.com/uber-go/zap) record logs。
-
-## 4. Project Architecture
-
-### 4.1 Architecture Diagram
-
-![Architecture diagram](http://qmplusimg.henrongyi.top/gva/easy-deploy.png)
-
-### 4.2 Front-end Detailed Design Diagram (Contributor: <a href="https://github.com/baobeisuper">baobeisuper</a>)
-
-![Front-end Detailed Design Diagram](http://qmplusimg.henrongyi.top/naotu.png)
-
-### 4.3 Project Layout
-
-```
-    ├── server
-        ├── api             (api entrance)
-        │   └── v1          (v1 version interface)
-        ├── config          (configuration package)
-        ├── core            (core document)
-        ├── docs            (swagger document directory)
-        ├── global          (global object)                    
-        ├── initialize      (initialization)                        
-        │   └── internal    (initialize internal function)                            
-        ├── middleware      (middleware layer)                        
-        ├── model           (model layer)                    
-        │   ├── request     (input parameter structure)                        
-        │   └── response    (out-of-parameter structure)                            
-        ├── packfile        (static file packaging)                        
-        ├── resource        (static resource folder)                        
-        │   ├── excel       (excel import and export default path)                        
-        │   ├── page        (form generator)                        
-        │   └── template    (template)                            
-        ├── router          (routing layer)                    
-        ├── service         (service layer)                    
-        ├── source          (source layer)                    
-        └── utils           (tool kit)                    
-            ├── timer       (timer interface encapsulation)                        
-            └── upload      (oss interface encapsulation)  
-            
-    └─web            （frontend）
-        ├─public        （deploy templates）
-        └─src           （source code）
-            ├─api       （frontend APIs）
-            ├─assets	（static files）
-            ├─components（components）
-            ├─router	（frontend routers）
-            ├─store     （vuex state management）
-            ├─style     （common styles）
-            ├─utils     （frontend common utilitie）
-            └─view      （pages）
-
+go build ./cmd/http
 ```
 
-## 5. Features
+For desktop packaging, see:
 
-- Authority management: Authority management based on `jwt` and `casbin`. 
-- File upload and download: implement file upload operations based on `Qiniuyun', `Aliyun 'and `Tencent Cloud` (please develop your own application for each platform corresponding to `token` or `key` ).
-- Pagination Encapsulation：The frontend uses `mixins` to encapsulate paging, and the paging method can call `mixins` .
-- User management: The system administrator assigns user roles and role permissions.
-- Role management: Create the main object of permission control, and then assign different API permissions and menu permissions to the role.
-- Menu management: User dynamic menu configuration implementation, assigning different menus to different roles.
-- API management: Different users can call different API permissions.
-- Configuration management: the configuration file can be modified in the foreground (this feature is not available in the online experience site).
-- Conditional search: Add an example of conditional search.
-- Restful example: You can see sample APIs in user management module.
-  - Front-end file reference: [web/src/view/superAdmin/api/api.vue](https://github.com/flipped-aurora/easy-deploy/blob/master/web/src/view/superAdmin/api/api.vue).
-  - Stage reference: [server/router/sys_api.go](https://github.com/flipped-aurora/easy-deploy/blob/master/server/router/sys_api.go).
-- Multi-login restriction: Change `user-multipoint` to true in `system` in `config.yaml` (You need to configure redis and redis parameters yourself. During the test period, please report in time if there is a bug).
-- Upload file by chunk：Provides examples of file upload and large file upload by chunk.
-- Form Builder：With the help of [@form-generator](https://github.com/JakHuang/form-generator).
-- Code generator: Providing backend with basic logic and simple curd code generator.
+```text
+docs/desktop-build.md
+```
 
-## 6. Knowledge base
+## Useful Docs
 
-### 6.1 Team blog
+- `docs/start-dev.md`: local development startup notes.
+- `docs/desktop-build.md`: Wails desktop packaging.
+- `docs/ai-table-relations-import.md`: AI table-relation import API.
+- `docs/pipeline-env-injection.md`: pipeline server environment variable injection.
+- `docs/ai-deploy-phase1.md`: AI deployment workflow notes.
 
-> https://www.yuque.com/flipped-aurora
->
->There are video courses about frontend framework in our blo. If you think the project is helpful to you, you can add my personal WeChat:shouzi_1994，your comments is welcomed。
+## Development Notes
 
-### 6.2 Video courses
+- The frontend uses the shared Axios instance in `web-react/src/utils/request.ts`.
+- The active project and active connection are stored in Zustand.
+- Private APIs require `x-token`; the frontend attaches it after login.
+- Table edits, deletes, and generated data write directly to the remote database. Confirm the target environment before using them.
+- Database browsing, table relations, and code generation depend on project and data-source configuration in Configuration Management.
 
-(1) Development environment course
+## License
 
-> Bilibili：https://www.bilibili.com/video/BV1Fg4y187Bw/
-
-(2) Template course
-
-> Bilibili：https://www.bilibili.com/video/BV16K4y1r7BD/
-
-(3) 2.0 version introduction and development experience
-
-> Bilibili：https://www.bilibili.com/video/BV1aV411d7Gm#reply2831798461
-
-(4) Golang basic course
-
-> https://space.bilibili.com/322210472/channel/detail?cid=108884
-
-(5) gin frame basic teaching
-
-> bilibili：https://space.bilibili.com/322210472/channel/detail?cid=126418&ctype=0
-
-(6) easy-deploy version update introduction video
-> bilibili：https://space.bilibili.com/322210472/channel/detail?cid=126418&ctype=0
-
-## 7.Contacts
-
-### 7.1 Groups
-
-#### QQ group: 622360840
-
-| QQ group |d
-|  :---:  |
-| <img src="http://qmplusimg.henrongyi.top/qq.jpg" width="180"/> |
-
-
-#### Wechat group: comment "加入easy-deploy交流群"
-
-| Wechat |
-|  :---:  | 
-| <img width="150" src="http://qmplusimg.henrongyi.top/qrjjz.png"> 
-
-#### [About Us](https://www.easy-deploy.com/about/join.html)
-
-## 8. Contributors
-
-Thank you for considering your contribution to easy-deploy!
-
-<a href="https://openomy.app/github/flipped-aurora/easy-deploy" target="_blank" style="display: block; width: 100%;" align="center">
-  <img src="https://openomy.app/svg?repo=flipped-aurora/easy-deploy&chart=bubble&latestMonth=3" target="_blank" alt="Contribution Leaderboard" style="display: block; width: 100%;" />
- </a>
-
-<a href="https://github.com/flipped-aurora/easy-deploy/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=flipped-aurora/easy-deploy" />
-</a>
-
-## 9. Donate
-
-If you find this project useful, you can buy author a glass of juice :tropical_drink: [here](https://www.easy-deploy.com/coffee/index.html)
-
-## 10. Commercial considerations
-
-If you use this project for commercial purposes, please comply with the Apache2.0 agreement and retain the author's technical support statement.
-
+This project evolved from easy-deploy and keeps the original open-source license file. Read [LICENSE](./LICENSE) before using, distributing, or commercializing it.

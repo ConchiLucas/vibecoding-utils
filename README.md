@@ -1,388 +1,231 @@
-
-<div align=center>
-<img src="http://qmplusimg.henrongyi.top/gvalogo.jpg" width="300" height="300" />
-</div>
-
-<div align=center>
-<img src="https://img.shields.io/badge/golang-1.20-blue"/>
-<img src="https://img.shields.io/badge/gin-1.9.1-lightBlue"/>
-<img src="https://img.shields.io/badge/vue-3.3.4-brightgreen"/>
-<img src="https://img.shields.io/badge/element--plus-2.3.8-green"/>
-<img src="https://img.shields.io/badge/gorm-1.25.2-red"/>
-<img src="https://gitcode.com/flipped-aurora/easy-deploy/star/badge.svg"/>
-</div>
-
-<div align=center>
-<a href="https://trendshift.io/repositories/3250" target="_blank"><img src="https://trendshift.io/api/badge/repositories/3250" alt="Calcium-Ion%2Fnew-api | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
-</div>
+# VibeDeploy
 
 [English](./README-en.md) | 简体中文
 
-## 支持claw生态
+VibeDeploy 是一个面向多项目研发、数据库分析、代码生成和部署运维的本地工作台。它基于 Go + Gin 后端和 React 前端构建，保留了 easy-deploy 的基础能力，并围绕项目配置、脚本流程、接口调试、表关系分析和 AI 辅助代码生成做了定制。
 
-[🦞GvaClaw](https://plugin.easy-deploy.com/details/159)
+这个仓库不是单纯的后台管理模板，而是一个把“项目资料、部署命令、数据库结构、接口文档、脚本流程、生成配置”集中到同一个页面体系里的工具。
 
-## ✨一分钟生成前后端基础代码
+## 我的项目功能是做什么的
 
-<table>
-  <tr>
-    <td width="250">
-      <p>📄 创建基础模板</p>
-      <p>🤖 AI生成结构</p>
-      <p>⏰ 生成代码</p>
-      <p>🏷️ 分配权限</p>
-      <p>🎉 基础CURD生成完成</p>   
-    </td>
-    <td>
-      <video src="https://private-user-images.githubusercontent.com/165128580/384700666-4d039215-af29-4f86-bb4f-60dbab38f58e.mp4?jwt=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJnaXRodWIuY29tIiwiYXVkIjoicmF3LmdpdGh1YnVzZXJjb250ZW50LmNvbSIsImtleSI6ImtleTUiLCJleHAiOjE3MzEyNTIxNDYsIm5iZiI6MTczMTI1MTg0NiwicGF0aCI6Ii8xNjUxMjg1ODAvMzg0NzAwNjY2LTRkMDM5MjE1LWFmMjktNGY4Ni1iYjRmLTYwZGJhYjM4ZjU4ZS5tcDQ_WC1BbXotQWxnb3JpdGhtPUFXUzQtSE1BQy1TSEEyNTYmWC1BbXotQ3JlZGVudGlhbD1BS0lBVkNPRFlMU0E1M1BRSzRaQSUyRjIwMjQxMTEwJTJGdXMtZWFzdC0xJTJGczMlMkZhd3M0X3JlcXVlc3QmWC1BbXotRGF0ZT0yMDI0MTExMFQxNTE3MjZaJlgtQW16LUV4cGlyZXM9MzAwJlgtQW16LVNpZ25hdHVyZT00NjJkMDcwZjJkMjAyMmU1N2I2MzQxY2RhODFlNzgzNGRiMDFhMmY2NTYyM2ZmODdhNDVmMWE1NzlhMDdlOTI5JlgtQW16LVNpZ25lZEhlYWRlcnM9aG9zdCJ9.ZJbswpLzF2RHjemcGirKOP0L1fvpl3FUqIiQ_-yjeUo" data-canonical-src="https://private-user-images.githubusercontent.com/165128580/384700666-4d039215-af29-4f86-bb4f-60dbab38f58e.mp4?jwt=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJnaXRodWIuY29tIiwiYXVkIjoicmF3LmdpdGh1YnVzZXJjb250ZW50LmNvbSIsImtleSI6ImtleTUiLCJleHAiOjE3MzEyNTIxNDYsIm5iZiI6MTczMTI1MTg0NiwicGF0aCI6Ii8xNjUxMjg1ODAvMzg0NzAwNjY2LTRkMDM5MjE1LWFmMjktNGY4Ni1iYjRmLTYwZGJhYjM4ZjU4ZS5tcDQ_WC1BbXotQWxnb3JpdGhtPUFXUzQtSE1BQy1TSEEyNTYmWC1BbXotQ3JlZGVudGlhbD1BS0lBVkNPRFlMU0E1M1BRSzRaQSUyRjIwMjQxMTEwJTJGdXMtZWFzdC0xJTJGczMlMkZhd3M0X3JlcXVlc3QmWC1BbXotRGF0ZT0yMDI0MTExMFQxNTE3MjZaJlgtQW16LUV4cGlyZXM9MzAwJlgtQW16LVNpZ25hdHVyZT00NjJkMDcwZjJkMjAyMmU1N2I2MzQxY2RhODFlNzgzNGRiMDFhMmY2NTYyM2ZmODdhNDVmMWE1NzlhMDdlOTI5JlgtQW16LVNpZ25lZEhlYWRlcnM9aG9zdCJ9.ZJbswpLzF2RHjemcGirKOP0L1fvpl3FUqIiQ_-yjeUo" controls="controls" muted="muted" class="d-block rounded-bottom-2 border-top width-fit" style="max-height:640px; min-height: 200px">
-</video>
-    </td>
-  </tr>
-</table>
+顶部导航里的“项目池”就是当前系统里的“我的项目”入口。它不是业务项目源码本身，而是每个业务项目在 VibeDeploy 里的管理卡片。
 
+你可以用它做这些事：
 
-# 项目文档
-[在线文档](https://www.easy-deploy.com) : https://www.easy-deploy.com
+- 维护项目档案：项目名、语言类型、分组、说明、访问地址、本地路径等。
+- 管理部署路线：给一个项目配置本地全量部署、本地增量部署、远程增量部署、依赖镜像构建等操作入口。
+- 执行和停止部署：从项目卡片直接触发命令，并查看实时部署日志。
+- 关联服务器配置：远程部署路线可以绑定服务器，统一维护 SSH 信息和执行命令。
+- 进入项目脚本：项目可以挂载脚本文件，便于管理部署或辅助脚本内容。
 
-[初始化](https://www.easy-deploy.com/guide/start-quickly/initialization.html)
-						       
-[从环境到部署教学视频](https://www.bilibili.com/video/BV1Rg411u7xH)
+简单说，“我的项目/项目池”是项目运维和部署动作的总入口；真正的业务代码仍然在你填写的本地项目路径或远程仓库里。
 
-[开发教学](https://www.easy-deploy.com/guide/start-quickly/env.html) (贡献者:  <a href="https://github.com/LLemonGreen">LLemonGreen</a> And <a href="https://github.com/fkk0509">Fann</a>)
+## 主要功能
 
-[交流社区](https://support.qq.com/products/371961)
+### 项目池
 
-[插件市场](https://plugin.easy-deploy.com/)
+- 项目分组、搜索、创建、编辑和删除。
+- 为项目配置不同部署路线和展示颜色。
+- 支持本地执行、远程执行、镜像构建、增量部署等命令模式。
+- 部署日志面板可跟踪执行过程。
 
-[软件著作权证书](https://www.easy-deploy.com/copyright.pdf)
+### 配置管理
 
-# 重要提示
+- 维护当前活跃项目。
+- 管理数据库连接，支持按环境区分数据源。
+- 管理服务器连接信息。
+- 配置 AI Provider、模型、Base URL、API Key 和默认模型。
 
-1.本项目从起步到开发到部署均有文档和详细视频教程
+### 数据库浏览和查询
 
-2.本项目需要您有一定的golang和vue基础
+- 浏览远程数据库、表和表注释。
+- 预览表数据，查看字段注释、主键标识和建表 SQL。
+- 对支持的数据库执行表数据编辑、删除和 AI 造数。
+- 提供只读 SQL 查询窗口和成功查询历史。
+- 当前代码包含 MySQL、PostgreSQL、Oracle、SQL Server、SQLite、ClickHouse 等数据源相关支持，具体写入能力以对应后端实现为准。
 
-3.您完全可以通过我们的教程和文档完成一切操作，因此我们不再提供免费的技术服务，如需服务请进行[付费支持](https://www.easy-deploy.com/coffee/payment.html)
+### 表关系
 
-4.如果您将此项目用于商业用途，请遵守Apache2.0协议并保留作者技术支持声明。您需保留如下版权声明信息，以及日志和代码中所包含的版权声明信息。所需保留信息均为文案性质，不会影响任何业务内容，如决定商用【产生收益的商业行为均在商用行列】或者必须剔除请[购买授权](https://plugin.easy-deploy.com/licenseindex.html)
-\
-<img src="https://qmplusimg.henrongyi.top/openSource/login.jpg" width="1000">
+- 以数据源为入口打开数据库浏览、SQL 查询和表关系设置。
+- 通过关键字在关联表中探查数据链路。
+- 维护字段级表关系，并按表查看出入方向血缘。
+- 提供 AI 导入表关系接口，便于外部分析结果批量写入。
 
-<img src="https://qmplusimg.henrongyi.top/openSource/dashboard.jpg" width="1000">
+### 代码生成
 
-## 1. 基本介绍
+- 管理代码生成项目卡片，按业务类型分组。
+- 配置前端/后端项目类型、实例、路径组、模型和模板。
+- 管理数据库模板脚本，生成 SQL 片段。
+- 生成代码后展示文件绝对路径和可交给 Codex 使用的提示词入口。
 
-### 1.1 项目介绍
+### 脚本库
 
-> easy-deploy是一个基于 [vue](https://vuejs.org) 和 [gin](https://gin-gonic.com) 开发的全栈前后端分离的开发基础平台，集成jwt鉴权，动态路由，动态菜单，casbin鉴权，表单生成器，代码生成器等功能，提供多种示例文件，让您把更多时间专注在业务开发上。
+- 按分类维护脚本流程和步骤。
+- 支持本地执行、本地上传、目标下载、目标执行等步骤类型。
+- 资源配置可以绑定数据库、服务器或其他变量。
+- 多阶段 pipeline 会注入服务器环境变量，脚本中可直接引用阶段信息。
 
-[在线预览](http://demo.easy-deploy.com): http://demo.easy-deploy.com
+### 接口转发和接口调试
 
-测试用户名：admin
+- 支持上传 Swagger JSON 构建项目/服务/接口树。
+- 管理接口环境、接口用户、请求头、入参、出参和调用日志。
+- 内置接口测试面板，适合调试后端接口和联调流程。
 
-测试密码：123456
+### 表样本和敏捷请求
 
-### 1.2 贡献指南
-Hi! 首先感谢你使用 easy-deploy。
+- 表样本用于保存某个项目下常用业务表组合，并可按方案恢复。
+- 敏捷请求提供轻量 API 请求工具，支持从浏览器 Copy as fetch 导入请求。
+- 请求历史会保存在后端，方便复查和复用。
 
-easy-deploy 是一套为快速研发准备的一整套前后端分离架构式的开源框架，旨在快速搭建中小型项目。
+## 技术栈
 
-easy-deploy 的成长离不开大家的支持，如果你愿意为 easy-deploy 贡献代码或提供建议，请阅读以下内容。
+| 层 | 技术 |
+| --- | --- |
+| 前端 | React 18, Vite 5, TypeScript, Zustand, Tailwind CSS, Monaco Editor |
+| 后端 | Go 1.24, Gin, Gorm, Viper, Zap |
+| 数据库/连接 | MySQL, PostgreSQL, Oracle, SQL Server, SQLite, ClickHouse, Redis 可选 |
+| 桌面端 | Wails v2 |
+| 构建/部署 | Docker, docker compose, Makefile, Kubernetes 模板 |
 
-#### 1.2.1 Issue 规范
-- issue 仅用于提交 Bug 或 Feature 以及设计相关的内容，其它内容可能会被直接关闭。
-									      
-- 在提交 issue 之前，请搜索相关内容是否已被提出。
+## 目录结构
 
-#### 1.2.2 Pull Request 规范
-- 请先 fork 一份到自己的项目下，不要直接在仓库下建分支。
-
-- commit 信息要以`[文件名]: 描述信息` 的形式填写，例如 `README.md: fix xxx bug`。
-
-- 如果是修复 bug，请在 PR 中给出描述信息。
-
-- 合并代码需要两名维护人员参与：一人进行 review 后 approve，另一人再次 review，通过后即可合并。
-
-## 2. 使用说明
-
+```text
+.
+├── web-react/                  # React 前端
+│   ├── src/api/                # 前端 API 封装
+│   ├── src/components/         # 通用组件，例如数据库浏览器、表数据预览
+│   ├── src/views/              # 业务页面
+│   └── package.json
+├── server/                     # Go 后端和 Wails 桌面端入口
+│   ├── api/v1/                 # HTTP API
+│   ├── cmd/http/               # 纯 HTTP 开发入口
+│   ├── config/                 # 配置结构
+│   ├── initialize/             # 初始化、路由、数据库
+│   ├── model/                  # 数据模型
+│   ├── resource/               # 代码生成和部署模板
+│   ├── router/                 # Gin 路由注册
+│   ├── service/                # 业务逻辑
+│   └── wails.json
+├── docs/                       # 功能说明和打包说明
+├── scripts/restart-dev.sh      # 本地前后端启动脚本
+├── docker-compose.yml
+└── Makefile
 ```
-- node版本 > v18.16.0
-- golang版本 >= v1.22
-- IDE推荐：Goland
-```
 
-### 2.1 server项目
+## 本地启动
 
-使用 `Goland` 等编辑工具，打开server目录，不可以打开 easy-deploy 根目录
+### 环境要求
+
+- Go 1.24+
+- Node.js 18+
+- npm 9+
+- 一个可用的系统数据库配置，默认模板在 `server/config.template.yaml`
+
+### 一键启动开发环境
+
+在仓库根目录执行：
 
 ```bash
+./scripts/restart-dev.sh restart
+```
 
-# 克隆项目
-git clone https://github.com/flipped-aurora/easy-deploy.git
-# 进入server文件夹
+脚本会自动完成：
+
+- 从 `server/config.template.yaml` 生成临时配置文件。
+- 随机选择可用端口启动后端和前端。
+- 后端使用 `go run ./cmd/http` 启动纯 HTTP 服务。
+- 前端使用 Vite 启动，并把 `VITE_BASE_API` 指向实际后端端口。
+- 如果 `web-react/node_modules` 不存在，会先执行 `npm ci`。
+
+启动后终端会输出实际地址，例如：
+
+```text
+Backend:  http://localhost:23638
+Frontend: http://localhost:29527
+```
+
+停止已记录的开发服务：
+
+```bash
+./scripts/restart-dev.sh stop
+```
+
+固定端口启动：
+
+```bash
+BACKEND_PORT=8008 FRONTEND_PORT=5175 ./scripts/restart-dev.sh restart
+```
+
+开发环境默认登录页会预填：
+
+```text
+username: admin
+password: 123456
+```
+
+是否能直接登录取决于你的本地数据库是否已经初始化了对应账号。
+
+### 手动启动
+
+后端：
+
+```bash
 cd server
-
-# 使用 go mod 并安装go依赖包
-go generate
-
-# 运行
-go run . 
-
+go run ./cmd/http -c /path/to/config.yaml
 ```
 
-### 2.2 web项目
+前端：
 
 ```bash
-# 进入web文件夹
-cd web
-
-# 安装依赖
+cd web-react
 npm install
-
-# 启动web项目
-npm run serve
+VITE_BASE_API=http://localhost:8008 npm run dev
 ```
 
-### 2.3 swagger自动化API文档
+## 构建
 
-#### 2.3.1 安装 swagger
+前端构建：
 
-``` shell
-go install github.com/swaggo/swag/cmd/swag@latest
+```bash
+cd web-react
+npm run build
 ```
 
-#### 2.3.2 生成API文档
+构建产物会输出到：
 
-```` shell
+```text
+server/frontend/dist
+```
+
+后端 HTTP 入口构建：
+
+```bash
 cd server
-swag init
-````
-
-> 执行上面的命令后，server目录下会出现docs文件夹里的 `docs.go`, `swagger.json`, `swagger.yaml` 三个文件更新，启动go服务之后, 在浏览器输入 [http://localhost:8888/swagger/index.html](http://localhost:8888/swagger/index.html) 即可查看swagger文档
-
-### 2.4 VSCode工作区
-
-#### 2.4.1 开发
-
-使用`VSCode`打开根目录下的工作区文件`easy-deploy.code-workspace`，在边栏可以看到三个虚拟目录：`backend`、`frontend`、`root`。
-
-#### 2.4.2 运行/调试
-
-在运行和调试中也可以看到三个task：`Backend`、`Frontend`、`Both (Backend & Frontend)`。运行`Both (Backend & Frontend)`可以同时启动前后端项目。
-
-#### 2.4.3 settings
-
-在工作区配置文件中有`go.toolsEnvVars`字段，是用于`VSCode`自身的go工具环境变量。此外在多go版本的系统中，可以通过`gopath`、`go.goroot`指定运行版本。
-
-```json
-    "go.gopath": null,
-    "go.goroot": null,
+go build ./cmd/http
 ```
 
-## 3. 技术选型
+桌面端打包请参考：
 
-- 前端：用基于 [Vue](https://vuejs.org) 的 [Element](https://github.com/ElemeFE/element) 构建基础页面。
-- 后端：用 [Gin](https://gin-gonic.com/) 快速搭建基础restful风格API，[Gin](https://gin-gonic.com/) 是一个go语言编写的Web框架。
-- 数据库：采用`MySql` > (5.7) 版本 数据库引擎 InnoDB，使用 [gorm](http://gorm.cn) 实现对数据库的基本操作。
-- 缓存：使用`Redis`实现记录当前活跃用户的`jwt`令牌并实现多点登录限制。
-- API文档：使用`Swagger`构建自动化文档。
-- 配置文件：使用 [fsnotify](https://github.com/fsnotify/fsnotify) 和 [viper](https://github.com/spf13/viper) 实现`yaml`格式的配置文件。
-- 日志：使用 [zap](https://github.com/uber-go/zap) 实现日志记录。
-
-## 4. 项目架构
-
-### 4.1 系统架构图
-
-![系统架构图](http://qmplusimg.henrongyi.top/gva/easy-deploy.png)
-
-### 4.2 前端详细设计图 （提供者:<a href="https://github.com/baobeisuper">baobeisuper</a>）
-
-![前端详细设计图](http://qmplusimg.henrongyi.top/naotu.png)
-
-### 4.3 目录结构
-
-```
-    ├── server
-        ├── api             (api层)
-        │   └── v1          (v1版本接口)
-        ├── config          (配置包)
-        ├── core            (核心文件)
-        ├── docs            (swagger文档目录)
-        ├── global          (全局对象)                    
-        ├── initialize      (初始化)                        
-        │   └── internal    (初始化内部函数)                            
-        ├── middleware      (中间件层)                        
-        ├── model           (模型层)                    
-        │   ├── request     (入参结构体)                        
-        │   └── response    (出参结构体)                            
-        ├── packfile        (静态文件打包)                        
-        ├── resource        (静态资源文件夹)                        
-        │   ├── excel       (excel导入导出默认路径)                        
-        │   ├── page        (表单生成器)                        
-        │   └── template    (模板)                            
-        ├── router          (路由层)                    
-        ├── service         (service层)                    
-        ├── source          (source层)                    
-        └── utils           (工具包)                    
-            ├── timer       (定时器接口封装)                        
-            └── upload      (oss接口封装)                        
-    
-            web
-        ├── babel.config.js
-        ├── Dockerfile
-        ├── favicon.ico
-        ├── index.html                 -- 主页面
-        ├── limit.js                   -- 助手代码
-        ├── package.json               -- 包管理器代码
-        ├── src                        -- 源代码
-        │   ├── api                    -- api 组
-        │   ├── App.vue                -- 主页面
-        │   ├── assets                 -- 静态资源
-        │   ├── components             -- 全局组件
-        │   ├── core                   -- gva 组件包
-        │   │   ├── config.js          -- gva网站配置文件
-        │   │   ├── easy-deploy.js   -- 注册欢迎文件
-        │   │   └── global.js          -- 统一导入文件
-        │   ├── directive              -- v-auth 注册文件
-        │   ├── main.js                -- 主文件
-        │   ├── permission.js          -- 路由中间件
-        │   ├── pinia                  -- pinia 状态管理器，取代vuex
-        │   │   ├── index.js           -- 入口文件
-        │   │   └── modules            -- modules
-        │   │       ├── dictionary.js
-        │   │       ├── router.js
-        │   │       └── user.js
-        │   ├── router                 -- 路由声明文件
-        │   │   └── index.js
-        │   ├── style                  -- 全局样式
-        │   │   ├── base.scss
-        │   │   ├── basics.scss
-        │   │   ├── element_visiable.scss  -- 此处可以全局覆盖 element-plus 样式
-        │   │   ├── iconfont.css           -- 顶部几个icon的样式文件
-        │   │   ├── main.scss
-        │   │   ├── mobile.scss
-        │   │   └── newLogin.scss
-        │   ├── utils                  -- 方法包库
-        │   │   ├── asyncRouter.js     -- 动态路由相关
-        │   │   ├── btnAuth.js         -- 动态权限按钮相关
-        │   │   ├── bus.js             -- 全局mitt声明文件
-        │   │   ├── date.js            -- 日期相关
-        │   │   ├── dictionary.js      -- 获取字典方法 
-        │   │   ├── downloadImg.js     -- 下载图片方法
-        │   │   ├── format.js          -- 格式整理相关
-        │   │   ├── image.js           -- 图片相关方法
-        │   │   ├── page.js            -- 设置页面标题
-        │   │   ├── request.js         -- 请求
-        │   │   └── stringFun.js       -- 字符串文件
-        |   ├── view -- 主要view代码
-        |   |   ├── about -- 关于我们
-        |   |   ├── dashboard -- 面板
-        |   |   ├── error -- 错误
-        |   |   ├── example --上传案例
-        |   |   ├── iconList -- icon列表
-        |   |   ├── init -- 初始化数据  
-        |   |   |   ├── index -- 新版本
-        |   |   |   ├── init -- 旧版本
-        |   |   ├── layout  --  layout约束页面 
-        |   |   |   ├── aside 
-        |   |   |   ├── bottomInfo     -- bottomInfo
-        |   |   |   ├── screenfull     -- 全屏设置
-        |   |   |   ├── setting        -- 系统设置
-        |   |   |   └── index.vue      -- base 约束
-        |   |   ├── login              --登录 
-        |   |   ├── person             --个人中心 
-        |   |   ├── superAdmin         -- 超级管理员操作
-        |   |   ├── system             -- 系统检测页面
-        |   |   ├── systemTools        -- 系统配置相关页面
-        |   |   └── routerHolder.vue   -- page 入口页面 
-        ├── vite.config.js             -- vite 配置文件
-        └── yarn.lock
-
+```text
+docs/desktop-build.md
 ```
 
-## 5. 主要功能
+## 常用文档
 
-- 权限管理：基于`jwt`和`casbin`实现的权限管理。
-- 文件上传下载：实现基于`七牛云`, `阿里云`, `腾讯云` 的文件上传操作(请开发自己去各个平台的申请对应 `token` 或者对应`key`)。
-- 分页封装：前端使用 `mixins` 封装分页，分页方法调用 `mixins` 即可。
-- 用户管理：系统管理员分配用户角色和角色权限。
-- 角色管理：创建权限控制的主要对象，可以给角色分配不同api权限和菜单权限。
-- 菜单管理：实现用户动态菜单配置，实现不同角色不同菜单。
-- api管理：不同用户可调用的api接口的权限不同。
-- 配置管理：配置文件可前台修改(在线体验站点不开放此功能)。
-- 条件搜索：增加条件搜索示例。
-- restful示例：可以参考用户管理模块中的示例API。
-	- 前端文件参考: [web/src/view/superAdmin/api/api.vue](https://github.com/flipped-aurora/easy-deploy/blob/master/web/src/view/superAdmin/api/api.vue)
-    - 后台文件参考: [server/router/sys_api.go](https://github.com/flipped-aurora/easy-deploy/blob/master/server/router/sys_api.go)
-- 多点登录限制：需要在`config.yaml`中把`system`中的`use-multipoint`修改为true(需要自行配置Redis和Config中的Redis参数，测试阶段，有bug请及时反馈)。
-- 分片上传：提供文件分片上传和大文件分片上传功能示例。
-- 表单生成器：表单生成器借助 [@Variant Form](https://github.com/vform666/variant-form) 。
-- 代码生成器：后台基础逻辑以及简单curd的代码生成器。
+- `docs/start-dev.md`：本地开发启动说明。
+- `docs/desktop-build.md`：Wails 桌面端打包说明。
+- `docs/ai-table-relations-import.md`：AI 导入表关系接口说明。
+- `docs/pipeline-env-injection.md`：脚本 pipeline 环境变量注入说明。
+- `docs/ai-deploy-phase1.md`：AI 部署流程阶段说明。
 
-## 6. 知识库 
+## 开发提示
 
-## 6.1 团队博客
+- 前端统一使用 `web-react/src/utils/request.ts` 中的 Axios 实例。
+- 当前活跃项目和数据源保存在 Zustand store 中。
+- 私有接口需要 `x-token`，登录后前端会自动携带。
+- 表数据编辑、删除、造数会直接写入远程数据库，操作前请确认目标环境。
+- 数据库浏览、表关系和代码生成都依赖“配置管理”中的项目和数据源配置。
 
-> https://www.yuque.com/flipped-aurora
->
->内有前端框架教学视频。如果觉得项目对您有所帮助可以添加我的个人微信:shouzi_1994，欢迎您提出宝贵的需求。
+## License
 
-## 6.2 教学视频
-
-（1）手把手教学视频
-
-> https://www.bilibili.com/video/BV1Rg411u7xH/
-
-（2）后端目录结构调整介绍以及使用方法
-
-> https://www.bilibili.com/video/BV1x44y117TT/
-
-（3）golang基础教学视频
-
-> bilibili：https://space.bilibili.com/322210472/channel/detail?cid=108884
-
-（4）gin框架基础教学
-
-> bilibili：https://space.bilibili.com/322210472/channel/detail?cid=126418&ctype=0
-
-（5）easy-deploy 版本更新介绍视频
-
-> bilibili：https://www.bilibili.com/video/BV1kv4y1g7nT
-
-## 7. 联系方式
-
-### 7.1 技术群
-
-### QQ交流群：971857775
-
-### 微信交流群
-| 微信 |
-|  :---:  | 
-| <img width="150" src="http://qmplusimg.henrongyi.top/qrjjz.png"> 
-
-防止广告进群，添加微信，输入以下代码执行结果（请勿转码为string）
-
-```
-str := "5Yqg5YWlR1ZB5Lqk5rWB576k"
-decodeBytes, err := base64.StdEncoding.DecodeString(str)
-fmt.Println(decodeBytes, err)
-```
-
-### [关于我们](https://www.easy-deploy.com/about/join.html)
-
-## 8. 贡献者
-
-感谢您对easy-deploy的贡献!
-
-<a href="https://openomy.app/github/flipped-aurora/easy-deploy" target="_blank" style="display: block; width: 100%;" align="center">
-  <img src="https://openomy.app/svg?repo=flipped-aurora/easy-deploy&chart=bubble&latestMonth=3" target="_blank" alt="Contribution Leaderboard" style="display: block; width: 100%;" />
- </a>
-
-## 9. 捐赠
-
-如果你觉得这个项目对你有帮助，你可以请作者喝饮料 :tropical_drink: [点我](https://www.easy-deploy.com/coffee/index.html)
-
-## 10. 注意事项
-
-请严格遵守Apache 2.0协议并保留作品声明，去除版权信息请务必[获取授权](https://plugin.easy-deploy.com/license)  
-未授权去除版权信息将依法追究法律责任
+本项目基于 easy-deploy 演进，仓库保留原项目的开源协议文件。使用、分发或商用前请阅读 [LICENSE](./LICENSE)。
