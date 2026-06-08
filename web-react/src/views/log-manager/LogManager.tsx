@@ -32,6 +32,7 @@ import {
 } from '../../api/logManager';
 import DeployLogPanel from '../../components/DeployLogPanel';
 import { useProjectStore } from '../../stores/useProjectStore';
+import { useUserStore } from '../../stores/useUserStore';
 import ConfirmDialog from '../../components/ConfirmDialog';
 import { useConfirm } from '../../hooks/useConfirm';
 
@@ -102,8 +103,52 @@ function sortLogRoutes(routes: LogProjectRoute[]) {
   return [...routes].sort((a, b) => (a.sort || 0) - (b.sort || 0) || a.ID - b.ID);
 }
 
+function projectRoutesForTab(project: LogProject, tab: ActiveTab) {
+  const routes = sortLogRoutes(project.routes || []);
+  return tab === 'docker'
+    ? routes.filter(isDockerComposeLaunchRoute)
+    : routes.filter(isScriptRoute);
+}
+
+function projectMatchesActiveTab(project: LogProject, tab: ActiveTab) {
+  return projectRoutesForTab(project, tab).length > 0;
+}
+
+function ServiceRunningDot({ running }: { running?: boolean }) {
+  return (
+    <span
+      className={clsx(
+        'inline-flex h-2.5 w-2.5 shrink-0 rounded-full ring-2 ring-white',
+        running ? 'bg-emerald-500 shadow-[0_0_0_4px_rgba(16,185,129,0.14)]' : 'bg-red-500 shadow-[0_0_0_4px_rgba(239,68,68,0.12)]'
+      )}
+      title={running ? '运行中' : '已停止'}
+    />
+  );
+}
+
+function serviceStatusKey(item: Pick<DockerServiceSummary, 'routeId' | 'serviceName'>) {
+  return `${item.routeId}:${item.serviceName || ''}`;
+}
+
+function mergeServiceStatuses(current: DockerServiceSummary[], next: DockerServiceSummary[]) {
+  const statusMap = new Map(next.map(item => [serviceStatusKey(item), item]));
+  if (current.length === 0) return next;
+  return current.map(item => {
+    const status = statusMap.get(serviceStatusKey(item));
+    return status ? { ...item, running: status.running } : item;
+  });
+}
+
+function getSseBaseUrl() {
+  const isWails = Boolean((window as any).__wails__) ||
+    window.location.protocol === 'wails:' ||
+    window.location.hostname === 'wails.localhost';
+  return isWails ? 'http://127.0.0.1:48009' : (import.meta.env.VITE_BASE_API || '/api');
+}
+
 export default function LogManager() {
   const { activeProject, activeProjectId } = useProjectStore();
+  const token = useUserStore(state => state.token);
   const [projects, setProjects] = useState<LogProject[]>([]);
   const [groups, setGroups] = useState<LogProjectGroup[]>([]);
   const [selectedGroupId, setSelectedGroupId] = useState<number | null>(null);
@@ -145,16 +190,21 @@ export default function LogManager() {
     void fetchData();
   }, [fetchData]);
 
+  const tabProjects = useMemo(
+    () => projects.filter(project => projectMatchesActiveTab(project, activeTab)),
+    [projects, activeTab]
+  );
+
   const filteredProjects = useMemo(() => {
     const keyword = searchQuery.trim().toLowerCase();
-    return projects.filter(project => {
+    return tabProjects.filter(project => {
       const groupOk = selectedGroupId === null || project.groupId === selectedGroupId;
       const searchOk = !keyword ||
         String(project.projectName || '').toLowerCase().includes(keyword) ||
         String(project.description || '').toLowerCase().includes(keyword);
       return groupOk && searchOk;
     });
-  }, [projects, searchQuery, selectedGroupId]);
+  }, [tabProjects, searchQuery, selectedGroupId]);
 
   useEffect(() => {
     if (filteredProjects.length === 0) {
@@ -218,6 +268,31 @@ export default function LogManager() {
   useEffect(() => {
     loadDockerServices();
   }, [activeTab, selectedProjectId]);
+
+  useEffect(() => {
+    if (!selectedProjectId) return;
+    const sseBaseUrl = getSseBaseUrl();
+    const url = `${sseBaseUrl}/logManager/serviceStatusStream/${selectedProjectId}?scope=${activeTab}&token=${encodeURIComponent(token || '')}`;
+    const es = new EventSource(url);
+
+    es.addEventListener('status', (event: MessageEvent) => {
+      try {
+        const next = JSON.parse(event.data) as DockerServiceSummary[];
+        if (!Array.isArray(next)) return;
+        setDockerServices(previous => mergeServiceStatuses(previous, next));
+      } catch {
+        // Ignore malformed status frames; the next SSE tick will repair the state.
+      }
+    });
+
+    es.onerror = () => {
+      // EventSource will retry automatically while the page is still on the same project/tab.
+    };
+
+    return () => {
+      es.close();
+    };
+  }, [activeTab, selectedProjectId, token]);
 
   const openGroupStream = (action: 'start' | 'stop') => {
     if (!selectedProject) return;
@@ -400,7 +475,7 @@ export default function LogManager() {
               'ml-auto rounded-full px-2 py-0.5 text-xs font-mono',
               selectedGroupId === null ? 'bg-white/20 text-white' : 'bg-gray-100 text-gray-500'
             )}>
-              {projects.length}
+              {tabProjects.length}
             </span>
           </button>
 
@@ -408,7 +483,7 @@ export default function LogManager() {
             <div className="ml-4 mt-1 border-l-2 border-gray-200 pl-3 space-y-0.5">
               {groups.map(group => {
                 const active = selectedGroupId === group.ID;
-                const count = projects.filter(project => project.groupId === group.ID).length;
+                const count = tabProjects.filter(project => project.groupId === group.ID).length;
                 return (
                   <button
                     key={group.ID}
@@ -438,12 +513,14 @@ export default function LogManager() {
             <div className="py-12 text-center text-sm text-gray-400">项目加载中...</div>
           ) : filteredProjects.length === 0 ? (
             <div className="py-12 text-center text-sm text-gray-400">
-              {activeProject ? `当前项目「${activeProject}」下暂无匹配日志项目` : '暂无匹配项目'}
+              {activeProject
+                ? `当前项目「${activeProject}」下暂无${activeTab === 'docker' ? 'Docker' : '服务'}日志项目`
+                : `暂无${activeTab === 'docker' ? 'Docker' : '服务'}日志项目`}
             </div>
           ) : (
             filteredProjects.map(project => {
               const active = project.ID === selectedProjectId;
-              const routeCount = (project.routes || []).length;
+              const routeCount = projectRoutesForTab(project, activeTab).length;
               const editing = editingProjectId === project.ID;
               const actionLoading = projectActionLoadingId === project.ID;
               return (
@@ -665,9 +742,12 @@ export default function LogManager() {
                           <ScrollText size={12} />
                           <span className="truncate">service log</span>
                         </div>
-                        <h3 className="mt-4 truncate text-lg font-extrabold text-gray-900">
-                          {item.serviceName || '服务日志'}
-                        </h3>
+                        <div className="mt-4 flex min-w-0 items-center gap-2">
+                          <ServiceRunningDot running={item.running} />
+                          <h3 className="truncate text-lg font-extrabold text-gray-900">
+                            {item.serviceName || '服务日志'}
+                          </h3>
+                        </div>
                         <p className="mt-1 truncate text-sm font-semibold text-gray-500">{item.routeName}</p>
                       </div>
                       <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-gray-200 bg-gray-50">
@@ -783,9 +863,12 @@ export default function LogManager() {
                           <Layers size={12} />
                           <span className="truncate">{item.source === 'docker-compose' ? 'compose service' : 'route logs'}</span>
                         </div>
-                        <h3 className="mt-4 truncate text-lg font-extrabold text-gray-900">
-                          {item.serviceName || '全部容器日志'}
-                        </h3>
+                        <div className="mt-4 flex min-w-0 items-center gap-2">
+                          <ServiceRunningDot running={item.running} />
+                          <h3 className="truncate text-lg font-extrabold text-gray-900">
+                            {item.serviceName || '全部容器日志'}
+                          </h3>
+                        </div>
                         <p className="mt-1 truncate text-sm font-semibold text-gray-500">{item.routeName}</p>
                       </div>
                       <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-gray-200 bg-gray-50">

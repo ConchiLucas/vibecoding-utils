@@ -14,6 +14,7 @@ func (r *LogManagerRouter) InitLogManagerRouter(Router *gin.RouterGroup) {
 		logRouter.POST("saveOrUpdateRoute", logManagerApi.SaveOrUpdateLogRoute)
 		logRouter.DELETE("deleteRoute/:id", logManagerApi.DeleteLogRoute)
 		logRouter.GET("dockerServices/:id", logManagerApi.ListDockerServices)
+		logRouter.GET("serviceStatusStream/:id", logManagerApi.ServiceStatusStream)
 		logRouter.GET("serviceGroupStream/:id", logManagerApi.ServiceGroupStream)
 		logRouter.GET("deployStream/:id", logManagerApi.DeployStream)
 		logRouter.GET("stopStream/:id", logManagerApi.StopStream)

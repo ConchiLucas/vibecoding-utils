@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/flipped-aurora/easy-deploy/server/global"
@@ -35,6 +36,7 @@ type DockerServiceSummary struct {
 	Source      string `json:"source"`
 	LogFilePath string `json:"logFilePath"`
 	RouteType   string `json:"routeType"`
+	Running     bool   `json:"running"`
 }
 
 func (s *LogManagerService) GetLogProjectPage(req request.TbLogProjectSearch) (list []system.TbLogProject, total int64, err error) {
@@ -282,6 +284,7 @@ func (s *LogManagerService) ListDockerServices(projectId uint, scope string) ([]
 				Source:      "file-log",
 				LogFilePath: logFilePath,
 				RouteType:   logRouteTypeFileLog,
+				Running:     fileLogRouteRunning(project, route),
 			})
 			continue
 		}
@@ -313,6 +316,7 @@ func (s *LogManagerService) ListDockerServices(projectId uint, scope string) ([]
 				WorkDir:     workDir,
 				Source:      source,
 				RouteType:   logRouteTypeDockerCompose,
+				Running:     dockerComposeServiceRunning(workDir, serviceName),
 			})
 		}
 	}
@@ -574,6 +578,92 @@ func resolveLogFilePath(project system.TbLogProject, route system.TbLogProjectRo
 		return filepath.Clean(logFilePath)
 	}
 	return filepath.Join(workDir, logFilePath)
+}
+
+func fileLogRouteRunning(project system.TbLogProject, route system.TbLogProjectRoute) bool {
+	logFilePath := resolveLogFilePath(project, route)
+	if strings.TrimSpace(logFilePath) == "" {
+		return false
+	}
+	pidCandidates := []string{
+		strings.TrimSuffix(logFilePath, filepath.Ext(logFilePath)) + ".pid",
+	}
+	routeKey := strings.TrimSpace(route.RouteKey)
+	if routeKey != "" {
+		pidCandidates = append(pidCandidates, filepath.Join(filepath.Dir(logFilePath), routeKey+".pid"))
+	}
+	for _, pidPath := range pidCandidates {
+		if pidFileRunning(pidPath) {
+			return true
+		}
+	}
+	return fileHasOpenProcess(logFilePath)
+}
+
+func pidFileRunning(pidPath string) bool {
+	data, err := os.ReadFile(pidPath)
+	if err != nil {
+		return false
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil || pid <= 0 {
+		return false
+	}
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	return process.Signal(syscall.Signal(0)) == nil
+}
+
+func dockerComposeServiceRunning(workDir string, serviceName string) bool {
+	if strings.TrimSpace(workDir) == "" {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+
+	args := []string{"compose", "ps", "--status", "running", "--services"}
+	if strings.TrimSpace(serviceName) != "" {
+		args = append(args, strings.TrimSpace(serviceName))
+	}
+	cmd := exec.CommandContext(ctx, "docker", args...)
+	cmd.Dir = workDir
+	cmd.Env = enrichedCommandEnv()
+	output, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(output), "\n") {
+		if strings.TrimSpace(line) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func fileHasOpenProcess(filePath string) bool {
+	if strings.TrimSpace(filePath) == "" {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "lsof", "-t", filePath)
+	output, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(output), "\n") {
+		pid := strings.TrimSpace(line)
+		if pid == "" {
+			continue
+		}
+		if _, err := strconv.Atoi(pid); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 func buildFileLogCommand(project system.TbLogProject, route system.TbLogProjectRoute) (string, []string, string, error) {

@@ -1,6 +1,9 @@
 package system
 
 import (
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -95,6 +98,42 @@ func TestBuildFileLogCommandUsesProjectRelativePath(t *testing.T) {
 	wantLastArg := "/work/app/.devserver/frontend.log"
 	if got := args[len(args)-1]; got != wantLastArg {
 		t.Fatalf("last arg = %q, want %q", got, wantLastArg)
+	}
+}
+
+func TestFileLogRouteRunningUsesSiblingPidFile(t *testing.T) {
+	workDir := t.TempDir()
+	pidPath := filepath.Join(workDir, ".devserver", "backend.pid")
+	if err := os.MkdirAll(filepath.Dir(pidPath), 0o755); err != nil {
+		t.Fatalf("create pid dir: %v", err)
+	}
+	if err := os.WriteFile(pidPath, []byte(strconv.Itoa(os.Getpid())), 0o644); err != nil {
+		t.Fatalf("write pid file: %v", err)
+	}
+
+	project := modelSystem.TbLogProject{LocalProjectPath: workDir}
+	route := modelSystem.TbLogProjectRoute{
+		RouteName:   "后端日志",
+		BuildType:   "file_log",
+		LogFilePath: ".devserver/backend.log",
+	}
+
+	if !fileLogRouteRunning(project, route) {
+		t.Fatalf("expected file log route to be running when sibling pid file points to live process")
+	}
+}
+
+func TestFileLogRouteRunningFalseWithoutPidFile(t *testing.T) {
+	workDir := t.TempDir()
+	project := modelSystem.TbLogProject{LocalProjectPath: workDir}
+	route := modelSystem.TbLogProjectRoute{
+		RouteName:   "后端日志",
+		BuildType:   "file_log",
+		LogFilePath: ".devserver/backend.log",
+	}
+
+	if fileLogRouteRunning(project, route) {
+		t.Fatalf("expected file log route to be stopped without pid file")
 	}
 }
 

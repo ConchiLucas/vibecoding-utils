@@ -1,10 +1,12 @@
 package system
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/flipped-aurora/easy-deploy/server/global"
 	"github.com/flipped-aurora/easy-deploy/server/model/common/response"
@@ -116,6 +118,64 @@ func (a *LogManagerApi) ListDockerServices(c *gin.Context) {
 		return
 	}
 	response.OkWithDetailed(list, "获取成功", c)
+}
+
+func (a *LogManagerApi) ServiceStatusStream(c *gin.Context) {
+	id, err := parseLogManagerProjectID(c)
+	if err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	scope := c.DefaultQuery("scope", "")
+
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no")
+
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+
+	sendStatus := func() bool {
+		list, err := logManagerService.ListDockerServices(uint(id), scope)
+		if err != nil {
+			global.GVA_LOG.Error("日志管理服务状态读取失败", zap.Error(err))
+			c.SSEvent("error", err.Error())
+			return false
+		}
+		payload, err := json.Marshal(list)
+		if err != nil {
+			global.GVA_LOG.Error("日志管理服务状态序列化失败", zap.Error(err))
+			c.SSEvent("error", err.Error())
+			return false
+		}
+		c.SSEvent("status", string(payload))
+		return true
+	}
+
+	first := true
+	c.Stream(func(w io.Writer) bool {
+		select {
+		case <-c.Request.Context().Done():
+			global.GVA_LOG.Warn("客户端断开日志管理状态SSE连接")
+			return false
+		default:
+		}
+		if first {
+			first = false
+			return sendStatus()
+		}
+		select {
+		case <-ticker.C:
+		case <-c.Request.Context().Done():
+			global.GVA_LOG.Warn("客户端断开日志管理状态SSE连接")
+			return false
+		}
+		if !sendStatus() {
+			return false
+		}
+		return true
+	})
 }
 
 func (a *LogManagerApi) ServiceGroupStream(c *gin.Context) {

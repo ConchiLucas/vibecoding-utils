@@ -45,6 +45,7 @@ export interface DockerServiceSummary {
   source: string;
   logFilePath?: string;
   routeType?: 'script' | 'file_log' | 'docker_compose';
+  running?: boolean;
 }
 
 export const getLogProjectPage = (data: any) => {
