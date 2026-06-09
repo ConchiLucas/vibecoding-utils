@@ -267,6 +267,78 @@ func TestGetPathGroupListRepairsLegacyServiceSrcBasePath(t *testing.T) {
 	}
 }
 
+func TestGetPathGroupListRepairsLegacySingleServiceSrcBasePath(t *testing.T) {
+	db := setupGeneratePathGroupTestDB(t)
+	svc := TbGenerateProjectPathService{}
+
+	pathObj := modelSystem.TbGenerateProjectPath{
+		ProjectId:         14,
+		ProjectInstanceId: 14,
+		PathSet:           0,
+		FileUrl:           "c12-mtp-web-service/src/main/java/com/chinaservices/mtp/web/module/btwaybill/controller",
+		FileName:          "{{TableName}}Controller.java",
+		Enabled:           1,
+	}
+	if err := db.Create(&pathObj).Error; err != nil {
+		t.Fatalf("create legacy path: %v", err)
+	}
+
+	groups, err := svc.GetPathGroupList(0, 14)
+	if err != nil {
+		t.Fatalf("get path groups: %v", err)
+	}
+	if len(groups) != 1 {
+		t.Fatalf("len(groups) = %d, want 1", len(groups))
+	}
+	if groups[0].BasePath != "c12-mtp-web-service/src/main/java/com/chinaservices/mtp/web/module/btwaybill" {
+		t.Fatalf("group basePath = %q", groups[0].BasePath)
+	}
+
+	var updatedPath modelSystem.TbGenerateProjectPath
+	if err := db.First(&updatedPath, pathObj.ID).Error; err != nil {
+		t.Fatalf("find updated path: %v", err)
+	}
+	if updatedPath.PathGroupId != int(groups[0].ID) {
+		t.Fatalf("updatedPath.PathGroupId = %d, want %d", updatedPath.PathGroupId, groups[0].ID)
+	}
+}
+
+func TestGetPathGroupListRepairsLegacySingleServiceSqlExtBasePath(t *testing.T) {
+	db := setupGeneratePathGroupTestDB(t)
+	svc := TbGenerateProjectPathService{}
+
+	pathObj := modelSystem.TbGenerateProjectPath{
+		ProjectId:         15,
+		ProjectInstanceId: 15,
+		PathSet:           0,
+		FileUrl:           "c12-mtp-web-service/src/main/resources/sql-ext/bttransport",
+		FileName:          "btWaybill_query_getPageList.sql",
+		Enabled:           1,
+	}
+	if err := db.Create(&pathObj).Error; err != nil {
+		t.Fatalf("create legacy path: %v", err)
+	}
+
+	groups, err := svc.GetPathGroupList(0, 15)
+	if err != nil {
+		t.Fatalf("get path groups: %v", err)
+	}
+	if len(groups) != 1 {
+		t.Fatalf("len(groups) = %d, want 1", len(groups))
+	}
+	if groups[0].BasePath != "c12-mtp-web-service/src/main/resources/sql-ext/bttransport" {
+		t.Fatalf("group basePath = %q", groups[0].BasePath)
+	}
+
+	var updatedPath modelSystem.TbGenerateProjectPath
+	if err := db.First(&updatedPath, pathObj.ID).Error; err != nil {
+		t.Fatalf("find updated path: %v", err)
+	}
+	if updatedPath.PathGroupId != int(groups[0].ID) {
+		t.Fatalf("updatedPath.PathGroupId = %d, want %d", updatedPath.PathGroupId, groups[0].ID)
+	}
+}
+
 func TestDeletePathGroupRejectsExistingPathData(t *testing.T) {
 	db := setupGeneratePathGroupTestDB(t)
 	svc := TbGenerateProjectPathService{}

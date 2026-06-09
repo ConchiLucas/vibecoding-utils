@@ -70,15 +70,16 @@ func TestCopyProjectCopiesCardInstancesPathsModelsAndDbTemplates(t *testing.T) {
 		t.Fatalf("create template group: %v", err)
 	}
 	templatePath := modelSystem.TbGenerateProjectPath{
-		ProjectId:         int(sourceProject.ID),
-		ProjectInstanceId: 0,
-		PathSet:           0,
-		PathSetName:       "模板配置",
-		PathGroupId:       int(templateGroup.ID),
-		FileUrl:           "template/service/src/{{module}}",
-		FileName:          "{{TableName}}Item.java",
-		Enabled:           1,
-		Incremented:       1,
+		ProjectId:           int(sourceProject.ID),
+		ProjectInstanceId:   0,
+		PathSet:             0,
+		PathSetName:         "模板配置",
+		PathGroupId:         int(templateGroup.ID),
+		FileUrl:             "template/service/src/{{module}}",
+		FileName:            "{{TableName}}Item.java",
+		DynamicPlaceholders: `[{"key":"tenantCode","description":"租户编码","value":"pzh"}]`,
+		Enabled:             1,
+		Incremented:         1,
 	}
 	if err := db.Create(&templatePath).Error; err != nil {
 		t.Fatalf("create template path: %v", err)
@@ -118,15 +119,16 @@ func TestCopyProjectCopiesCardInstancesPathsModelsAndDbTemplates(t *testing.T) {
 		t.Fatalf("create instance group: %v", err)
 	}
 	instancePath := modelSystem.TbGenerateProjectPath{
-		ProjectId:         int(sourceInstance.ID),
-		ProjectInstanceId: int(sourceInstance.ID),
-		PathSet:           2,
-		PathSetName:       "实例配置",
-		PathGroupId:       int(instanceGroup.ID),
-		FileUrl:           "instance/service/src/{{module}}",
-		FileName:          "{{TableName}}Controller.java",
-		Enabled:           1,
-		Incremented:       0,
+		ProjectId:           int(sourceInstance.ID),
+		ProjectInstanceId:   int(sourceInstance.ID),
+		PathSet:             2,
+		PathSetName:         "实例配置",
+		PathGroupId:         int(instanceGroup.ID),
+		FileUrl:             "instance/service/src/{{module}}",
+		FileName:            "{{TableName}}Controller.java",
+		DynamicPlaceholders: `[{"key":"${menuCode}","description":"菜单编码","value":"btWaybill"}]`,
+		Enabled:             1,
+		Incremented:         0,
 	}
 	if err := db.Create(&instancePath).Error; err != nil {
 		t.Fatalf("create instance path: %v", err)
@@ -140,10 +142,11 @@ func TestCopyProjectCopiesCardInstancesPathsModelsAndDbTemplates(t *testing.T) {
 	}
 
 	templateType := modelSystem.TbGenerateDbTemplateType{
-		ProjectId: int(sourceProject.ID),
-		TypeName:  "建表",
-		Prompt:    "SQL 提示词",
-		Sort:      5,
+		ProjectId:           int(sourceProject.ID),
+		TypeName:            "建表",
+		Prompt:              "SQL 提示词",
+		DynamicPlaceholders: `[{"key":"companyId","description":"公司 ID","value":"-1"}]`,
+		Sort:                5,
 	}
 	if err := db.Create(&templateType).Error; err != nil {
 		t.Fatalf("create db template type: %v", err)
@@ -188,6 +191,9 @@ func TestCopyProjectCopiesCardInstancesPathsModelsAndDbTemplates(t *testing.T) {
 	if copiedTemplateGroup.ProjectId != int(copiedProject.ID) || copiedTemplateGroup.BasePath != "template/service/src" {
 		t.Fatalf("copied template group = %#v", copiedTemplateGroup)
 	}
+	if copiedTemplatePath.DynamicPlaceholders != templatePath.DynamicPlaceholders {
+		t.Fatalf("copied template path dynamic placeholders = %q, want %q", copiedTemplatePath.DynamicPlaceholders, templatePath.DynamicPlaceholders)
+	}
 	var copiedTemplateModel modelSystem.TbGenerateProjectPathModel
 	if err := db.Where("path_id = ?", copiedTemplatePath.ID).First(&copiedTemplateModel).Error; err != nil {
 		t.Fatalf("find copied template model: %v", err)
@@ -222,6 +228,9 @@ func TestCopyProjectCopiesCardInstancesPathsModelsAndDbTemplates(t *testing.T) {
 	if copiedInstanceGroup.ProjectId != int(copiedInstance.ID) || copiedInstanceGroup.ProjectInstanceId != int(copiedInstance.ID) || copiedInstanceGroup.BasePath != "instance/service/src" {
 		t.Fatalf("copied instance group = %#v", copiedInstanceGroup)
 	}
+	if copiedInstancePath.DynamicPlaceholders != instancePath.DynamicPlaceholders {
+		t.Fatalf("copied instance path dynamic placeholders = %q, want %q", copiedInstancePath.DynamicPlaceholders, instancePath.DynamicPlaceholders)
+	}
 	var copiedInstanceModel modelSystem.TbGenerateProjectPathModel
 	if err := db.Where("path_id = ?", copiedInstancePath.ID).First(&copiedInstanceModel).Error; err != nil {
 		t.Fatalf("find copied instance model: %v", err)
@@ -236,6 +245,9 @@ func TestCopyProjectCopiesCardInstancesPathsModelsAndDbTemplates(t *testing.T) {
 	}
 	if copiedTemplateType.Prompt != "SQL 提示词" {
 		t.Fatalf("copied db template prompt = %q", copiedTemplateType.Prompt)
+	}
+	if copiedTemplateType.DynamicPlaceholders != `[{"key":"companyId","description":"公司 ID","value":"-1"}]` {
+		t.Fatalf("copied db template placeholders = %q", copiedTemplateType.DynamicPlaceholders)
 	}
 	var copiedScript modelSystem.TbGenerateDbTemplateScript
 	if err := db.Where("project_id = ? AND type_id = ?", copiedProject.ID, copiedTemplateType.ID).First(&copiedScript).Error; err != nil {

@@ -2,12 +2,19 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Plus, Copy, ClipboardCopy, Database, FileCode, Edit2, Trash2, Search, Folder, Check, X, Wand2, RefreshCw } from 'lucide-react';
-import { getProjectList, createProject, updateProject, deleteProject, copyProject, generateProjectCode } from '@/api/code_generate_project';
+import { getProjectList, createProject, updateProject, deleteProject, copyProject, generateProjectCode, getProjectInstanceList } from '@/api/code_generate_project';
 import { getDbTemplateScripts, getDbTemplateTypes } from '@/api/db_template';
+import { getPathList } from '@/api/path_model';
 import toast from 'react-hot-toast';
 import ProjectConfigDialog from './ProjectConfigDialog';
 import DbTemplateLibrary from './DbTemplateLibrary';
-import { buildDbTemplateSqlCopyText, buildDbTemplateSqlSection } from './dbTemplateCopy';
+import {
+  buildDbTemplateSqlCopyText,
+  buildDbTemplateSqlSection,
+  mergeDbTemplatePlaceholders,
+  type DbTemplatePlaceholder,
+  type DbTemplatePlaceholderValues,
+} from './dbTemplateCopy';
 import {
   getProjectTypeLabel,
   matchesProjectCardSearch,
@@ -56,7 +63,7 @@ const copyTextToClipboard = async (text: string) => {
   }
 };
 
-const buildDbTemplateSqlSections = async (project: any) => {
+const buildDbTemplateSqlPayload = async (project: any, placeholderValues: DbTemplatePlaceholderValues = {}) => {
   const projectId = Number(project.ID || 0);
   const typeRes: any = await getDbTemplateTypes(projectId);
   const types = Array.isArray(unwrapResponseData(typeRes)) ? unwrapResponseData(typeRes) : [];
@@ -69,11 +76,68 @@ const buildDbTemplateSqlSections = async (project: any) => {
     scripts
       .filter((script: any) => String(script.content || '').trim())
       .forEach((script: any) => {
-        sections.push(buildDbTemplateSqlSection(project, typeObj, script));
+        sections.push(buildDbTemplateSqlSection(project, typeObj, script, placeholderValues));
       });
   }
 
-  return sections;
+  return {
+    sections,
+    placeholders: mergeDbTemplatePlaceholders(types),
+  };
+};
+
+const parseGeneratePathIds = (value: string) => {
+  return String(value || '')
+    .split(',')
+    .map((item) => Number(item.trim()))
+    .filter((id) => id > 0);
+};
+
+const resolveGeneratePathFilter = (instance: any) => {
+  const identity = String(instance?.selectedPathSetIdentity || '').trim();
+  if (identity.startsWith('path-set-0-copy-')) {
+    return {
+      pathSet: 0,
+      pathIds: parseGeneratePathIds(identity.replace('path-set-0-copy-', '')),
+    };
+  }
+  if (identity.startsWith('path-set-')) {
+    const pathSet = Number(identity.replace('path-set-', ''));
+    if (!Number.isNaN(pathSet)) {
+      return { pathSet, pathIds: [] };
+    }
+  }
+  return { pathSet: 0, pathIds: [] };
+};
+
+const buildGenerateCodePlaceholderPayload = async (project: any) => {
+  const templateProjectId = Number(project?.ID || 0);
+  if (!templateProjectId) return { projectInstanceId: 0, pathSet: 0, pathIds: [] as number[], placeholders: [] as DbTemplatePlaceholder[] };
+
+  const instanceRes: any = await getProjectInstanceList(templateProjectId, true);
+  const instances = normalizeProjectRows(unwrapResponseData(instanceRes));
+  const selectedInstanceId = Number(project?.selectedProjectInstanceId || 0);
+  const instance = instances.find((item: any) => Number(item.ID || 0) === selectedInstanceId) || instances[0] || null;
+  const projectInstanceId = Number(instance?.ID || 0);
+  if (!projectInstanceId) return { projectInstanceId: 0, pathSet: 0, pathIds: [] as number[], placeholders: [] as DbTemplatePlaceholder[] };
+
+  const { pathSet, pathIds } = resolveGeneratePathFilter(instance);
+  const pathRes: any = await getPathList(projectInstanceId);
+  const paths = normalizeProjectRows(unwrapResponseData(pathRes))
+    .filter((pathObj: any) => Number(pathObj.enabled || 0) === 1)
+    .filter((pathObj: any) => {
+      if (pathIds.length > 0) {
+        return pathIds.includes(Number(pathObj.ID || 0));
+      }
+      return Number(pathObj.pathSet || 0) === Number(pathSet || 0);
+    });
+
+  return {
+    projectInstanceId,
+    pathSet,
+    pathIds,
+    placeholders: mergeDbTemplatePlaceholders(paths),
+  };
 };
 
 const buildGenerateCodexHandoffText = (result: any) => {
@@ -116,6 +180,13 @@ export default function ProjectDashboard() {
   const [dbSqlPreviewTitle, setDbSqlPreviewTitle] = useState('');
   const [dbSqlPreviewContent, setDbSqlPreviewContent] = useState('');
   const [copyingDbSqlPreview, setCopyingDbSqlPreview] = useState(false);
+  const [dbPlaceholderProject, setDbPlaceholderProject] = useState<any | null>(null);
+  const [dbPlaceholderRows, setDbPlaceholderRows] = useState<DbTemplatePlaceholder[]>([]);
+  const [applyingDbPlaceholders, setApplyingDbPlaceholders] = useState(false);
+  const [generatePlaceholderProject, setGeneratePlaceholderProject] = useState<any | null>(null);
+  const [generatePlaceholderRows, setGeneratePlaceholderRows] = useState<DbTemplatePlaceholder[]>([]);
+  const [generatePlaceholderMeta, setGeneratePlaceholderMeta] = useState<{ projectInstanceId: number; pathSet: number; pathIds: number[] } | null>(null);
+  const [applyingGeneratePlaceholders, setApplyingGeneratePlaceholders] = useState(false);
   const [selectedBusinessType, setSelectedBusinessType] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [editingBusinessType, setEditingBusinessType] = useState<string | null>(null);
@@ -351,6 +422,45 @@ export default function ProjectDashboard() {
     if (generatingTemplateProjectId) return;
     setGenerateProject(null);
     setGenerateResult(null);
+    setGeneratePlaceholderProject(null);
+    setGeneratePlaceholderRows([]);
+    setGeneratePlaceholderMeta(null);
+  };
+
+  const runGenerateCode = async (
+    project: any,
+    placeholderValues: DbTemplatePlaceholderValues = {},
+    meta?: { projectInstanceId: number; pathSet: number; pathIds: number[] } | null,
+  ) => {
+    const templateProjectId = Number(project?.ID || 0);
+    const module = generateDraft.module.trim();
+    const tableName = generateDraft.tableName.trim();
+
+    setGeneratingTemplateProjectId(templateProjectId);
+    try {
+      const res: any = await generateProjectCode({
+        templateProjectId,
+        projectInstanceId: Number(meta?.projectInstanceId || 0),
+        pathSet: Number(meta?.pathSet || 0),
+        pathIds: Array.isArray(meta?.pathIds) ? meta?.pathIds : [],
+        module,
+        tableName,
+        overwrite: generateDraft.overwrite,
+        placeholderValues,
+      });
+      if (typeof res?.code !== 'undefined' && Number(res.code) !== 0) {
+        throw new Error(res.msg || 'generate failed');
+      }
+      const result = unwrapResponseData(res);
+      setGenerateResult(result);
+      toast.success(`Codex 任务已准备：${Number((result?.files || []).length)} 个目标文件`);
+      return true;
+    } catch (e) {
+      toast.error('生成代码失败');
+      return false;
+    } finally {
+      setGeneratingTemplateProjectId(null);
+    }
   };
 
   const handleGenerateCode = async () => {
@@ -370,20 +480,20 @@ export default function ProjectDashboard() {
 
     setGeneratingTemplateProjectId(templateProjectId);
     try {
-      const res: any = await generateProjectCode({
-        templateProjectId,
-        module,
-        tableName,
-        overwrite: generateDraft.overwrite,
-      });
-      if (typeof res?.code !== 'undefined' && Number(res.code) !== 0) {
-        throw new Error(res.msg || 'generate failed');
+      const payload = await buildGenerateCodePlaceholderPayload(generateProject);
+      if (payload.placeholders.length > 0) {
+        setGeneratePlaceholderProject(generateProject);
+        setGeneratePlaceholderRows(payload.placeholders.map((item) => ({ ...item })));
+        setGeneratePlaceholderMeta({
+          projectInstanceId: payload.projectInstanceId,
+          pathSet: payload.pathSet,
+          pathIds: payload.pathIds,
+        });
+        return;
       }
-      const result = unwrapResponseData(res);
-      setGenerateResult(result);
-      toast.success(`Codex 任务已准备：${Number((result?.files || []).length)} 个目标文件`);
+      await runGenerateCode(generateProject, {}, payload);
     } catch (e) {
-      toast.error('生成代码失败');
+      toast.error('读取动态占位符失败');
     } finally {
       setGeneratingTemplateProjectId(null);
     }
@@ -395,22 +505,71 @@ export default function ProjectDashboard() {
 
     setCopyingTemplateProjectId(projectId);
     try {
-      const sections = await buildDbTemplateSqlSections(project);
+      const { sections, placeholders } = await buildDbTemplateSqlPayload(project);
 
       if (sections.length === 0) {
         toast.error('该项目暂无可复制的 SQL 内容');
         return;
       }
 
-      const copyText = buildDbTemplateSqlCopyText(sections);
-      await copyTextToClipboard(copyText);
-      setDbSqlPreviewTitle(project.projectName || `Project ${projectId}`);
-      setDbSqlPreviewContent(copyText);
-      setDbSqlPreviewOpen(true);
-      toast.success('数据库模板 SQL 已复制');
+      if (placeholders.length > 0) {
+        setDbPlaceholderProject(project);
+        setDbPlaceholderRows(placeholders.map((item) => ({ ...item })));
+        return;
+      }
+
+      await openDbSqlPreview(project, sections);
     } catch (e) {
       toast.error('复制数据库模板失败');
     } finally {
+      setCopyingTemplateProjectId(null);
+    }
+  };
+
+  const openDbSqlPreview = async (project: any, sections: string[]) => {
+    const projectId = Number(project?.ID || 0);
+    const copyText = buildDbTemplateSqlCopyText(sections);
+    await copyTextToClipboard(copyText);
+    setDbSqlPreviewTitle(project?.projectName || `Project ${projectId}`);
+    setDbSqlPreviewContent(copyText);
+    setDbSqlPreviewOpen(true);
+    toast.success('数据库模板 SQL 已复制');
+  };
+
+  const updateDbPlaceholderRow = (index: number, value: string) => {
+    setDbPlaceholderRows((rows) => rows.map((row, rowIndex) => rowIndex === index ? { ...row, value } : row));
+  };
+
+  const closeDbPlaceholderDialog = () => {
+    if (applyingDbPlaceholders) return;
+    setDbPlaceholderProject(null);
+    setDbPlaceholderRows([]);
+  };
+
+  const handleApplyDbPlaceholders = async () => {
+    if (!dbPlaceholderProject) return;
+    const projectId = Number(dbPlaceholderProject.ID || 0);
+    const values = dbPlaceholderRows.reduce<DbTemplatePlaceholderValues>((next, row) => {
+      const key = String(row.key || '').trim();
+      if (key) next[key] = String(row.value ?? '');
+      return next;
+    }, {});
+
+    setApplyingDbPlaceholders(true);
+    setCopyingTemplateProjectId(projectId);
+    try {
+      const { sections } = await buildDbTemplateSqlPayload(dbPlaceholderProject, values);
+      if (sections.length === 0) {
+        toast.error('该项目暂无可复制的 SQL 内容');
+        return;
+      }
+      await openDbSqlPreview(dbPlaceholderProject, sections);
+      setDbPlaceholderProject(null);
+      setDbPlaceholderRows([]);
+    } catch (e) {
+      toast.error('复制数据库模板失败');
+    } finally {
+      setApplyingDbPlaceholders(false);
       setCopyingTemplateProjectId(null);
     }
   };
@@ -425,6 +584,40 @@ export default function ProjectDashboard() {
       toast.error('复制数据库模板失败');
     } finally {
       setCopyingDbSqlPreview(false);
+    }
+  };
+
+  const updateGeneratePlaceholderRow = (index: number, value: string) => {
+    setGeneratePlaceholderRows((rows) => rows.map((row, rowIndex) => rowIndex === index ? { ...row, value } : row));
+  };
+
+  const closeGeneratePlaceholderDialog = () => {
+    if (applyingGeneratePlaceholders) return;
+    setGeneratePlaceholderProject(null);
+    setGeneratePlaceholderRows([]);
+    setGeneratePlaceholderMeta(null);
+  };
+
+  const handleApplyGeneratePlaceholders = async () => {
+    if (!generatePlaceholderProject) return;
+    const values = generatePlaceholderRows.reduce<DbTemplatePlaceholderValues>((next, row) => {
+      const key = String(row.key || '').trim();
+      if (key) next[key] = String(row.value ?? '');
+      return next;
+    }, {});
+
+    setApplyingGeneratePlaceholders(true);
+    try {
+      const ok = await runGenerateCode(generatePlaceholderProject, values, generatePlaceholderMeta);
+      if (ok) {
+        setGeneratePlaceholderProject(null);
+        setGeneratePlaceholderRows([]);
+        setGeneratePlaceholderMeta(null);
+      }
+    } catch (e) {
+      toast.error('生成代码失败');
+    } finally {
+      setApplyingGeneratePlaceholders(false);
     }
   };
 
@@ -1025,6 +1218,178 @@ export default function ProjectDashboard() {
                   className="px-5 py-2.5 bg-slate-800 hover:bg-slate-900 text-white rounded-lg transition-colors font-medium shadow-lg shadow-slate-900/20 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {savingProject ? '保存中...' : '保存设置'}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {generatePlaceholderProject && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm"
+              onClick={closeGeneratePlaceholderDialog}
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative flex max-h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-lg bg-white shadow-2xl"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-5">
+                <div className="min-w-0">
+                  <div className="text-xs font-bold uppercase tracking-wider text-teal-600">代码生成动态占位符</div>
+                  <h2 className="mt-1 truncate text-xl font-bold text-slate-900" title={generatePlaceholderProject.projectName || ''}>
+                    {generatePlaceholderProject.projectName || '代码生成'}
+                  </h2>
+                </div>
+                <button
+                  type="button"
+                  onClick={closeGeneratePlaceholderDialog}
+                  disabled={applyingGeneratePlaceholders}
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+                  title="关闭"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              <div className="min-h-0 flex-1 overflow-y-auto p-6">
+                <div className="overflow-hidden rounded-lg border border-slate-200">
+                  <div className="grid grid-cols-[minmax(140px,0.8fr)_minmax(200px,1.2fr)_minmax(220px,1.4fr)] border-b border-slate-200 bg-slate-50 text-sm font-bold text-slate-600">
+                    <div className="px-4 py-3">占位符 key</div>
+                    <div className="px-4 py-3">描述</div>
+                    <div className="px-4 py-3">value</div>
+                  </div>
+                  {generatePlaceholderRows.map((row, index) => (
+                    <div
+                      key={`${row.key}-${index}`}
+                      className="grid grid-cols-[minmax(140px,0.8fr)_minmax(200px,1.2fr)_minmax(220px,1.4fr)] items-center border-b border-slate-100 last:border-b-0"
+                    >
+                      <div className="break-all px-4 py-3 font-mono text-sm font-bold text-slate-700">{row.key}</div>
+                      <div className="px-4 py-3 text-sm font-medium text-slate-500">{row.description || '-'}</div>
+                      <div className="p-2">
+                        <input
+                          value={row.value || ''}
+                          onChange={(event) => updateGeneratePlaceholderRow(index, event.target.value)}
+                          className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 font-mono text-sm font-semibold text-slate-900 outline-none transition focus:border-teal-400 focus:bg-white focus:ring-2 focus:ring-teal-500/20"
+                          autoFocus={index === 0}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-3 border-t border-slate-200 bg-white px-6 py-4">
+                <button
+                  type="button"
+                  onClick={closeGeneratePlaceholderDialog}
+                  disabled={applyingGeneratePlaceholders}
+                  className="rounded-lg px-5 py-2.5 text-sm font-bold text-slate-600 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  onClick={handleApplyGeneratePlaceholders}
+                  disabled={applyingGeneratePlaceholders}
+                  className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-5 py-2.5 text-sm font-bold text-white shadow-lg shadow-slate-900/15 transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {applyingGeneratePlaceholders ? <RefreshCw size={16} className="animate-spin" /> : <Wand2 size={16} />}
+                  生成代码
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {dbPlaceholderProject && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm"
+              onClick={closeDbPlaceholderDialog}
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative flex max-h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-lg bg-white shadow-2xl"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-5">
+                <div className="min-w-0">
+                  <div className="text-xs font-bold uppercase tracking-wider text-emerald-600">动态占位符</div>
+                  <h2 className="mt-1 truncate text-xl font-bold text-slate-900" title={dbPlaceholderProject.projectName || ''}>
+                    {dbPlaceholderProject.projectName || '数据库模板 SQL'}
+                  </h2>
+                </div>
+                <button
+                  type="button"
+                  onClick={closeDbPlaceholderDialog}
+                  disabled={applyingDbPlaceholders}
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+                  title="关闭"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              <div className="min-h-0 flex-1 overflow-y-auto p-6">
+                <div className="overflow-hidden rounded-lg border border-slate-200">
+                  <div className="grid grid-cols-[minmax(140px,0.8fr)_minmax(200px,1.2fr)_minmax(220px,1.4fr)] border-b border-slate-200 bg-slate-50 text-sm font-bold text-slate-600">
+                    <div className="px-4 py-3">占位符 key</div>
+                    <div className="px-4 py-3">描述</div>
+                    <div className="px-4 py-3">value</div>
+                  </div>
+                  {dbPlaceholderRows.map((row, index) => (
+                    <div
+                      key={`${row.key}-${index}`}
+                      className="grid grid-cols-[minmax(140px,0.8fr)_minmax(200px,1.2fr)_minmax(220px,1.4fr)] items-center border-b border-slate-100 last:border-b-0"
+                    >
+                      <div className="break-all px-4 py-3 font-mono text-sm font-bold text-slate-700">{row.key}</div>
+                      <div className="px-4 py-3 text-sm font-medium text-slate-500">{row.description || '-'}</div>
+                      <div className="p-2">
+                        <input
+                          value={row.value || ''}
+                          onChange={(event) => updateDbPlaceholderRow(index, event.target.value)}
+                          className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 font-mono text-sm font-semibold text-slate-900 outline-none transition focus:border-emerald-400 focus:bg-white focus:ring-2 focus:ring-emerald-500/20"
+                          autoFocus={index === 0}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-3 border-t border-slate-200 bg-white px-6 py-4">
+                <button
+                  type="button"
+                  onClick={closeDbPlaceholderDialog}
+                  disabled={applyingDbPlaceholders}
+                  className="rounded-lg px-5 py-2.5 text-sm font-bold text-slate-600 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  onClick={handleApplyDbPlaceholders}
+                  disabled={applyingDbPlaceholders}
+                  className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-5 py-2.5 text-sm font-bold text-white shadow-lg shadow-slate-900/15 transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {applyingDbPlaceholders ? <RefreshCw size={16} className="animate-spin" /> : <ClipboardCopy size={16} />}
+                  生成复制结果
                 </button>
               </div>
             </motion.div>

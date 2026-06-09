@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowRight, Check, Copy, Edit2, FileCode, Folder, Plus, RefreshCw, Save, Search, Trash2, Wand2, X } from 'lucide-react';
+import { ArrowRight, Braces, Check, Copy, Edit2, FileCode, Folder, Plus, RefreshCw, Save, Search, Trash2, Wand2, X } from 'lucide-react';
 import Editor from '@monaco-editor/react';
 import toast from 'react-hot-toast';
 import { getPathGroupDeleteState, getPathGroupSwitchOptions } from './pathGroupActions';
@@ -30,6 +30,11 @@ import {
   updatePathGroup,
   updatePathEnabled,
 } from '@/api/path_model';
+import {
+  parseDbTemplatePlaceholders,
+  stringifyDbTemplatePlaceholders,
+  type DbTemplatePlaceholder,
+} from './dbTemplateCopy';
 
 const unwrapResponseData = (res: any) => {
   return res?.data?.data ?? res?.data ?? [];
@@ -52,6 +57,7 @@ const emptyPathDraft = (projectId: number) => ({
   pathSet: 0,
   fileUrl: '',
   fileName: '',
+  dynamicPlaceholders: '',
   enabled: 1,
   incremented: 0,
 });
@@ -522,6 +528,8 @@ export default function ProjectConfigDialog({
   const [promptSummaryPath, setPromptSummaryPath] = useState<any | null>(null);
   const [promptModel, setPromptModel] = useState<any | null>(null);
   const [promptDraft, setPromptDraft] = useState('');
+  const [placeholderPath, setPlaceholderPath] = useState<any | null>(null);
+  const [placeholderRows, setPlaceholderRows] = useState<DbTemplatePlaceholder[]>([]);
   const [loadingProjects, setLoadingProjects] = useState(false);
   const [loadingPaths, setLoadingPaths] = useState(false);
   const [savingProject, setSavingProject] = useState(false);
@@ -531,6 +539,7 @@ export default function ProjectConfigDialog({
   const [savingContent, setSavingContent] = useState(false);
   const [loadingPrompt, setLoadingPrompt] = useState(false);
   const [savingPrompt, setSavingPrompt] = useState(false);
+  const [savingPlaceholders, setSavingPlaceholders] = useState(false);
   const [savingPathGroupKey, setSavingPathGroupKey] = useState<string | null>(null);
   const [savingPathSetNameKey, setSavingPathSetNameKey] = useState<string | null>(null);
   const [copyingPathSet, setCopyingPathSet] = useState<number | null>(null);
@@ -1124,6 +1133,53 @@ export default function ProjectConfigDialog({
       toast.error('保存相对路径失败');
     } finally {
       setSavingPath(false);
+    }
+  };
+
+  const openPathPlaceholderDialog = (pathObj: any) => {
+    setPlaceholderPath(pathObj);
+    setPlaceholderRows(parseDbTemplatePlaceholders(pathObj?.dynamicPlaceholders));
+  };
+
+  const addPathPlaceholderRow = () => {
+    setPlaceholderRows((rows) => [...rows, { key: '', description: '', value: '' }]);
+  };
+
+  const updatePathPlaceholderRow = (index: number, patch: Partial<DbTemplatePlaceholder>) => {
+    setPlaceholderRows((rows) => rows.map((row, rowIndex) => rowIndex === index ? { ...row, ...patch } : row));
+  };
+
+  const removePathPlaceholderRow = (index: number) => {
+    setPlaceholderRows((rows) => rows.filter((_, rowIndex) => rowIndex !== index));
+  };
+
+  const closePathPlaceholderDialog = () => {
+    if (savingPlaceholders) return;
+    setPlaceholderPath(null);
+    setPlaceholderRows([]);
+  };
+
+  const savePathPlaceholders = async () => {
+    if (!placeholderPath?.ID) return;
+    setSavingPlaceholders(true);
+    try {
+      const dynamicPlaceholders = stringifyDbTemplatePlaceholders(placeholderRows);
+      await updatePath({
+        ...placeholderPath,
+        dynamicPlaceholders,
+      });
+      setPaths((rows) => rows.map((pathObj) => (
+        Number(pathObj.ID || 0) === Number(placeholderPath.ID || 0)
+          ? { ...pathObj, dynamicPlaceholders }
+          : pathObj
+      )));
+      setPlaceholderPath(null);
+      setPlaceholderRows([]);
+      toast.success('动态占位符已保存');
+    } catch (e) {
+      toast.error('保存动态占位符失败');
+    } finally {
+      setSavingPlaceholders(false);
     }
   };
 
@@ -1940,7 +1996,7 @@ export default function ProjectConfigDialog({
               </div>
             ) : (
               <div className="overflow-hidden rounded-lg border border-gray-200">
-                <div className="grid grid-cols-[minmax(520px,3fr)_minmax(220px,1fr)_120px_172px] border-b border-gray-200 bg-gray-50 px-4 py-2 text-xs font-bold uppercase text-gray-400">
+                <div className="grid grid-cols-[minmax(520px,3fr)_minmax(220px,1fr)_120px_212px] border-b border-gray-200 bg-gray-50 px-4 py-2 text-xs font-bold uppercase text-gray-400">
                   <div>剩余父级</div>
                   <div>文件路径</div>
                   <div>状态</div>
@@ -1956,7 +2012,7 @@ export default function ProjectConfigDialog({
                         key={pathObj.ID}
                         data-testid="path-row"
                         onClick={() => openEditPath(pathObj)}
-                        className={`grid w-full cursor-pointer grid-cols-[minmax(520px,3fr)_minmax(220px,1fr)_120px_172px] items-center gap-3 px-4 py-3 text-left transition-colors ${active ? 'bg-gray-900 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'}`}
+                        className={`grid w-full cursor-pointer grid-cols-[minmax(520px,3fr)_minmax(220px,1fr)_120px_212px] items-center gap-3 px-4 py-3 text-left transition-colors ${active ? 'bg-gray-900 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'}`}
                       >
                         <div className="min-w-0">
                           <div className={`mb-1 flex items-center gap-1.5 text-xs font-bold ${active ? 'text-white/60' : 'text-gray-400'}`}>
@@ -2016,6 +2072,17 @@ export default function ProjectConfigDialog({
                           <span className={`flex h-8 w-8 items-center justify-center rounded-lg ${active ? 'bg-white/10 text-white' : 'text-gray-400'}`} title="编辑路径">
                             <Edit2 size={14} />
                           </span>
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              openPathPlaceholderDialog(pathObj);
+                            }}
+                            className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${active ? 'text-white/70 hover:bg-white/10 hover:text-white' : 'text-gray-300 hover:bg-violet-50 hover:text-violet-700'}`}
+                            title="动态占位符"
+                          >
+                            <Braces size={14} />
+                          </button>
                           <button
                             type="button"
                             onClick={(event) => {
@@ -2372,6 +2439,114 @@ export default function ProjectConfigDialog({
               >
                 {savingPathGroup ? <RefreshCw size={18} className="animate-spin" /> : <Save size={18} />}
                 保存路径
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {placeholderPath && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm">
+          <div className="flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-xl border border-white/10 bg-[#1f1f1f] text-gray-100 shadow-2xl">
+            <div className="flex items-start justify-between gap-4 border-b border-white/10 bg-[#111111] px-7 py-5">
+              <div className="min-w-0">
+                <h4 className="text-xl font-extrabold text-white">动态占位符</h4>
+                <p className="mt-1 truncate font-mono text-sm font-bold text-gray-400" title={formatPathLabel(placeholderPath || {})}>
+                  {formatPathLabel(placeholderPath || {})}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closePathPlaceholderDialog}
+                disabled={savingPlaceholders}
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-gray-400 transition-colors hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+                title="关闭"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-y-auto bg-[#242424] px-7 py-6">
+              <div className="overflow-hidden rounded-lg border border-white/15">
+                <div className="grid grid-cols-[minmax(160px,0.9fr)_minmax(180px,1.2fr)_minmax(180px,1.2fr)_48px] border-b border-white/15 bg-[#171717] text-sm font-extrabold text-gray-400">
+                  <div className="px-4 py-3">占位符 key</div>
+                  <div className="px-4 py-3">描述</div>
+                  <div className="px-4 py-3">默认 value</div>
+                  <div />
+                </div>
+                {placeholderRows.length === 0 ? (
+                  <div className="px-4 py-8 text-center text-sm font-bold text-gray-500">暂无占位符</div>
+                ) : placeholderRows.map((row, index) => (
+                  <div
+                    key={`${row.key}-${index}`}
+                    className="grid grid-cols-[minmax(160px,0.9fr)_minmax(180px,1.2fr)_minmax(180px,1.2fr)_48px] items-center border-b border-white/10 last:border-b-0"
+                  >
+                    <div className="p-2">
+                      <input
+                        value={row.key || ''}
+                        onChange={(event) => updatePathPlaceholderRow(index, { key: event.target.value })}
+                        className="w-full rounded-lg border border-white/15 bg-[#111111] px-3 py-2 font-mono text-sm font-bold text-white outline-none transition placeholder:text-gray-600 focus:border-teal-400 focus:ring-2 focus:ring-teal-500/20"
+                        placeholder="menu_parent_id"
+                        autoFocus={index === 0}
+                      />
+                    </div>
+                    <div className="p-2">
+                      <input
+                        value={row.description || ''}
+                        onChange={(event) => updatePathPlaceholderRow(index, { description: event.target.value })}
+                        className="w-full rounded-lg border border-white/15 bg-[#111111] px-3 py-2 text-sm font-bold text-white outline-none transition placeholder:text-gray-600 focus:border-teal-400 focus:ring-2 focus:ring-teal-500/20"
+                        placeholder="菜单父级 id"
+                      />
+                    </div>
+                    <div className="p-2">
+                      <input
+                        value={row.value || ''}
+                        onChange={(event) => updatePathPlaceholderRow(index, { value: event.target.value })}
+                        className="w-full rounded-lg border border-white/15 bg-[#111111] px-3 py-2 font-mono text-sm font-bold text-white outline-none transition placeholder:text-gray-600 focus:border-teal-400 focus:ring-2 focus:ring-teal-500/20"
+                        placeholder="2063000000000000004"
+                      />
+                    </div>
+                    <div className="flex justify-center p-2">
+                      <button
+                        type="button"
+                        onClick={() => removePathPlaceholderRow(index)}
+                        className="flex h-9 w-9 items-center justify-center rounded-lg text-gray-400 transition-colors hover:bg-red-500/10 hover:text-red-300"
+                        title="删除"
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <button
+                type="button"
+                onClick={addPathPlaceholderRow}
+                className="mt-4 inline-flex items-center gap-2 rounded-lg border border-white/15 px-4 py-2 text-sm font-extrabold text-gray-100 transition-colors hover:bg-white/10"
+              >
+                <Plus size={15} />
+                新增占位符
+              </button>
+            </div>
+
+            <div className="flex justify-end gap-2 border-t border-white/10 bg-[#171717] px-7 py-5">
+              <button
+                type="button"
+                onClick={closePathPlaceholderDialog}
+                disabled={savingPlaceholders}
+                className="rounded-lg px-5 py-2.5 text-sm font-extrabold text-gray-300 transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={savePathPlaceholders}
+                disabled={savingPlaceholders}
+                className="inline-flex items-center gap-2 rounded-lg bg-[#0f172a] px-5 py-2.5 text-sm font-extrabold text-white transition-colors hover:bg-[#111c34] disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {savingPlaceholders ? <RefreshCw size={16} className="animate-spin" /> : <Save size={16} />}
+                保存
               </button>
             </div>
           </div>

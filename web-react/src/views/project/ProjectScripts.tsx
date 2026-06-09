@@ -1,19 +1,36 @@
 import React, { useEffect, useState } from 'react';
-import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import { useParams, useLocation } from 'react-router-dom';
 import { getScriptPage, deleteScript, previewScriptFile, saveOrUpdateScript } from '../../api/script';
 import { getProjectById } from '../../api/project';
 import Editor from '@monaco-editor/react';
 import toast from 'react-hot-toast';
-import { FileCode, File, Trash2, ArrowLeft, Save, RefreshCw, Plus } from 'lucide-react';
+import { FileCode, File, Trash2, Save, RefreshCw, Plus, X } from 'lucide-react';
 import clsx from 'clsx';
 
-export default function ProjectScripts() {
-  const { projectId } = useParams();
-  const navigate = useNavigate();
+type ProjectScriptsProps = {
+  projectIdOverride?: number | string;
+  routeIdOverride?: number | string;
+  projectName?: string;
+  routeName?: string;
+  fullscreenDialog?: boolean;
+  onClose?: () => void;
+};
+
+export default function ProjectScripts({
+  projectIdOverride,
+  routeIdOverride,
+  projectName,
+  routeName,
+  fullscreenDialog = false,
+  onClose,
+}: ProjectScriptsProps = {}) {
+  const { projectId: routeProjectId } = useParams();
   const location = useLocation();
   const query = new URLSearchParams(location.search);
   const routeIdParam = query.get('routeId');
-  const routeId = routeIdParam ? parseInt(routeIdParam) : 0;
+  const projectId = String(projectIdOverride ?? routeProjectId ?? '');
+  const parsedProjectId = Number(projectId || 0);
+  const routeId = Number(routeIdOverride ?? routeIdParam ?? 0) || 0;
 
   const [projectInfo, setProjectInfo] = useState<any>(null);
   const [scripts, setScripts] = useState<any[]>([]);
@@ -28,8 +45,9 @@ export default function ProjectScripts() {
   const [scriptToDelete, setScriptToDelete] = useState<any>(null);
 
   const fetchProjectInfo = async () => {
+    if (!projectId) return;
     try {
-      const res: any = await getProjectById(projectId as string);
+      const res: any = await getProjectById(projectId);
       if (res.code === 0) setProjectInfo(res.data);
     } catch (e) {
       console.warn("Could not fetch project info");
@@ -37,9 +55,10 @@ export default function ProjectScripts() {
   };
 
   const fetchScripts = async () => {
+    if (!parsedProjectId) return [];
     setLoadingList(true);
     try {
-      const res: any = await getScriptPage({ page: 1, pageSize: 100, projectId: parseInt(projectId as string), routeId });
+      const res: any = await getScriptPage({ page: 1, pageSize: 100, projectId: parsedProjectId, routeId });
       if (res.code === 0) {
         const list = res.data?.list || [];
         setScripts(list);
@@ -54,18 +73,36 @@ export default function ProjectScripts() {
   };
 
   const startNewScript = () => {
-    const dummy = { ID: 0, projectId: parseInt(projectId as string), routeId: routeId, fileName: 'untitled.sh', scriptType: 0, content: '' };
+    if (!parsedProjectId) return;
+    const dummy = { ID: 0, projectId: parsedProjectId, routeId: routeId, fileName: 'untitled.sh', scriptType: 0, content: '' };
     setActiveScript(dummy);
     setFileNameInput('untitled.sh');
     setCodeContent('');
   };
 
   useEffect(() => {
-    if (projectId) {
+    setProjectInfo(null);
+    setScripts([]);
+    setActiveScript(null);
+    setCodeContent('');
+    setFileNameInput('');
+    if (parsedProjectId) {
       fetchProjectInfo();
       fetchScripts();
     }
-  }, [projectId]);
+  }, [projectId, routeId]);
+
+  useEffect(() => {
+    if (!fullscreenDialog) return;
+    const previousBodyOverflow = document.body.style.overflow;
+    const previousHtmlOverflow = document.documentElement.style.overflow;
+    document.body.style.overflow = 'hidden';
+    document.documentElement.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = previousBodyOverflow;
+      document.documentElement.style.overflow = previousHtmlOverflow;
+    };
+  }, [fullscreenDialog]);
 
   useEffect(() => {
     // 自动选中第一个脚本（初始加载，或唯一高亮项被删除后）
@@ -145,7 +182,7 @@ export default function ProjectScripts() {
     try {
       const payload = {
         ID: activeScript.ID || 0,
-        projectId: parseInt(projectId as string),
+        projectId: parsedProjectId,
         routeId: routeId,
         fileName: fileNameInput.trim(),
         scriptType: activeScript.scriptType || 0,
@@ -191,18 +228,28 @@ export default function ProjectScripts() {
     return s.fileName.toLowerCase().includes(lowerQ) || (s.content && s.content.includes(searchTerm));
   });
 
-  return (
-    <div className="flex w-full h-[calc(100vh-140px)] border border-gray-200 rounded-xl overflow-hidden bg-white shadow-sm mt-2 animate-in fade-in duration-300">
+  const displayProjectName = projectInfo?.projectName || projectName || '资源加载中...';
+  const routeSubtitle = routeName ? `部署路线 · ${routeName}` : '文件管理器';
+
+  const content = (
+    <div
+      className={clsx(
+        'flex w-full overflow-hidden bg-white animate-in fade-in duration-300',
+        fullscreenDialog
+          ? 'h-full'
+          : 'mt-2 h-[calc(100vh-140px)] rounded-xl border border-gray-200 shadow-sm'
+      )}
+    >
       
       {/* Left Sidebar: Scripts Explorer */}
       <div className="w-80 border-r border-gray-200 flex flex-col bg-gray-50 flex-shrink-0">
          <div className="p-4 border-b border-gray-200 bg-white">
            <div className="flex items-start justify-between gap-3">
              <div className="min-w-0">
-               <h2 className="text-lg font-bold text-gray-900 truncate" title={projectInfo?.projectName || '文件列表'}>
-                 {projectInfo?.projectName || '资源加载中...'}
+               <h2 className="text-lg font-bold text-gray-900 truncate" title={displayProjectName}>
+                 {displayProjectName}
                </h2>
-               <p className="text-xs text-gray-500 font-mono mt-1">文件管理器</p>
+               <p className="text-xs text-gray-500 font-mono mt-1 truncate" title={routeSubtitle}>{routeSubtitle}</p>
              </div>
              <button
                type="button"
@@ -345,6 +392,40 @@ export default function ProjectScripts() {
         </div>
       )}
 
+    </div>
+  );
+
+  if (!fullscreenDialog) {
+    return content;
+  }
+
+  return (
+    <div data-testid="project-scripts-dialog" className="fixed inset-0 z-[100] flex flex-col overflow-hidden bg-white text-gray-900">
+      <div className="flex h-16 shrink-0 items-center justify-between gap-4 border-b border-gray-200 bg-white px-6">
+        <div className="flex min-w-0 items-center gap-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-blue-200 bg-blue-50 text-blue-600">
+            <FileCode size={18} />
+          </div>
+          <div className="min-w-0">
+            <h3 className="truncate text-lg font-extrabold text-gray-950">脚本库</h3>
+            <p className="mt-0.5 truncate text-xs text-gray-400" title={`${displayProjectName} · ${routeSubtitle}`}>
+              {displayProjectName} · {routeSubtitle}
+            </p>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-400 transition-colors hover:bg-gray-50 hover:text-gray-900"
+          title="关闭"
+          aria-label="关闭脚本库"
+        >
+          <X size={18} />
+        </button>
+      </div>
+      <div className="min-h-0 flex-1">
+        {content}
+      </div>
     </div>
   );
 }

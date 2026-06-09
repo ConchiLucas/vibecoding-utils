@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import Editor from '@monaco-editor/react';
-import { ArrowLeft, Database, Edit2, Plus, RefreshCw, Save, Trash2, X } from 'lucide-react';
+import { ArrowLeft, Braces, Database, Edit2, Plus, RefreshCw, Save, Trash2, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import clsx from 'clsx';
 import {
@@ -15,6 +15,7 @@ import {
   updateDbTemplateType,
 } from '@/api/db_template';
 import { getProjectList } from '@/api/code_generate_project';
+import { parseDbTemplatePlaceholders, stringifyDbTemplatePlaceholders, type DbTemplatePlaceholder } from './dbTemplateCopy';
 
 const unwrapResponseData = (res: any) => {
   return res?.data?.data ?? res?.data ?? [];
@@ -24,6 +25,7 @@ const emptyType = (projectId: number) => ({
   projectId,
   typeName: '',
   prompt: '',
+  dynamicPlaceholders: '',
   sort: 0,
 });
 
@@ -58,6 +60,9 @@ export default function DbTemplateLibrary({ projectIdOverride, onClose, fullscre
   const [activeType, setActiveType] = useState<any>(null);
   const [typeDraft, setTypeDraft] = useState<any>(emptyType(numericProjectId));
   const [showTypeModal, setShowTypeModal] = useState(false);
+  const [placeholderType, setPlaceholderType] = useState<any>(null);
+  const [placeholderDraft, setPlaceholderDraft] = useState<DbTemplatePlaceholder[]>([]);
+  const [showPlaceholderModal, setShowPlaceholderModal] = useState(false);
   const [loadingTypes, setLoadingTypes] = useState(false);
 
   const [scriptDraft, setScriptDraft] = useState<any>(null);
@@ -132,6 +137,60 @@ export default function DbTemplateLibrary({ projectIdOverride, onClose, fullscre
     setShowTypeModal(true);
   };
 
+  const openPlaceholderEditor = (typeObj: any) => {
+    const list = parseDbTemplatePlaceholders(typeObj?.dynamicPlaceholders);
+    setPlaceholderType(typeObj);
+    setPlaceholderDraft(list.length > 0 ? list : [{ key: '', description: '', value: '' }]);
+    setShowPlaceholderModal(true);
+  };
+
+  const updatePlaceholderRow = (index: number, patch: Partial<DbTemplatePlaceholder>) => {
+    setPlaceholderDraft((rows) => rows.map((row, rowIndex) => rowIndex === index ? { ...row, ...patch } : row));
+  };
+
+  const addPlaceholderRow = () => {
+    setPlaceholderDraft((rows) => [...rows, { key: '', description: '', value: '' }]);
+  };
+
+  const removePlaceholderRow = (index: number) => {
+    setPlaceholderDraft((rows) => rows.filter((_, rowIndex) => rowIndex !== index));
+  };
+
+  const handleSavePlaceholders = async () => {
+    if (!placeholderType?.ID) return;
+    const keys = new Set<string>();
+    const normalized = placeholderDraft
+      .map((row) => ({
+        key: String(row.key || '').trim(),
+        description: String(row.description || '').trim(),
+        value: String(row.value || '').trim(),
+      }))
+      .filter((row) => row.key);
+
+    for (const row of normalized) {
+      if (keys.has(row.key)) {
+        toast.error(`占位符 key 重复：${row.key}`);
+        return;
+      }
+      keys.add(row.key);
+    }
+
+    try {
+      const payload = {
+        ...placeholderType,
+        dynamicPlaceholders: stringifyDbTemplatePlaceholders(normalized),
+      };
+      const res: any = await updateDbTemplateType(payload);
+      const saved = unwrapResponseData(res);
+      toast.success('占位符已保存');
+      setShowPlaceholderModal(false);
+      setPlaceholderType(null);
+      await loadTypes(saved?.ID || placeholderType.ID);
+    } catch (e) {
+      toast.error('保存占位符失败');
+    }
+  };
+
   const handleSaveType = async () => {
     if (!typeDraft.typeName?.trim()) {
       toast.error('业务类型名称不能为空');
@@ -143,6 +202,7 @@ export default function DbTemplateLibrary({ projectIdOverride, onClose, fullscre
         projectId: numericProjectId,
         typeName: typeDraft.typeName.trim(),
         prompt: String(typeDraft.prompt || '').trim(),
+        dynamicPlaceholders: stringifyDbTemplatePlaceholders(typeDraft.dynamicPlaceholders),
       };
       const res: any = payload.ID ? await updateDbTemplateType(payload) : await createDbTemplateType(payload);
       const saved = unwrapResponseData(res);
@@ -292,8 +352,19 @@ export default function DbTemplateLibrary({ projectIdOverride, onClose, fullscre
                           openEditType(typeObj);
                         }}
                         className="rounded-md p-1 text-slate-300 opacity-0 transition hover:bg-cyan-100 hover:text-cyan-700 group-hover:opacity-100"
+                        title="编辑"
                       >
                         <Edit2 size={14} />
+                      </button>
+                      <button
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          openPlaceholderEditor(typeObj);
+                        }}
+                        className="rounded-md p-1 text-slate-300 opacity-0 transition hover:bg-emerald-100 hover:text-emerald-700 group-hover:opacity-100"
+                        title="动态占位符"
+                      >
+                        <Braces size={14} />
                       </button>
                       <button
                         onClick={(event) => {
@@ -414,6 +485,108 @@ export default function DbTemplateLibrary({ projectIdOverride, onClose, fullscre
               </button>
               <button
                 onClick={handleSaveType}
+                className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700"
+              >
+                保存
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showPlaceholderModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4 backdrop-blur-sm">
+          <div className="flex max-h-[92vh] w-full max-w-5xl flex-col rounded-3xl bg-white shadow-2xl">
+            <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-8 py-6">
+              <div className="min-w-0">
+                <h2 className="text-xl font-bold text-slate-800">动态占位符</h2>
+                <p className="mt-1 truncate text-sm font-medium text-slate-500">
+                  {placeholderType?.typeName || '业务类型'}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowPlaceholderModal(false)}
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+                title="关闭"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-y-auto px-8 py-6">
+              <div className="overflow-hidden rounded-2xl border border-slate-200">
+                <div className="grid grid-cols-[minmax(140px,0.9fr)_minmax(180px,1.2fr)_minmax(180px,1.2fr)_48px] border-b border-slate-200 bg-slate-50 text-sm font-bold text-slate-600">
+                  <div className="px-4 py-3">占位符 key</div>
+                  <div className="px-4 py-3">描述</div>
+                  <div className="px-4 py-3">默认 value</div>
+                  <div />
+                </div>
+                {placeholderDraft.length === 0 ? (
+                  <div className="px-4 py-8 text-center text-sm font-medium text-slate-400">暂无占位符</div>
+                ) : (
+                  placeholderDraft.map((row, index) => (
+                    <div
+                      key={index}
+                      className="grid grid-cols-[minmax(140px,0.9fr)_minmax(180px,1.2fr)_minmax(180px,1.2fr)_48px] items-center border-b border-slate-100 last:border-b-0"
+                    >
+                      <div className="p-2">
+                        <input
+                          value={row.key || ''}
+                          onChange={(event) => updatePlaceholderRow(index, { key: event.target.value })}
+                          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 font-mono text-sm outline-none transition focus:border-cyan-400 focus:ring-2 focus:ring-cyan-500/20"
+                          placeholder="companyId"
+                        />
+                      </div>
+                      <div className="p-2">
+                        <input
+                          value={row.description || ''}
+                          onChange={(event) => updatePlaceholderRow(index, { description: event.target.value })}
+                          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none transition focus:border-cyan-400 focus:ring-2 focus:ring-cyan-500/20"
+                          placeholder="公司 ID"
+                        />
+                      </div>
+                      <div className="p-2">
+                        <input
+                          value={row.value || ''}
+                          onChange={(event) => updatePlaceholderRow(index, { value: event.target.value })}
+                          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 font-mono text-sm outline-none transition focus:border-cyan-400 focus:ring-2 focus:ring-cyan-500/20"
+                          placeholder="-1"
+                        />
+                      </div>
+                      <div className="flex justify-center p-2">
+                        <button
+                          type="button"
+                          onClick={() => removePlaceholderRow(index)}
+                          className="flex h-9 w-9 items-center justify-center rounded-xl text-slate-400 transition hover:bg-red-50 hover:text-red-600"
+                          title="删除"
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={addPlaceholderRow}
+                className="mt-4 inline-flex items-center gap-2 rounded-xl border border-slate-200 px-4 py-2 text-sm font-bold text-slate-700 transition hover:bg-slate-50"
+              >
+                <Plus size={15} />
+                新增占位符
+              </button>
+            </div>
+
+            <div className="flex justify-end gap-2 border-t border-slate-200 px-8 py-5">
+              <button
+                onClick={() => setShowPlaceholderModal(false)}
+                className="rounded-xl px-4 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-100"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleSavePlaceholders}
                 className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700"
               >
                 保存

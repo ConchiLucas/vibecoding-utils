@@ -92,6 +92,19 @@ func inferGenerateProjectServiceBasePath(pathObj system.TbGenerateProjectPath) s
 	if len(parts) >= 3 && generatePathServiceRootPattern.MatchString(parts[0]) && generatePathServiceSegmentPattern.MatchString(parts[1]) && parts[2] == "src" {
 		return strings.Join(parts[:3], "/")
 	}
+	if len(parts) >= 2 && generatePathServiceRootPattern.MatchString(parts[0]) && parts[1] == "src" {
+		for index := 2; index+1 < len(parts); index++ {
+			if parts[index] == "module" {
+				return strings.Join(parts[:index+2], "/")
+			}
+		}
+		for index := 2; index+1 < len(parts); index++ {
+			if parts[index] == "sql-ext" {
+				return strings.Join(parts[:index+2], "/")
+			}
+		}
+		return strings.Join(parts[:2], "/")
+	}
 	if len(parts) >= 2 && generatePathServiceRootPattern.MatchString(parts[0]) && generatePathServiceSegmentPattern.MatchString(parts[1]) {
 		return strings.Join(parts[:2], "/")
 	}
@@ -683,15 +696,16 @@ func (s *TbGenerateProjectPathService) CopyPathSet(req systemReq.CopyGeneratePro
 	for _, sourcePath := range sourcePaths {
 		oldPathId := sourcePath.ID
 		newPath := system.TbGenerateProjectPath{
-			ProjectId:         sourcePath.ProjectId,
-			ProjectInstanceId: req.ProjectInstanceId,
-			PathSet:           nextPathSet,
-			PathSetName:       sourcePath.PathSetName,
-			PathGroupId:       groupIdMap[sourcePath.PathGroupId],
-			FileUrl:           sourcePath.FileUrl,
-			FileName:          sourcePath.FileName,
-			Enabled:           sourcePath.Enabled,
-			Incremented:       sourcePath.Incremented,
+			ProjectId:           sourcePath.ProjectId,
+			ProjectInstanceId:   req.ProjectInstanceId,
+			PathSet:             nextPathSet,
+			PathSetName:         sourcePath.PathSetName,
+			PathGroupId:         groupIdMap[sourcePath.PathGroupId],
+			FileUrl:             sourcePath.FileUrl,
+			FileName:            sourcePath.FileName,
+			DynamicPlaceholders: sourcePath.DynamicPlaceholders,
+			Enabled:             sourcePath.Enabled,
+			Incremented:         sourcePath.Incremented,
 		}
 		if newPath.ProjectId == 0 {
 			newPath.ProjectId = req.ProjectId
@@ -763,15 +777,16 @@ func (s *TbGenerateProjectPathService) copyGenerateProjectPathScope(tx *gorm.DB,
 	for _, sourcePath := range sourcePaths {
 		oldPathId := sourcePath.ID
 		newPath := system.TbGenerateProjectPath{
-			ProjectId:         targetProjectId,
-			ProjectInstanceId: targetProjectInstanceId,
-			PathSet:           sourcePath.PathSet,
-			PathSetName:       sourcePath.PathSetName,
-			PathGroupId:       groupIdMap[sourcePath.PathGroupId],
-			FileUrl:           sourcePath.FileUrl,
-			FileName:          sourcePath.FileName,
-			Enabled:           sourcePath.Enabled,
-			Incremented:       sourcePath.Incremented,
+			ProjectId:           targetProjectId,
+			ProjectInstanceId:   targetProjectInstanceId,
+			PathSet:             sourcePath.PathSet,
+			PathSetName:         sourcePath.PathSetName,
+			PathGroupId:         groupIdMap[sourcePath.PathGroupId],
+			FileUrl:             sourcePath.FileUrl,
+			FileName:            sourcePath.FileName,
+			DynamicPlaceholders: sourcePath.DynamicPlaceholders,
+			Enabled:             sourcePath.Enabled,
+			Incremented:         sourcePath.Incremented,
 		}
 		if err := tx.Create(&newPath).Error; err != nil {
 			return err

@@ -62,6 +62,18 @@ func TestRenderCodeGenerationTextReplacesTemplateContentPlaceholders(t *testing.
 	}
 }
 
+func TestRenderCodeGenerationTextReplacesDynamicPlaceholders(t *testing.T) {
+	vars := mergeCodeGenerationPlaceholderValues(buildCodeGenerationVars("btStation", "BtStation"), map[string]string{
+		"{{tenant_code}}": "pzh",
+		"${menuCode}":     "btWaybillList",
+	})
+	got := renderCodeGenerationText("{{tenant_code}}/${menuCode}/{{TableName}}", vars)
+	want := "pzh/btWaybillList/BtStation"
+	if got != want {
+		t.Fatalf("renderCodeGenerationText = %q, want %q", got, want)
+	}
+}
+
 func TestBuildCodeGenerationTaskPromptContentIncludesTargets(t *testing.T) {
 	drafts := []generateProjectCodeDraft{
 		{

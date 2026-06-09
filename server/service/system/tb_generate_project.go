@@ -43,7 +43,10 @@ type GenerateProjectCodeResult struct {
 	Files              []GenerateProjectCodeFile `json:"files"`
 }
 
-var codePlaceholderPattern = regexp.MustCompile(`\{\{\s*([A-Za-z][A-Za-z0-9_]*)\s*\}\}`)
+var (
+	codePlaceholderPattern       = regexp.MustCompile(`\{\{\s*([A-Za-z][A-Za-z0-9_]*)\s*\}\}`)
+	codeDollarPlaceholderPattern = regexp.MustCompile(`\$\{\s*([A-Za-z][A-Za-z0-9_]*)\s*\}`)
+)
 
 const codeGenerationModifyInstructions = `请读取每个目标文件的绝对路径。目标文件当前由代码模板生成，每个文件还有独立的文件提示词，请结合产品文档把模板改造成最终可用代码。生成最终代码时删除模板提示说明，只保留必要的业务注释；package、import、类名、SQL id、字段和方法都按实际模块与项目上下文调整；字段只保留前端或业务真正使用的字段，不要机械罗列数据库所有字段；示例字段只作为结构参考，不符合业务时替换。`
 
@@ -177,7 +180,7 @@ func (s *TbGenerateProjectService) GenerateCode(req systemReq.GenerateProjectCod
 		return GenerateProjectCodeResult{}, err
 	}
 
-	vars := buildCodeGenerationVars(module, tableName)
+	vars := mergeCodeGenerationPlaceholderValues(buildCodeGenerationVars(module, tableName), req.PlaceholderValues)
 	result := GenerateProjectCodeResult{
 		TemplateProjectId:  int(project.ID),
 		ProjectInstanceId:  int(instance.ID),
@@ -412,10 +415,11 @@ func (s *TbGenerateProjectService) copyProjectDbTemplatesTx(tx *gorm.DB, sourceP
 	for _, templateType := range templateTypes {
 		oldTypeId := templateType.ID
 		newType := system.TbGenerateDbTemplateType{
-			ProjectId: targetProjectId,
-			TypeName:  templateType.TypeName,
-			Prompt:    templateType.Prompt,
-			Sort:      templateType.Sort,
+			ProjectId:           targetProjectId,
+			TypeName:            templateType.TypeName,
+			Prompt:              templateType.Prompt,
+			DynamicPlaceholders: templateType.DynamicPlaceholders,
+			Sort:                templateType.Sort,
 		}
 		if err := tx.Create(&newType).Error; err != nil {
 			return err
@@ -567,6 +571,32 @@ func renderGeneratedFileTarget(root string, fileUrl string, fileName string, var
 	)
 }
 
+func normalizeCodeGenerationPlaceholderKey(value string) string {
+	key := strings.TrimSpace(value)
+	if strings.HasPrefix(key, "{{") && strings.HasSuffix(key, "}}") {
+		key = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(key, "{{"), "}}"))
+	}
+	if strings.HasPrefix(key, "${") && strings.HasSuffix(key, "}") {
+		key = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(key, "${"), "}"))
+	}
+	return key
+}
+
+func mergeCodeGenerationPlaceholderValues(vars map[string]string, values map[string]string) map[string]string {
+	next := make(map[string]string, len(vars)+len(values))
+	for key, value := range vars {
+		next[key] = value
+	}
+	for key, value := range values {
+		cleanKey := normalizeCodeGenerationPlaceholderKey(key)
+		if cleanKey == "" {
+			continue
+		}
+		next[cleanKey] = value
+	}
+	return next
+}
+
 func buildCodeGenerationTaskPromptContent(module string, tableName string, overwrite bool, projectName string, diskPath string, pathSet int, drafts []generateProjectCodeDraft) string {
 	var builder strings.Builder
 	builder.WriteString("# Codex 代码生成任务\n\n")
@@ -686,6 +716,16 @@ func buildCodeGenerationVars(module string, tableName string) map[string]string 
 func renderCodeGenerationText(text string, vars map[string]string) string {
 	rendered := codePlaceholderPattern.ReplaceAllStringFunc(text, func(match string) string {
 		parts := codePlaceholderPattern.FindStringSubmatch(match)
+		if len(parts) != 2 {
+			return match
+		}
+		if value, ok := vars[parts[1]]; ok {
+			return value
+		}
+		return match
+	})
+	rendered = codeDollarPlaceholderPattern.ReplaceAllStringFunc(rendered, func(match string) string {
+		parts := codeDollarPlaceholderPattern.FindStringSubmatch(match)
 		if len(parts) != 2 {
 			return match
 		}

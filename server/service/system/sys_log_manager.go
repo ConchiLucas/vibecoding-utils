@@ -3,7 +3,9 @@ package system
 import (
 	"bufio"
 	"context"
+	"encoding/xml"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -25,6 +27,12 @@ const (
 	logRouteTypeScript        = "script"
 	logRouteTypeFileLog       = "file_log"
 	logRouteTypeDockerCompose = "docker_compose"
+
+	startupLogWorkspaceEnv             = "VIBEDEPLOY_STARTUP_LOG_WORKSPACES"
+	startupLogProjectConfigEnv         = "VIBEDEPLOY_STARTUP_LOG_PROJECT_CONFIG"
+	startupLogDefaultProjectConfigName = "我的项目"
+	startupLogDescription              = "自动发现的本地启动日志"
+	startupLogLauncherKey              = "__startup_all__"
 )
 
 type DockerServiceSummary struct {
@@ -39,7 +47,25 @@ type DockerServiceSummary struct {
 	Running     bool   `json:"running"`
 }
 
+type startupLogEntry struct {
+	ServiceName string
+	WorkDir     string
+	LogFilePath string
+	Language    string
+}
+
+type launchdPlistInfo struct {
+	Label             string
+	WorkingDirectory  string
+	StandardOutPath   string
+	StandardErrorPath string
+}
+
 func (s *LogManagerService) GetLogProjectPage(req request.TbLogProjectSearch) (list []system.TbLogProject, total int64, err error) {
+	if err = s.syncDiscoveredStartupLogs(req); err != nil {
+		return
+	}
+
 	db := global.GVA_DB.Model(&system.TbLogProject{})
 	if req.ProjectName != "" {
 		db = db.Where("project_name LIKE ?", "%"+req.ProjectName+"%")
@@ -144,6 +170,49 @@ func (s *LogManagerService) SaveOrUpdateLogRoute(route system.TbLogProjectRoute)
 
 func (s *LogManagerService) DeleteLogRoute(id int) error {
 	return global.GVA_DB.Where("id = ?", id).Unscoped().Delete(&system.TbLogProjectRoute{}).Error
+}
+
+func (s *LogManagerService) syncDiscoveredStartupLogs(req request.TbLogProjectSearch) error {
+	return s.syncDiscoveredStartupLogsFromWorkspaces(req, startupLogWorkspaces())
+}
+
+func (s *LogManagerService) syncDiscoveredStartupLogsFromWorkspaces(req request.TbLogProjectSearch, workspaces []string) error {
+	if global.GVA_DB == nil {
+		return nil
+	}
+
+	for _, workspace := range workspaces {
+		workspace = strings.TrimSpace(workspace)
+		if workspace == "" {
+			continue
+		}
+		if info, err := os.Stat(workspace); err != nil || !info.IsDir() {
+			continue
+		}
+
+		entries, err := discoverStartupLogEntries(workspace)
+		if err != nil {
+			return err
+		}
+		if len(entries) == 0 {
+			continue
+		}
+
+		groupID, err := ensureStartupLogProjectGroup(filepath.Base(workspace))
+		if err != nil {
+			return err
+		}
+
+		projectConfigID, projectConfigName, err := resolveStartupLogProjectConfig(req, filepath.Base(workspace))
+		if err != nil {
+			return err
+		}
+
+		if err := upsertStartupLogWorkspaceProject(groupID, projectConfigID, projectConfigName, workspace, entries); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *LogManagerService) GetLogProjectById(projectId uint) (system.TbLogProject, error) {
@@ -256,6 +325,7 @@ func (s *LogManagerService) ListDockerServices(projectId uint, scope string) ([]
 		return nil, fmt.Errorf("获取日志项目信息失败: %w", err)
 	}
 
+	normalizedScope := strings.ToLower(strings.TrimSpace(scope))
 	routes := scopedLogRoutes(localLogRoutes(project.Routes), scope)
 	result := make([]DockerServiceSummary, 0)
 	seen := map[string]struct{}{}
@@ -271,7 +341,13 @@ func (s *LogManagerService) ListDockerServices(projectId uint, scope string) ([]
 				continue
 			}
 			seen[key] = struct{}{}
-			serviceName := strings.TrimSpace(route.RouteName)
+			serviceName := strings.TrimSpace(route.RouteKey)
+			if serviceName == startupLogLauncherKey {
+				continue
+			}
+			if serviceName == "" {
+				serviceName = strings.TrimSpace(route.RouteName)
+			}
 			if serviceName == "" {
 				serviceName = filepath.Base(logFilePath)
 			}
@@ -286,6 +362,9 @@ func (s *LogManagerService) ListDockerServices(projectId uint, scope string) ([]
 				RouteType:   logRouteTypeFileLog,
 				Running:     fileLogRouteRunning(project, route),
 			})
+			continue
+		}
+		if normalizedScope == "service" {
 			continue
 		}
 		if !isLogDockerComposeRoute(route, workDir) {
@@ -592,6 +671,9 @@ func fileLogRouteRunning(project system.TbLogProject, route system.TbLogProjectR
 	if routeKey != "" {
 		pidCandidates = append(pidCandidates, filepath.Join(filepath.Dir(logFilePath), routeKey+".pid"))
 	}
+	if pidPath := serviceRuntimePidPath(logFilePath, routeKey); pidPath != "" {
+		pidCandidates = append(pidCandidates, pidPath)
+	}
 	for _, pidPath := range pidCandidates {
 		if pidFileRunning(pidPath) {
 			return true
@@ -758,6 +840,556 @@ func sendLog(logCh chan string, msg string) {
 		default:
 		}
 	}
+}
+
+func startupLogWorkspaces() []string {
+	if value := strings.TrimSpace(os.Getenv(startupLogWorkspaceEnv)); value != "" {
+		parts := filepath.SplitList(value)
+		workspaces := make([]string, 0, len(parts))
+		for _, part := range parts {
+			if trimmed := strings.TrimSpace(part); trimmed != "" {
+				workspaces = append(workspaces, trimmed)
+			}
+		}
+		return workspaces
+	}
+	return []string{"/Users/conchi/workforce/rob_english_word_workforce"}
+}
+
+func resolveStartupLogProjectConfig(req request.TbLogProjectSearch, fallbackName string) (uint, string, error) {
+	projectConfigName := strings.TrimSpace(os.Getenv(startupLogProjectConfigEnv))
+	if projectConfigName == "" {
+		projectConfigName = startupLogDefaultProjectConfigName
+	}
+	if projectConfigName != "" && global.GVA_DB != nil {
+		var project system.TbInterfaceProject
+		err := global.GVA_DB.Where("project_name = ?", projectConfigName).First(&project).Error
+		if err == nil {
+			return project.ID, project.ProjectName, nil
+		}
+		if err != gorm.ErrRecordNotFound {
+			return 0, "", err
+		}
+	}
+
+	projectConfigID := req.ProjectConfigId
+	projectConfigName = strings.TrimSpace(req.ProjectConfigName)
+	if projectConfigID == 0 && projectConfigName == "" {
+		projectConfigName = strings.TrimSpace(fallbackName)
+	}
+	return projectConfigID, projectConfigName, nil
+}
+
+func discoverStartupLogEntries(workspace string) ([]startupLogEntry, error) {
+	workspace = filepath.Clean(workspace)
+	entries := make([]startupLogEntry, 0)
+	seenLogs := map[string]struct{}{}
+
+	plistPaths, err := filepath.Glob(filepath.Join(workspace, ".service-runtime", "launchd", "*.plist"))
+	if err != nil {
+		return nil, err
+	}
+	sort.Strings(plistPaths)
+	for _, plistPath := range plistPaths {
+		info, err := parseLaunchdPlist(plistPath)
+		if err != nil {
+			return nil, err
+		}
+		logPath := strings.TrimSpace(info.StandardOutPath)
+		if logPath == "" {
+			logPath = strings.TrimSpace(info.StandardErrorPath)
+		}
+		if logPath == "" {
+			continue
+		}
+		logPath = filepath.Clean(logPath)
+		if _, ok := seenLogs[logPath]; ok {
+			continue
+		}
+		seenLogs[logPath] = struct{}{}
+		serviceName := startupLogServiceName(info.Label, logPath)
+		workDir := strings.TrimSpace(info.WorkingDirectory)
+		entries = append(entries, startupLogEntry{
+			ServiceName: serviceName,
+			WorkDir:     workDir,
+			LogFilePath: logPath,
+			Language:    detectStartupLogLanguage(workDir),
+		})
+	}
+
+	logPaths, err := filepath.Glob(filepath.Join(workspace, ".service-runtime", "logs", "*.log"))
+	if err != nil {
+		return nil, err
+	}
+	sort.Strings(logPaths)
+	for _, logPath := range logPaths {
+		logPath = filepath.Clean(logPath)
+		if _, ok := seenLogs[logPath]; ok {
+			continue
+		}
+		serviceName := startupLogServiceName("", logPath)
+		workDir := inferStartupLogWorkDir(workspace, serviceName)
+		entries = append(entries, startupLogEntry{
+			ServiceName: serviceName,
+			WorkDir:     workDir,
+			LogFilePath: logPath,
+			Language:    detectStartupLogLanguage(workDir),
+		})
+	}
+
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].ServiceName < entries[j].ServiceName
+	})
+	return entries, nil
+}
+
+func parseLaunchdPlist(plistPath string) (launchdPlistInfo, error) {
+	file, err := os.Open(plistPath)
+	if err != nil {
+		return launchdPlistInfo{}, err
+	}
+	defer file.Close()
+
+	decoder := xml.NewDecoder(file)
+	var info launchdPlistInfo
+	currentKey := ""
+	for {
+		token, err := decoder.Token()
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return launchdPlistInfo{}, err
+		}
+
+		start, ok := token.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		switch start.Name.Local {
+		case "key":
+			var key string
+			if err := decoder.DecodeElement(&key, &start); err != nil {
+				return launchdPlistInfo{}, err
+			}
+			currentKey = key
+		case "string":
+			var value string
+			if err := decoder.DecodeElement(&value, &start); err != nil {
+				return launchdPlistInfo{}, err
+			}
+			switch currentKey {
+			case "Label":
+				info.Label = value
+			case "WorkingDirectory":
+				info.WorkingDirectory = value
+			case "StandardOutPath":
+				info.StandardOutPath = value
+			case "StandardErrorPath":
+				info.StandardErrorPath = value
+			}
+		}
+	}
+	return info, nil
+}
+
+func startupLogServiceName(label string, logPath string) string {
+	if base := strings.TrimSuffix(filepath.Base(logPath), filepath.Ext(logPath)); base != "" {
+		return base
+	}
+	parts := strings.Split(strings.TrimSpace(label), ".")
+	if len(parts) > 0 {
+		if tail := strings.TrimSpace(parts[len(parts)-1]); tail != "" {
+			return tail
+		}
+	}
+	return "startup-log"
+}
+
+func inferStartupLogWorkDir(workspace string, serviceName string) string {
+	direct := filepath.Join(workspace, serviceName)
+	if info, err := os.Stat(direct); err == nil && info.IsDir() {
+		return direct
+	}
+
+	markers := []string{"package.json", "go.mod", "pom.xml", "pyproject.toml", "requirements.txt", "Makefile"}
+	bestDir := ""
+	bestScore := -1
+	_ = filepath.WalkDir(workspace, func(path string, d os.DirEntry, err error) error {
+		if err != nil || !d.IsDir() {
+			return nil
+		}
+		name := d.Name()
+		if name == ".git" || name == "node_modules" || name == "target" || name == "dist" || name == ".service-runtime" {
+			return filepath.SkipDir
+		}
+
+		hasMarker := false
+		for _, marker := range markers {
+			if _, err := os.Stat(filepath.Join(path, marker)); err == nil {
+				hasMarker = true
+				break
+			}
+		}
+		if !hasMarker {
+			return nil
+		}
+
+		score := startupLogWorkDirScore(path, serviceName)
+		if score > bestScore {
+			bestScore = score
+			bestDir = path
+		}
+		return nil
+	})
+	if bestDir != "" {
+		return bestDir
+	}
+	return workspace
+}
+
+func startupLogWorkDirScore(path string, serviceName string) int {
+	normalizedPath := strings.ToLower(strings.ReplaceAll(path, "-", "_"))
+	normalizedService := strings.ToLower(strings.ReplaceAll(serviceName, "-", "_"))
+	score := 0
+	for _, part := range strings.Split(normalizedService, "_") {
+		if part == "" {
+			continue
+		}
+		if strings.Contains(normalizedPath, part) {
+			score++
+		}
+	}
+	if strings.Contains(normalizedPath, normalizedService) {
+		score += 10
+	}
+	return score
+}
+
+func detectStartupLogLanguage(workDir string) string {
+	if strings.TrimSpace(workDir) == "" {
+		return "service"
+	}
+	if startupLogFileExists(filepath.Join(workDir, "pom.xml")) {
+		return "java"
+	}
+	if startupLogFileExists(filepath.Join(workDir, "go.mod")) {
+		return "go"
+	}
+	if startupLogFileExists(filepath.Join(workDir, "pyproject.toml")) || startupLogFileExists(filepath.Join(workDir, "requirements.txt")) {
+		return "python"
+	}
+	if startupLogFileExists(filepath.Join(workDir, "package.json")) {
+		return "react"
+	}
+	return "service"
+}
+
+func startupLogFileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
+}
+
+func ensureStartupLogProjectGroup(groupName string) (uint, error) {
+	groupName = strings.TrimSpace(groupName)
+	if groupName == "" {
+		groupName = "startup logs"
+	}
+	var group system.TbLogProjectGroup
+	err := global.GVA_DB.Where("group_name = ?", groupName).First(&group).Error
+	if err == nil {
+		return group.ID, nil
+	}
+	if err != gorm.ErrRecordNotFound {
+		return 0, err
+	}
+	group = system.TbLogProjectGroup{
+		GroupName: groupName,
+		Sort:      100,
+	}
+	if err := global.GVA_DB.Create(&group).Error; err != nil {
+		return 0, err
+	}
+	return group.ID, nil
+}
+
+func upsertStartupLogWorkspaceProject(groupID uint, projectConfigID uint, projectConfigName string, workspace string, entries []startupLogEntry) error {
+	workspace = filepath.Clean(workspace)
+	projectName := filepath.Base(workspace)
+	if strings.TrimSpace(projectName) == "" || projectName == "." || projectName == string(filepath.Separator) {
+		projectName = "startup logs"
+	}
+
+	return global.GVA_DB.Transaction(func(tx *gorm.DB) error {
+		project, err := ensureStartupLogWorkspaceProject(tx, groupID, projectConfigID, projectConfigName, projectName, workspace)
+		if err != nil {
+			return err
+		}
+
+		if err := upsertStartupLogLauncherRoute(tx, project.ID, workspace); err != nil {
+			return err
+		}
+
+		currentRouteKeys := make(map[string]struct{}, len(entries))
+		for index, entry := range entries {
+			routeKey := strings.TrimSpace(entry.ServiceName)
+			if routeKey == "" {
+				routeKey = strings.TrimSuffix(filepath.Base(entry.LogFilePath), filepath.Ext(entry.LogFilePath))
+			}
+			if routeKey == "" {
+				routeKey = fmt.Sprintf("startup-log-%d", index+1)
+			}
+			currentRouteKeys[routeKey] = struct{}{}
+			if err := upsertStartupLogFileRoute(tx, project.ID, workspace, index+1, routeKey, entry); err != nil {
+				return err
+			}
+		}
+
+		if err := deleteStaleStartupLogRoutes(tx, project.ID, workspace, currentRouteKeys); err != nil {
+			return err
+		}
+		return deleteLegacyStartupLogProjects(tx, project.ID, workspace, entries)
+	})
+}
+
+func ensureStartupLogWorkspaceProject(tx *gorm.DB, groupID uint, projectConfigID uint, projectConfigName string, projectName string, workspace string) (system.TbLogProject, error) {
+	var project system.TbLogProject
+	err := tx.
+		Where("project_config_id = ? AND project_config_name = ? AND local_project_path = ?", projectConfigID, projectConfigName, workspace).
+		First(&project).Error
+	if err == nil {
+		updates := map[string]interface{}{
+			"group_id":            groupID,
+			"project_config_id":   projectConfigID,
+			"project_config_name": projectConfigName,
+			"computer_language":   "service",
+			"project_name":        projectName,
+			"description":         startupLogDescription,
+			"local_project_path":  workspace,
+		}
+		if err := tx.Model(&system.TbLogProject{}).Where("id = ?", project.ID).Updates(updates).Error; err != nil {
+			return system.TbLogProject{}, err
+		}
+		project.GroupId = groupID
+		project.ProjectConfigId = projectConfigID
+		project.ProjectConfigName = projectConfigName
+		project.ComputerLanguage = "service"
+		project.ProjectName = projectName
+		project.Description = startupLogDescription
+		project.LocalProjectPath = workspace
+		return project, nil
+	}
+	if err != gorm.ErrRecordNotFound {
+		return system.TbLogProject{}, err
+	}
+
+	project = system.TbLogProject{
+		GroupId:           groupID,
+		ProjectConfigId:   projectConfigID,
+		ProjectConfigName: projectConfigName,
+		ComputerLanguage:  "service",
+		ProjectName:       projectName,
+		Description:       startupLogDescription,
+		LocalProjectPath:  workspace,
+	}
+	if err := tx.Create(&project).Error; err != nil {
+		return system.TbLogProject{}, err
+	}
+	return project, nil
+}
+
+func upsertStartupLogLauncherRoute(tx *gorm.DB, projectID uint, workspace string) error {
+	scriptPath := filepath.Join(workspace, "restart_all_services.sh")
+	if _, err := os.Stat(scriptPath); err != nil {
+		if err := tx.Where("project_id = ? AND route_key = ?", projectID, startupLogLauncherKey).
+			Unscoped().
+			Delete(&system.TbLogProjectRoute{}).Error; err != nil {
+			return err
+		}
+		return nil
+	}
+
+	route := system.TbLogProjectRoute{}
+	err := tx.Where("project_id = ? AND route_key = ?", projectID, startupLogLauncherKey).First(&route).Error
+	values := map[string]interface{}{
+		"route_name":            "全部服务启动器",
+		"local_project_path":    workspace,
+		"local_execute_command": "./restart_all_services.sh start",
+		"local_start_command":   "",
+		"local_stop_command":    "./restart_all_services.sh stop",
+		"log_file_path":         "",
+		"build_type":            logRouteTypeScript,
+		"docker_compose_deploy": false,
+		"color":                 "emerald",
+		"icon":                  "play",
+		"sort":                  0,
+	}
+	if err == nil {
+		return tx.Model(&system.TbLogProjectRoute{}).Where("id = ?", route.ID).Updates(values).Error
+	}
+	if err != gorm.ErrRecordNotFound {
+		return err
+	}
+
+	route = system.TbLogProjectRoute{
+		ProjectId:           int(projectID),
+		RouteKey:            startupLogLauncherKey,
+		RouteName:           "全部服务启动器",
+		LocalProjectPath:    workspace,
+		LocalExecuteCommand: "./restart_all_services.sh start",
+		LocalStopCommand:    "./restart_all_services.sh stop",
+		BuildType:           logRouteTypeScript,
+		Color:               "emerald",
+		Icon:                "play",
+		Sort:                0,
+	}
+	return tx.Create(&route).Error
+}
+
+func upsertStartupLogFileRoute(tx *gorm.DB, projectID uint, workspace string, sortOrder int, routeKey string, entry startupLogEntry) error {
+	workDir := strings.TrimSpace(entry.WorkDir)
+	if workDir == "" {
+		workDir = workspace
+	}
+	routeName := fmt.Sprintf("%s 启动日志", routeKey)
+
+	var route system.TbLogProjectRoute
+	err := tx.
+		Where("project_id = ? AND route_key = ?", projectID, routeKey).
+		First(&route).Error
+	values := map[string]interface{}{
+		"route_name":            routeName,
+		"local_project_path":    workDir,
+		"local_execute_command": "",
+		"local_start_command":   "",
+		"local_stop_command":    "",
+		"log_file_path":         entry.LogFilePath,
+		"build_type":            logRouteTypeFileLog,
+		"docker_compose_deploy": false,
+		"color":                 "blue",
+		"icon":                  "scroll-text",
+		"sort":                  sortOrder,
+	}
+	if err == nil {
+		return tx.Model(&system.TbLogProjectRoute{}).Where("id = ?", route.ID).Updates(values).Error
+	}
+	if err != gorm.ErrRecordNotFound {
+		return err
+	}
+
+	route = system.TbLogProjectRoute{
+		ProjectId:        int(projectID),
+		RouteKey:         routeKey,
+		RouteName:        routeName,
+		LocalProjectPath: workDir,
+		LogFilePath:      entry.LogFilePath,
+		BuildType:        logRouteTypeFileLog,
+		Color:            "blue",
+		Icon:             "scroll-text",
+		Sort:             sortOrder,
+	}
+	return tx.Create(&route).Error
+}
+
+func deleteStaleStartupLogRoutes(tx *gorm.DB, projectID uint, workspace string, currentRouteKeys map[string]struct{}) error {
+	var routes []system.TbLogProjectRoute
+	if err := tx.
+		Where("project_id = ? AND build_type = ?", projectID, logRouteTypeFileLog).
+		Find(&routes).Error; err != nil {
+		return err
+	}
+	for _, route := range routes {
+		if _, ok := currentRouteKeys[route.RouteKey]; ok {
+			continue
+		}
+		if !isStartupLogPath(workspace, route.LogFilePath) {
+			continue
+		}
+		if err := tx.Where("id = ?", route.ID).Unscoped().Delete(&system.TbLogProjectRoute{}).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func deleteLegacyStartupLogProjects(tx *gorm.DB, projectID uint, workspace string, entries []startupLogEntry) error {
+	workDirSet := make(map[string]struct{}, len(entries))
+	serviceNameSet := make(map[string]struct{}, len(entries))
+	for _, entry := range entries {
+		if workDir := strings.TrimSpace(entry.WorkDir); workDir != "" {
+			workDirSet[filepath.Clean(workDir)] = struct{}{}
+		}
+		if serviceName := strings.TrimSpace(entry.ServiceName); serviceName != "" {
+			serviceNameSet[serviceName] = struct{}{}
+		}
+	}
+
+	var projects []system.TbLogProject
+	if err := tx.
+		Where("description = ? AND id <> ?", startupLogDescription, projectID).
+		Find(&projects).Error; err != nil {
+		return err
+	}
+
+	for _, project := range projects {
+		projectPath := filepath.Clean(strings.TrimSpace(project.LocalProjectPath))
+		exactWorkspace := projectPath == filepath.Clean(workspace)
+		_, exactWorkDir := workDirSet[projectPath]
+		_, matchingServiceName := serviceNameSet[strings.TrimSpace(project.ProjectName)]
+		if !exactWorkspace && !exactWorkDir && !(matchingServiceName && isPathInside(workspace, projectPath)) {
+			continue
+		}
+		if err := tx.Where("project_id = ?", project.ID).Unscoped().Delete(&system.TbLogProjectRoute{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("id = ?", project.ID).Unscoped().Delete(&system.TbLogProject{}).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func isStartupLogPath(workspace string, logFilePath string) bool {
+	logFilePath = strings.TrimSpace(logFilePath)
+	if logFilePath == "" {
+		return false
+	}
+	if !filepath.IsAbs(logFilePath) {
+		logFilePath = filepath.Join(workspace, logFilePath)
+	}
+	return isPathInside(filepath.Join(workspace, ".service-runtime", "logs"), logFilePath)
+}
+
+func isPathInside(parent string, child string) bool {
+	parent = filepath.Clean(parent)
+	child = filepath.Clean(child)
+	if parent == child {
+		return true
+	}
+	rel, err := filepath.Rel(parent, child)
+	if err != nil {
+		return false
+	}
+	return rel != "." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != ".."
+}
+
+func serviceRuntimePidPath(logFilePath string, routeKey string) string {
+	logDir := filepath.Dir(logFilePath)
+	if filepath.Base(logDir) != "logs" {
+		return ""
+	}
+	runtimeDir := filepath.Dir(logDir)
+	if filepath.Base(runtimeDir) != ".service-runtime" {
+		return ""
+	}
+	pidName := strings.TrimSpace(routeKey)
+	if pidName == "" {
+		pidName = strings.TrimSuffix(filepath.Base(logFilePath), filepath.Ext(logFilePath))
+	}
+	if pidName == "" {
+		return ""
+	}
+	return filepath.Join(runtimeDir, "pids", pidName+".pid")
 }
 
 func enrichedCommandEnv() []string {

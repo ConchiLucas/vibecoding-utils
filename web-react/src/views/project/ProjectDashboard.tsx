@@ -5,8 +5,8 @@ import { getGroupList, saveOrUpdateGroup, deleteGroup } from '../../api/project_
 import { getServerList } from '../../api/server';
 import toast from 'react-hot-toast';
 import { Play, Settings2, Plus, Search, TerminalSquare, Github, Box, X, Trash2, MonitorPlay, Server, Terminal, Code, Pencil, Check, Folder, Square, ScrollText } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
 import DeployLogPanel from '../../components/DeployLogPanel';
+import ProjectScripts from './ProjectScripts';
 import {
   DEPENDENCY_INCREMENTAL_ROUTE_COLOR,
   LOCAL_FULL_ROUTE_COLOR,
@@ -18,8 +18,6 @@ import {
 } from './ProjectRoutePresentation';
 
 export default function ProjectDashboard() {
-  const navigate = useNavigate();
-
   // ── Data ─────────────────────────────────────────────────────────────────
   const [projects, setProjects] = useState<any[]>([]);
   const [groups, setGroups] = useState<any[]>([]);
@@ -50,6 +48,7 @@ export default function ProjectDashboard() {
   const [deployLog, setDeployLog] = useState<{
     open: boolean; projectId: number; projectName: string; envKey: string; routeName: string; mode: 'deploy' | 'stop' | 'logs';
   }>({ open: false, projectId: 0, projectName: '', envKey: '', routeName: '', mode: 'deploy' });
+  const [scriptDialog, setScriptDialog] = useState<{ project: any; route: any } | null>(null);
 
   const [formData, setFormData] = useState({
     ID: 0, projectName: '', computerLanguage: 'vue', groupId: 0, groupName: '',
@@ -606,7 +605,7 @@ export default function ProjectDashboard() {
                           </button>
                         )}
                         <button
-                          onClick={(e) => { e.stopPropagation(); navigate(`/projects/${project.ID}/scripts?routeId=${route.ID}`); }}
+                          onClick={(e) => { e.stopPropagation(); setScriptDialog({ project, route }); }}
                           className="flex items-center justify-center p-1.5 rounded-md text-xs border border-blue-100 bg-blue-50 text-blue-600 hover:bg-blue-100 transition-colors"
                           title="管理脚本"
                         ><Code size={13} /></button>
@@ -884,6 +883,17 @@ export default function ProjectDashboard() {
           routeName={deployLog.routeName}
           mode={deployLog.mode}
           onClose={() => setDeployLog(p => ({ ...p, open: false }))}
+        />
+      )}
+
+      {scriptDialog && (
+        <ProjectScripts
+          fullscreenDialog
+          projectIdOverride={scriptDialog.project.ID}
+          routeIdOverride={scriptDialog.route.ID}
+          projectName={scriptDialog.project.projectName}
+          routeName={scriptDialog.route.routeName}
+          onClose={() => setScriptDialog(null)}
         />
       )}
 

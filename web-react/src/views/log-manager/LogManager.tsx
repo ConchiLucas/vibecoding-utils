@@ -99,15 +99,19 @@ function isScriptRoute(route: LogProjectRoute) {
   return !isDockerComposeLaunchRoute(route) && !isFileLogRoute(route);
 }
 
+function isServiceLogRoute(route: LogProjectRoute) {
+  return isScriptRoute(route) || isFileLogRoute(route);
+}
+
 function sortLogRoutes(routes: LogProjectRoute[]) {
   return [...routes].sort((a, b) => (a.sort || 0) - (b.sort || 0) || a.ID - b.ID);
 }
 
 function projectRoutesForTab(project: LogProject, tab: ActiveTab) {
   const routes = sortLogRoutes(project.routes || []);
-  return tab === 'docker'
-    ? routes.filter(isDockerComposeLaunchRoute)
-    : routes.filter(isScriptRoute);
+  if (tab === 'docker') return routes.filter(isDockerComposeLaunchRoute);
+  const fileLogRoutes = routes.filter(isFileLogRoute);
+  return fileLogRoutes.length > 0 ? fileLogRoutes : routes.filter(isScriptRoute);
 }
 
 function projectMatchesActiveTab(project: LogProject, tab: ActiveTab) {
@@ -227,6 +231,16 @@ export default function LogManager() {
   }, [selectedProject]);
 
   const serviceRoutes = useMemo(
+    () => localRoutes.filter(isServiceLogRoute),
+    [localRoutes]
+  );
+
+  const serviceLogRoutes = useMemo(
+    () => localRoutes.filter(isFileLogRoute),
+    [localRoutes]
+  );
+
+  const executableServiceRoutes = useMemo(
     () => localRoutes.filter(isScriptRoute),
     [localRoutes]
   );
@@ -236,7 +250,8 @@ export default function LogManager() {
     [localRoutes]
   );
 
-  const activeRoutes = activeTab === 'docker' ? dockerComposeRoutes : serviceRoutes;
+  const activeRoutes = activeTab === 'docker' ? dockerComposeRoutes : (serviceLogRoutes.length > 0 ? serviceLogRoutes : serviceRoutes);
+  const activeExecutableRoutes = activeTab === 'docker' ? dockerComposeRoutes : executableServiceRoutes;
 
   const selectedGroupName = selectedGroupId === null
     ? '全部项目'
@@ -296,23 +311,23 @@ export default function LogManager() {
 
   const openGroupStream = (action: 'start' | 'stop') => {
     if (!selectedProject) return;
-    if (activeRoutes.length === 0) {
-      toast.error(activeTab === 'docker' ? '当前项目没有可执行的 docker-compose 路线' : '当前项目没有可执行的脚本服务路线');
+    if (activeExecutableRoutes.length === 0) {
+      toast.error(activeTab === 'docker' ? '当前项目没有可执行的 docker-compose 路线' : '当前项目没有可执行的服务启动路线');
       return;
     }
     const isStop = action === 'stop';
     const scope = activeTab === 'docker' ? 'docker' : 'service';
-    const scopeLabel = activeTab === 'docker' ? 'Docker Compose 服务' : '脚本服务';
+    const scopeLabel = activeTab === 'docker' ? 'Docker Compose 服务' : '服务';
     setLogPanel({
       open: true,
       projectId: selectedProject.ID,
       projectName: selectedProject.projectName,
       envKey: `${scope}-group`,
-      routeName: `${activeRoutes.length} 个${scopeLabel}`,
+      routeName: `${activeExecutableRoutes.length} 个${scopeLabel}`,
       mode: isStop ? 'stop' : 'deploy',
       streamPath: `/logManager/serviceGroupStream/${selectedProject.ID}?action=${action}&scope=${scope}`,
       panelTitle: isStop ? `${scopeLabel}关闭日志` : `${scopeLabel}启动日志`,
-      introText: `🚀 已连接，开始${isStop ? '关闭' : '启动'} [${selectedProject.projectName}] 的 ${activeRoutes.length} 个${scopeLabel}...`,
+      introText: `🚀 已连接，开始${isStop ? '关闭' : '启动'} [${selectedProject.projectName}] 的 ${activeExecutableRoutes.length} 个${scopeLabel}...`,
     });
   };
 
@@ -451,64 +466,7 @@ export default function LogManager() {
           </div>
         </div>
 
-        <div className="px-4 py-3">
-          <div className="flex items-center justify-between px-1 mb-2">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400">项目名称</span>
-            <button
-              onClick={fetchData}
-              className="p-1 rounded-md text-gray-400 hover:bg-gray-100 hover:text-gray-700"
-              title="刷新项目"
-            >
-              <RefreshCw size={13} />
-            </button>
-          </div>
-          <button
-            onClick={() => setSelectedGroupId(null)}
-            className={clsx(
-              'w-full flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold transition-colors',
-              selectedGroupId === null ? 'bg-gray-900 text-white' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
-            )}
-          >
-            <Folder size={15} />
-            <span className="truncate">全部项目</span>
-            <span className={clsx(
-              'ml-auto rounded-full px-2 py-0.5 text-xs font-mono',
-              selectedGroupId === null ? 'bg-white/20 text-white' : 'bg-gray-100 text-gray-500'
-            )}>
-              {tabProjects.length}
-            </span>
-          </button>
-
-          {groups.length > 0 && (
-            <div className="ml-4 mt-1 border-l-2 border-gray-200 pl-3 space-y-0.5">
-              {groups.map(group => {
-                const active = selectedGroupId === group.ID;
-                const count = tabProjects.filter(project => project.groupId === group.ID).length;
-                return (
-                  <button
-                    key={group.ID}
-                    onClick={() => setSelectedGroupId(group.ID)}
-                    className={clsx(
-                      'w-full flex items-center gap-2 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors',
-                      active ? 'bg-gray-900 text-white' : 'text-gray-500 hover:bg-gray-50 hover:text-gray-900'
-                    )}
-                  >
-                    <Folder size={12} />
-                    <span className="truncate flex-1 text-left">{group.groupName}</span>
-                    <span className={clsx(
-                      'rounded-full px-1.5 py-0.5 font-mono',
-                      active ? 'bg-white/20 text-white' : 'bg-gray-100 text-gray-500'
-                    )}>
-                      {count}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </div>
-
-        <div className="flex-1 overflow-y-auto px-4 pb-5 space-y-1 scrollbar-thin">
+        <div className="flex-1 overflow-y-auto px-4 pt-4 pb-5 space-y-1 scrollbar-thin">
           {loading ? (
             <div className="py-12 text-center text-sm text-gray-400">项目加载中...</div>
           ) : filteredProjects.length === 0 ? (
@@ -650,7 +608,7 @@ export default function LogManager() {
                 <div className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-500">
                   <Database size={14} />
                   <span className="font-semibold text-gray-700">{activeRoutes.length}</span>
-                  <span>{activeTab === 'docker' ? 'Compose 路线' : '脚本路线'}</span>
+                  <span>{activeTab === 'docker' ? 'Compose 路线' : '服务路线'}</span>
                 </div>
               )}
             </div>
@@ -692,25 +650,32 @@ export default function LogManager() {
                     </div>
                     <div>
                       <div className="font-bold text-gray-400">启动脚本</div>
-                      <div className="mt-1 font-mono text-gray-700">{serviceRoutes.length} 个</div>
+                      <div className="mt-1 font-mono text-gray-700">{executableServiceRoutes.length} 个</div>
                     </div>
                   </div>
                 </div>
 
-                <div className="mt-5 flex gap-3">
+                <div className="mt-5 grid grid-cols-2 gap-3">
                   <button
                     onClick={() => openGroupStream('start')}
-                    disabled={serviceRoutes.length === 0}
-                    className="flex-1 inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 text-sm font-bold text-white shadow-sm shadow-emerald-500/20 transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-400 disabled:shadow-none"
+                    disabled={executableServiceRoutes.length === 0}
+                    className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 text-sm font-bold text-white shadow-sm shadow-emerald-500/20 transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-400 disabled:shadow-none"
                   >
                     <Play size={15} fill="currentColor" /> 启动全部
                   </button>
                   <button
                     onClick={() => openGroupStream('stop')}
-                    disabled={serviceRoutes.length === 0}
-                    className="flex-1 inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-red-500 px-4 text-sm font-bold text-white shadow-sm shadow-red-500/20 transition-colors hover:bg-red-600 disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-400 disabled:shadow-none"
+                    disabled={executableServiceRoutes.length === 0}
+                    className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-red-500 px-4 text-sm font-bold text-white shadow-sm shadow-red-500/20 transition-colors hover:bg-red-600 disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-400 disabled:shadow-none"
                   >
                     <Square size={13} fill="currentColor" /> 关闭全部
+                  </button>
+                  <button
+                    onClick={loadDockerServices}
+                    disabled={dockerLoading}
+                    className="col-span-2 inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-gray-200 bg-gray-900 px-4 text-sm font-bold text-white transition-colors hover:bg-gray-800 disabled:cursor-wait disabled:bg-gray-300"
+                  >
+                    <RefreshCw size={15} className={dockerLoading ? 'animate-spin' : ''} /> 刷新日志入口
                   </button>
                 </div>
               </div>
@@ -718,7 +683,7 @@ export default function LogManager() {
               {serviceRoutes.length === 0 ? (
                 <div className="rounded-2xl border border-dashed border-gray-300 bg-white p-10 text-center">
                   <Terminal size={32} className="mx-auto mb-3 text-gray-300" />
-                  <h3 className="text-base font-bold text-gray-900">暂无脚本服务路线</h3>
+                  <h3 className="text-base font-bold text-gray-900">暂无服务日志路线</h3>
                   <p className="mt-1 text-sm text-gray-400">脚本、make、npm、java、python 等启动方式会归到服务日志</p>
                 </div>
               ) : dockerLoading ? (
