@@ -236,7 +236,6 @@ func buildGenerateProjectPromptURL(c *gin.Context, req systemReq.GenerateProject
 	query.Set("pathSet", strconv.Itoa(res.PathSet))
 	query.Set("module", strings.TrimSpace(req.Module))
 	query.Set("tableName", strings.TrimSpace(req.TableName))
-	query.Set("overwrite", strconv.FormatBool(req.Overwrite))
 
 	pathIds := make([]string, 0, len(res.Files))
 	for _, file := range res.Files {

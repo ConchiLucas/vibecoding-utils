@@ -884,7 +884,9 @@ func (s *TbGenerateProjectPathService) BuildPromptSummary(req systemReq.BuildGen
 		return GenerateProjectPromptSummaryResult{}, err
 	}
 
-	vars := buildCodeGenerationVars(module, tableName)
+	vars := mergeCodeGenerationPlaceholderValues(buildCodeGenerationVars(module, tableName), parseGeneratePlaceholderValues(instance.GeneratePlaceholderValues))
+	module = vars["module"]
+	tableName = vars["TableName"]
 	result := GenerateProjectPromptSummaryResult{
 		ProjectInstanceId:  int(instance.ID),
 		ProjectName:        instance.ProjectName,
@@ -914,7 +916,7 @@ func (s *TbGenerateProjectPathService) BuildPromptSummary(req systemReq.BuildGen
 			PathId:       pathObj.ID,
 			Status:       "ready",
 			Bytes:        len([]byte(content)),
-			Instruction:  buildGenerateCodeFileInstruction(relativePath, targetPath),
+			Instruction:  buildGenerateCodeFileInstruction(relativePath, targetPath, pathObj.Incremented == 1),
 		}
 		result.TargetPaths = append(result.TargetPaths, targetPath)
 		result.Files = append(result.Files, file)
@@ -922,9 +924,10 @@ func (s *TbGenerateProjectPathService) BuildPromptSummary(req systemReq.BuildGen
 			File:            file,
 			TemplateContent: content,
 			FilePrompt:      filePrompt,
+			Incremented:     pathObj.Incremented == 1,
 		})
 	}
 
-	result.Prompt = buildCodeGenerationTaskPromptContent(module, tableName, req.Overwrite, result.ProjectName, result.DiskPath, result.PathSet, drafts)
+	result.Prompt = buildCodeGenerationTaskPromptContent(module, tableName, result.ProjectName, result.DiskPath, result.PathSet, drafts)
 	return result, nil
 }

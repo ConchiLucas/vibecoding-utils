@@ -8,6 +8,5 @@ type GenerateProjectCodeReq struct {
 	PathIds           []int             `json:"pathIds"`
 	Module            string            `json:"module"`
 	TableName         string            `json:"tableName"`
-	Overwrite         bool              `json:"overwrite"`
 	PlaceholderValues map[string]string `json:"placeholderValues"`
 }

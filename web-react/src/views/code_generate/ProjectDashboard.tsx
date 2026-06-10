@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Plus, Copy, ClipboardCopy, Database, FileCode, Edit2, Trash2, Search, Folder, Check, X, Wand2, RefreshCw } from 'lucide-react';
 import { getProjectList, createProject, updateProject, deleteProject, copyProject, generateProjectCode, getProjectInstanceList } from '@/api/code_generate_project';
 import { getDbTemplateScripts, getDbTemplateTypes } from '@/api/db_template';
-import { getPathList } from '@/api/path_model';
+import { getModelListByPathId, getPathList } from '@/api/path_model';
 import toast from 'react-hot-toast';
 import ProjectConfigDialog from './ProjectConfigDialog';
 import DbTemplateLibrary from './DbTemplateLibrary';
@@ -63,6 +63,26 @@ const copyTextToClipboard = async (text: string) => {
   }
 };
 
+const parseStoredGeneratePlaceholderValues = (value: any): DbTemplatePlaceholderValues => {
+  if (!value) return {};
+  if (typeof value === 'object' && !Array.isArray(value)) return value as DbTemplatePlaceholderValues;
+  try {
+    const parsed = JSON.parse(String(value || '').trim());
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch (e) {
+    return {};
+  }
+};
+
+const applyStoredGeneratePlaceholderValues = (
+  rows: DbTemplatePlaceholder[],
+  values: DbTemplatePlaceholderValues = {},
+) => rows.map((row) => {
+  const key = String(row.key || '').trim();
+  if (!key || typeof values[key] === 'undefined') return row;
+  return { ...row, value: String(values[key] ?? '') };
+});
+
 const buildDbTemplateSqlPayload = async (project: any, placeholderValues: DbTemplatePlaceholderValues = {}) => {
   const projectId = Number(project.ID || 0);
   const typeRes: any = await getDbTemplateTypes(projectId);
@@ -110,6 +130,207 @@ const resolveGeneratePathFilter = (instance: any) => {
   return { pathSet: 0, pathIds: [] };
 };
 
+const GENERATE_PLACEHOLDER_DEFAULTS: Record<string, string> = {
+  module: 'btStation',
+  Module: 'BtStation',
+  moduleName: 'btStation',
+  ModuleName: 'BtStation',
+  TableName: 'BtStation',
+  tableName: 'btStation',
+  table_name: 'bt_station',
+  TABLE_NAME: 'BT_STATION',
+};
+
+const GENERATE_PLACEHOLDER_DESCRIPTIONS: Record<string, string> = {
+  module: '模块名，小驼峰',
+  Module: '模块名，大驼峰',
+  moduleName: '模块名，小驼峰',
+  ModuleName: '模块名，大驼峰',
+  TableName: '实体/类名，大驼峰',
+  tableName: '实体/变量名，小驼峰',
+  table_name: '表名/SQL 名，下划线',
+  TABLE_NAME: '常量名，大写下划线',
+};
+
+const extractGeneratePlaceholdersFromText = (text: any): DbTemplatePlaceholder[] => {
+  const raw = String(text || '');
+  const keys = new Set<string>();
+  [
+    /\{\{\s*([A-Za-z][A-Za-z0-9_]*)\s*\}\}/g,
+    /\$\{\s*([A-Za-z][A-Za-z0-9_]*)\s*\}/g,
+  ].forEach((pattern) => {
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(raw)) !== null) {
+      if (match[1]) keys.add(match[1]);
+    }
+  });
+  return Array.from(keys).map((key) => ({
+    key,
+    description: GENERATE_PLACEHOLDER_DESCRIPTIONS[key] || '',
+    value: GENERATE_PLACEHOLDER_DEFAULTS[key] || '',
+  }));
+};
+
+const mergeGeneratePlaceholders = (items: DbTemplatePlaceholder[]): DbTemplatePlaceholder[] => {
+  const merged = new Map<string, DbTemplatePlaceholder>();
+  items.forEach((item) => {
+    const key = String(item?.key || '').trim();
+    if (!key) return;
+    const current = merged.get(key);
+    if (!current) {
+      merged.set(key, {
+        key,
+        description: String(item.description || GENERATE_PLACEHOLDER_DESCRIPTIONS[key] || '').trim(),
+        value: String(item.value || GENERATE_PLACEHOLDER_DEFAULTS[key] || '').trim(),
+      });
+      return;
+    }
+    if (!current.description && item.description) current.description = item.description;
+    if (!current.value && item.value) current.value = item.value;
+  });
+  return Array.from(merged.values());
+};
+
+type GeneratePlaceholderDerivedValues = Record<string, string>;
+
+type GeneratePlaceholderGroup = {
+  keys: string[];
+  parentKey: string;
+  childKeys: string[];
+  derivedLabelKey: string;
+  buildValues: (value: string) => GeneratePlaceholderDerivedValues;
+  getBaseValue: (rows: DbTemplatePlaceholder[]) => string;
+};
+
+type GeneratePlaceholderKeyStyle = 'camel' | 'pascal' | 'snake' | 'upperSnake' | 'other';
+
+const splitNameWords = (value: string) => {
+  const spaced = String(value || '')
+    .trim()
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/[_\-\s]+/g, ' ');
+  return spaced
+    .split(' ')
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean);
+};
+
+const capitalizeNameWord = (value: string) => {
+  if (!value) return '';
+  return `${value.charAt(0).toUpperCase()}${value.slice(1)}`;
+};
+
+const toCamelName = (value: string) => {
+  const words = splitNameWords(value);
+  if (words.length === 0) return '';
+  return `${words[0]}${words.slice(1).map(capitalizeNameWord).join('')}`;
+};
+
+const toPascalName = (value: string) => splitNameWords(value).map(capitalizeNameWord).join('');
+
+const toSnakeName = (value: string) => splitNameWords(value).join('_');
+
+const getGeneratePlaceholderKeyStyle = (key: string): GeneratePlaceholderKeyStyle => {
+  const raw = String(key || '').trim();
+  if (!raw) return 'other';
+  if (/^[A-Z][A-Za-z0-9]*$/.test(raw) && /[a-z]/.test(raw)) return 'pascal';
+  if (/^[a-z][A-Za-z0-9]*$/.test(raw)) return 'camel';
+  if (/^[a-z0-9]+(?:_[a-z0-9]+)+$/.test(raw)) return 'snake';
+  if (/^[A-Z0-9]+(?:_[A-Z0-9]+)+$/.test(raw)) return 'upperSnake';
+  return 'other';
+};
+
+const buildGeneratePlaceholderValueForStyle = (value: string, style: GeneratePlaceholderKeyStyle) => {
+  const snakeName = toSnakeName(value);
+  if (style === 'pascal') return toPascalName(value);
+  if (style === 'snake') return snakeName;
+  if (style === 'upperSnake') return snakeName.toUpperCase();
+  if (style === 'camel') return toCamelName(value);
+  return value;
+};
+
+const getGeneratePlaceholderKeySignature = (key: string) => {
+  const words = splitNameWords(key);
+  return words.length >= 2 ? words.join('|') : '';
+};
+
+const buildDynamicGeneratePlaceholderGroups = (rows: DbTemplatePlaceholder[]): GeneratePlaceholderGroup[] => {
+  const buckets = new Map<string, DbTemplatePlaceholder[]>();
+  rows.forEach((row) => {
+    const key = String(row.key || '').trim();
+    const signature = getGeneratePlaceholderKeySignature(key);
+    const style = getGeneratePlaceholderKeyStyle(key);
+    if (!signature || style === 'other') return;
+    const list = buckets.get(signature) || [];
+    list.push(row);
+    buckets.set(signature, list);
+  });
+
+  const groups: GeneratePlaceholderGroup[] = [];
+  buckets.forEach((bucket) => {
+    const uniqueKeys = Array.from(new Set(bucket.map((row) => row.key).filter(Boolean)));
+    const uniqueStyles = new Set(uniqueKeys.map(getGeneratePlaceholderKeyStyle));
+    if (uniqueKeys.length < 2 || uniqueStyles.size < 2) return;
+
+    const parentKey =
+      uniqueKeys.find((key) => getGeneratePlaceholderKeyStyle(key) === 'camel') ||
+      uniqueKeys.find((key) => getGeneratePlaceholderKeyStyle(key) === 'pascal') ||
+      uniqueKeys[0];
+    const childKeys = uniqueKeys.filter((key) => key !== parentKey);
+    groups.push({
+      keys: uniqueKeys,
+      parentKey,
+      childKeys,
+      derivedLabelKey: parentKey,
+      buildValues: (value: string) => uniqueKeys.reduce<GeneratePlaceholderDerivedValues>((next, key) => {
+        next[key] = buildGeneratePlaceholderValueForStyle(value, getGeneratePlaceholderKeyStyle(key));
+        return next;
+      }, {}),
+      getBaseValue: (allRows: DbTemplatePlaceholder[]) => {
+        const rowMap = new Map(allRows.map((row) => [row.key, row]));
+        return (
+          rowMap.get(parentKey)?.value ||
+          uniqueKeys.map((key) => rowMap.get(key)?.value).find(Boolean) ||
+          GENERATE_PLACEHOLDER_DEFAULTS[parentKey] ||
+          ''
+        );
+      },
+    });
+  });
+
+  return groups.sort((left, right) => {
+    const leftIndex = rows.findIndex((row) => row.key === left.parentKey);
+    const rightIndex = rows.findIndex((row) => row.key === right.parentKey);
+    return leftIndex - rightIndex;
+  });
+};
+
+const isGroupedGeneratePlaceholderKey = (key: string, groups: GeneratePlaceholderGroup[]) => (
+  groups.some((group) => group.keys.includes(key))
+);
+
+const normalizeGeneratePlaceholderRows = (rows: DbTemplatePlaceholder[]) => {
+  const activeGroups = buildDynamicGeneratePlaceholderGroups(rows);
+  if (activeGroups.length === 0) return rows;
+
+  const rowMap = new Map(rows.map((row) => [row.key, row]));
+  const nextRows = rows.filter((row) => !isGroupedGeneratePlaceholderKey(row.key, activeGroups));
+
+  activeGroups.forEach((group) => {
+    const derivedValues = group.buildValues(group.getBaseValue(rows));
+    group.keys.forEach((key) => {
+      const current = rowMap.get(key);
+      nextRows.push({
+        key,
+        description: current?.description || GENERATE_PLACEHOLDER_DESCRIPTIONS[key] || '',
+        value: derivedValues[key] || '',
+      });
+    });
+  });
+
+  return nextRows;
+};
+
 const buildGenerateCodePlaceholderPayload = async (project: any) => {
   const templateProjectId = Number(project?.ID || 0);
   if (!templateProjectId) return { projectInstanceId: 0, pathSet: 0, pathIds: [] as number[], placeholders: [] as DbTemplatePlaceholder[] };
@@ -132,11 +353,24 @@ const buildGenerateCodePlaceholderPayload = async (project: any) => {
       return Number(pathObj.pathSet || 0) === Number(pathSet || 0);
     });
 
+  const placeholders: DbTemplatePlaceholder[] = [...mergeDbTemplatePlaceholders(paths)];
+  for (const pathObj of paths) {
+    placeholders.push(...extractGeneratePlaceholdersFromText(pathObj.fileUrl));
+    placeholders.push(...extractGeneratePlaceholdersFromText(pathObj.fileName));
+    const modelRes: any = await getModelListByPathId(Number(pathObj.ID || 0));
+    const models = normalizeProjectRows(unwrapResponseData(modelRes));
+    models.forEach((model: any) => {
+      placeholders.push(...extractGeneratePlaceholdersFromText(model.content));
+      placeholders.push(...extractGeneratePlaceholdersFromText(model.prompt));
+    });
+  }
+
   return {
     projectInstanceId,
     pathSet,
     pathIds,
-    placeholders: mergeDbTemplatePlaceholders(paths),
+    placeholders: mergeGeneratePlaceholders(placeholders),
+    storedPlaceholderValues: parseStoredGeneratePlaceholderValues(instance?.generatePlaceholderValues),
   };
 };
 
@@ -171,8 +405,8 @@ export default function ProjectDashboard() {
     pathGroupKey: string;
   } | null>(null);
   const [generateProject, setGenerateProject] = useState<any | null>(null);
-  const [generateDraft, setGenerateDraft] = useState({ module: '', tableName: '', overwrite: false });
   const [generateResult, setGenerateResult] = useState<any | null>(null);
+  const [loadingGeneratePlaceholders, setLoadingGeneratePlaceholders] = useState(false);
   const [dbTemplateProject, setDbTemplateProject] = useState<any | null>(null);
   const [generatingTemplateProjectId, setGeneratingTemplateProjectId] = useState<number | null>(null);
   const [copyingTemplateProjectId, setCopyingTemplateProjectId] = useState<number | null>(null);
@@ -412,10 +646,29 @@ export default function ProjectDashboard() {
     }
   };
 
-  const openGenerateDialog = (project: any) => {
+  const openGenerateDialog = async (project: any) => {
     setGenerateProject(project);
-    setGenerateDraft({ module: '', tableName: '', overwrite: false });
     setGenerateResult(null);
+    setGeneratePlaceholderRows([]);
+    setGeneratePlaceholderMeta(null);
+    setLoadingGeneratePlaceholders(true);
+    try {
+      const payload = await buildGenerateCodePlaceholderPayload(project);
+      const restoredRows = applyStoredGeneratePlaceholderValues(
+        payload.placeholders.map((item) => ({ ...item })),
+        payload.storedPlaceholderValues,
+      );
+      setGeneratePlaceholderRows(normalizeGeneratePlaceholderRows(restoredRows));
+      setGeneratePlaceholderMeta({
+        projectInstanceId: payload.projectInstanceId,
+        pathSet: payload.pathSet,
+        pathIds: payload.pathIds,
+      });
+    } catch (e) {
+      toast.error('读取动态占位符失败');
+    } finally {
+      setLoadingGeneratePlaceholders(false);
+    }
   };
 
   const closeGenerateDialog = () => {
@@ -433,8 +686,8 @@ export default function ProjectDashboard() {
     meta?: { projectInstanceId: number; pathSet: number; pathIds: number[] } | null,
   ) => {
     const templateProjectId = Number(project?.ID || 0);
-    const module = generateDraft.module.trim();
-    const tableName = generateDraft.tableName.trim();
+    const module = String(placeholderValues.module || '').trim();
+    const tableName = String(placeholderValues.TableName || '').trim();
 
     setGeneratingTemplateProjectId(templateProjectId);
     try {
@@ -445,7 +698,6 @@ export default function ProjectDashboard() {
         pathIds: Array.isArray(meta?.pathIds) ? meta?.pathIds : [],
         module,
         tableName,
-        overwrite: generateDraft.overwrite,
         placeholderValues,
       });
       if (typeof res?.code !== 'undefined' && Number(res.code) !== 0) {
@@ -465,38 +717,19 @@ export default function ProjectDashboard() {
 
   const handleGenerateCode = async () => {
     const templateProjectId = Number(generateProject?.ID || 0);
-    const module = generateDraft.module.trim();
-    const tableName = generateDraft.tableName.trim();
 
     if (!templateProjectId) return;
-    if (!module) {
-      toast.error('module 不能为空');
-      return;
-    }
-    if (!tableName) {
-      toast.error('TableName 不能为空');
+    if (loadingGeneratePlaceholders) {
+      toast.error('动态占位符还在加载');
       return;
     }
 
-    setGeneratingTemplateProjectId(templateProjectId);
-    try {
-      const payload = await buildGenerateCodePlaceholderPayload(generateProject);
-      if (payload.placeholders.length > 0) {
-        setGeneratePlaceholderProject(generateProject);
-        setGeneratePlaceholderRows(payload.placeholders.map((item) => ({ ...item })));
-        setGeneratePlaceholderMeta({
-          projectInstanceId: payload.projectInstanceId,
-          pathSet: payload.pathSet,
-          pathIds: payload.pathIds,
-        });
-        return;
-      }
-      await runGenerateCode(generateProject, {}, payload);
-    } catch (e) {
-      toast.error('读取动态占位符失败');
-    } finally {
-      setGeneratingTemplateProjectId(null);
-    }
+    const values = generatePlaceholderRows.reduce<DbTemplatePlaceholderValues>((next, row) => {
+      const key = String(row.key || '').trim();
+      if (key) next[key] = String(row.value ?? '');
+      return next;
+    }, {});
+    await runGenerateCode(generateProject, values, generatePlaceholderMeta);
   };
 
   const handleCopyDbTemplateSql = async (project: any) => {
@@ -589,6 +822,107 @@ export default function ProjectDashboard() {
 
   const updateGeneratePlaceholderRow = (index: number, value: string) => {
     setGeneratePlaceholderRows((rows) => rows.map((row, rowIndex) => rowIndex === index ? { ...row, value } : row));
+  };
+
+  const updateGenerateNamePlaceholderGroup = (group: GeneratePlaceholderGroup, value: string) => {
+    const derivedValues = group.buildValues(value);
+    setGeneratePlaceholderRows((rows) => rows.map((row) => {
+      if (!group.keys.includes(row.key)) return row;
+      return {
+        ...row,
+        value: derivedValues[row.key] || '',
+      };
+    }));
+  };
+
+  const renderGeneratePlaceholderRows = () => {
+    const activeGroups = buildDynamicGeneratePlaceholderGroups(generatePlaceholderRows)
+      .map((group) => ({
+        group,
+        rows: group.keys
+          .map((key) => generatePlaceholderRows.find((row) => row.key === key))
+          .filter(Boolean) as DbTemplatePlaceholder[],
+      }))
+      .filter((item) => item.rows.length > 0);
+    const hasGroupedRows = activeGroups.length > 0;
+    const normalRows = generatePlaceholderRows.filter((row) => !isGroupedGeneratePlaceholderKey(row.key, activeGroups.map((item) => item.group)));
+
+    return (
+      <>
+        {activeGroups.map(({ group }, groupIndex) => {
+          const parentRow = generatePlaceholderRows.find((row) => row.key === group.parentKey) ||
+            generatePlaceholderRows.find((row) => group.keys.includes(row.key));
+          if (!parentRow) return null;
+          return (
+            <React.Fragment key={group.parentKey}>
+              <div className="grid grid-cols-[minmax(140px,0.8fr)_minmax(180px,1fr)_minmax(220px,1.2fr)] items-center border-b border-slate-100 bg-teal-50/50">
+                <div className="px-4 py-3">
+                  <div className="font-mono text-sm font-extrabold text-slate-800">{group.parentKey}</div>
+                  <div className="mt-1 text-[11px] font-bold text-teal-700">父节点</div>
+                </div>
+                <div className="px-4 py-3 text-sm font-medium text-slate-500">
+                  {parentRow.description || GENERATE_PLACEHOLDER_DESCRIPTIONS[group.parentKey]}
+                </div>
+                <div className="p-2">
+                  <input
+                    type="text"
+                    value={parentRow.value || ''}
+                    onChange={(event) => updateGenerateNamePlaceholderGroup(group, event.target.value)}
+                    className="w-full rounded-lg border border-teal-300 bg-white px-3 py-2 font-mono text-sm font-semibold text-slate-900 outline-none transition focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20"
+                    autoFocus={groupIndex === 0}
+                  />
+                </div>
+              </div>
+              {group.childKeys.map((key) => {
+                const row = generatePlaceholderRows.find((item) => item.key === key);
+                if (!row) return null;
+                return (
+                  <div
+                    key={key}
+                    className="grid grid-cols-[minmax(140px,0.8fr)_minmax(180px,1fr)_minmax(220px,1.2fr)] items-center border-b border-slate-100 bg-slate-50/60"
+                  >
+                    <div className="px-4 py-3 pl-8">
+                      <div className="font-mono text-sm font-bold text-slate-600">{row.key}</div>
+                      <div className="mt-1 text-[11px] font-bold text-slate-400">由 {group.parentKey} 派生</div>
+                    </div>
+                    <div className="px-4 py-3 text-sm font-medium text-slate-500">{row.description || '-'}</div>
+                    <div className="p-2">
+                      <input
+                        type="text"
+                        value={row.value || ''}
+                        readOnly
+                        className="w-full cursor-not-allowed rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 font-mono text-sm font-semibold text-slate-500 outline-none"
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </React.Fragment>
+          );
+        })}
+        {normalRows.map((row, index) => {
+          const realIndex = generatePlaceholderRows.findIndex((item) => item.key === row.key);
+          return (
+            <div
+              key={`${row.key}-${index}`}
+              className="grid grid-cols-[minmax(140px,0.8fr)_minmax(180px,1fr)_minmax(220px,1.2fr)] items-center border-b border-slate-100 last:border-b-0"
+            >
+              <div className="break-all px-4 py-3 font-mono text-sm font-bold text-slate-700">{row.key}</div>
+              <div className="px-4 py-3 text-sm font-medium text-slate-500">{row.description || '-'}</div>
+              <div className="p-2">
+                <input
+                  type="text"
+                  value={row.value || ''}
+                  onChange={(event) => updateGeneratePlaceholderRow(realIndex, event.target.value)}
+                  className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 font-mono text-sm font-semibold text-slate-900 outline-none transition focus:border-teal-400 focus:bg-white focus:ring-2 focus:ring-teal-500/20"
+                  autoFocus={!hasGroupedRows && index === 0}
+                />
+              </div>
+            </div>
+          );
+        })}
+      </>
+    );
   };
 
   const closeGeneratePlaceholderDialog = () => {
@@ -964,39 +1298,24 @@ export default function ProjectDashboard() {
               </div>
 
               <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  <div>
-                    <label className="mb-2 block text-sm font-bold text-slate-700">module</label>
-                    <input
-                      type="text"
-                      value={generateDraft.module}
-                      onChange={e => setGenerateDraft({ ...generateDraft, module: e.target.value })}
-                      className="w-full rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 font-mono text-sm font-bold text-slate-900 outline-none transition focus:border-teal-400 focus:bg-white focus:ring-2 focus:ring-teal-500/20"
-                      placeholder="btStation"
-                      autoFocus
-                    />
+                {loadingGeneratePlaceholders ? (
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm font-bold text-slate-400">
+                    正在读取动态占位符...
                   </div>
-                  <div>
-                    <label className="mb-2 block text-sm font-bold text-slate-700">TableName</label>
-                    <input
-                      type="text"
-                      value={generateDraft.tableName}
-                      onChange={e => setGenerateDraft({ ...generateDraft, tableName: e.target.value })}
-                      className="w-full rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 font-mono text-sm font-bold text-slate-900 outline-none transition focus:border-teal-400 focus:bg-white focus:ring-2 focus:ring-teal-500/20"
-                      placeholder="BtStation"
-                    />
+                ) : generatePlaceholderRows.length > 0 ? (
+                  <div className="overflow-hidden rounded-lg border border-slate-200">
+                    <div className="grid grid-cols-[minmax(140px,0.8fr)_minmax(180px,1fr)_minmax(220px,1.2fr)] border-b border-slate-200 bg-slate-50 text-sm font-bold text-slate-600">
+                      <div className="px-4 py-3">占位符 key</div>
+                      <div className="px-4 py-3">描述</div>
+                      <div className="px-4 py-3">value</div>
+                    </div>
+                    {renderGeneratePlaceholderRows()}
                   </div>
-                </div>
-
-                <label className="mt-5 flex cursor-pointer items-center justify-between gap-4 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
-                  <span className="text-sm font-bold text-slate-700">覆盖已存在目标文件</span>
-                  <input
-                    type="checkbox"
-                    checked={generateDraft.overwrite}
-                    onChange={e => setGenerateDraft({ ...generateDraft, overwrite: e.target.checked })}
-                    className="h-5 w-5 accent-teal-500"
-                  />
-                </label>
+                ) : (
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm font-bold text-slate-400">
+                    当前启用路径没有动态占位符
+                  </div>
+                )}
 
                 {generateResult && (
                   <div className="mt-5 space-y-4">
@@ -1080,8 +1399,8 @@ export default function ProjectDashboard() {
                         {(generateResult.files || []).map((file: any) => (
                           <div key={`${file.pathId}-${file.relativePath}`} className="rounded-md px-2 py-2 text-xs hover:bg-white">
                             <div className="mb-1 flex items-center gap-2">
-                              <span className={`shrink-0 rounded-full px-2 py-0.5 font-bold ${file.status === 'skipped' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>
-                                {file.status === 'skipped' ? '跳过' : file.status === 'overwritten' ? '覆盖' : '生成'}
+                              <span className={`shrink-0 rounded-full px-2 py-0.5 font-bold ${file.status === 'incremented' ? 'bg-cyan-100 text-cyan-700' : file.status === 'skipped' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                                {file.status === 'incremented' ? '增量' : file.status === 'skipped' ? '跳过' : file.status === 'overwritten' ? '覆盖' : '生成'}
                               </span>
                               <span className="min-w-0 flex-1 truncate font-mono font-bold text-slate-700" title={file.absolutePath || file.path}>
                                 {file.absolutePath || file.path}
@@ -1267,23 +1586,7 @@ export default function ProjectDashboard() {
                     <div className="px-4 py-3">描述</div>
                     <div className="px-4 py-3">value</div>
                   </div>
-                  {generatePlaceholderRows.map((row, index) => (
-                    <div
-                      key={`${row.key}-${index}`}
-                      className="grid grid-cols-[minmax(140px,0.8fr)_minmax(200px,1.2fr)_minmax(220px,1.4fr)] items-center border-b border-slate-100 last:border-b-0"
-                    >
-                      <div className="break-all px-4 py-3 font-mono text-sm font-bold text-slate-700">{row.key}</div>
-                      <div className="px-4 py-3 text-sm font-medium text-slate-500">{row.description || '-'}</div>
-                      <div className="p-2">
-                        <input
-                          value={row.value || ''}
-                          onChange={(event) => updateGeneratePlaceholderRow(index, event.target.value)}
-                          className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 font-mono text-sm font-semibold text-slate-900 outline-none transition focus:border-teal-400 focus:bg-white focus:ring-2 focus:ring-teal-500/20"
-                          autoFocus={index === 0}
-                        />
-                      </div>
-                    </div>
-                  ))}
+                  {renderGeneratePlaceholderRows()}
                 </div>
               </div>
 

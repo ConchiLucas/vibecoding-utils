@@ -74,6 +74,41 @@ func TestRenderCodeGenerationTextReplacesDynamicPlaceholders(t *testing.T) {
 	}
 }
 
+func TestApplyIncrementalTemplateContentInsertsJavaFragmentBeforeLastBrace(t *testing.T) {
+	existing := "package demo;\n\npublic interface DemoSqlId {\n    String OLD = \"old\";\n}\n"
+	fragment := "    /**\n     * 运单管理分页查询\n     */\n    String BT_WAYBILL_QUERY_GET_PAGE_LIST = \"btWaybill_query_getPageList\";"
+
+	got, status, applied := applyIncrementalTemplateContent("/tmp/DemoSqlId.java", existing, fragment)
+	if !applied {
+		t.Fatal("applyIncrementalTemplateContent applied = false, want true")
+	}
+	if status != "incremented" {
+		t.Fatalf("status = %q, want incremented", status)
+	}
+	if !strings.Contains(got, fragment+"\n}") {
+		t.Fatalf("incremental content was not inserted before final brace:\n%s", got)
+	}
+	if strings.Contains(got, "}\n    /**") {
+		t.Fatalf("incremental content was appended after final brace:\n%s", got)
+	}
+}
+
+func TestApplyIncrementalTemplateContentSkipsDuplicateJavaConstant(t *testing.T) {
+	existing := "package demo;\n\npublic interface DemoSqlId {\n    String BT_WAYBILL_QUERY_GET_PAGE_LIST = \"btWaybill_query_getPageList\";\n}\n"
+	fragment := "    /**\n     * 运单管理分页查询\n     */\n    String BT_WAYBILL_QUERY_GET_PAGE_LIST = \"btWaybill_query_getPageList\";"
+
+	got, status, applied := applyIncrementalTemplateContent("/tmp/DemoSqlId.java", existing, fragment)
+	if !applied {
+		t.Fatal("applyIncrementalTemplateContent applied = false, want true")
+	}
+	if status != "skipped" {
+		t.Fatalf("status = %q, want skipped", status)
+	}
+	if got != existing {
+		t.Fatalf("duplicate content changed existing file:\n%s", got)
+	}
+}
+
 func TestBuildCodeGenerationTaskPromptContentIncludesTargets(t *testing.T) {
 	drafts := []generateProjectCodeDraft{
 		{
@@ -88,16 +123,19 @@ func TestBuildCodeGenerationTaskPromptContentIncludesTargets(t *testing.T) {
 		},
 	}
 
-	content := buildCodeGenerationTaskPromptContent("demo", "Demo", false, "测试项目", "/tmp/output", 1, drafts)
+	content := buildCodeGenerationTaskPromptContent("demo", "Demo", "测试项目", "/tmp/output", 1, drafts)
 	for _, want := range []string{
 		"/tmp/output/src/demo/DemoItem.java",
 		"读取目标文件并生成最终代码。",
 		"请根据产品文档生成新增编辑入参类。",
-		"public class DemoItem {}",
+		"读取目标文件所在目录",
 		"字段只保留前端或业务真正使用的字段",
 	} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("prompt content does not contain %q:\n%s", want, content)
 		}
+	}
+	if strings.Contains(content, "public class DemoItem {}") {
+		t.Fatalf("prompt content should not include template content:\n%s", content)
 	}
 }

@@ -1,6 +1,7 @@
 package system
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -53,7 +54,9 @@ const codeGenerationModifyInstructions = `请读取每个目标文件的绝对�
 type generateProjectCodeDraft struct {
 	File            GenerateProjectCodeFile
 	TemplateContent string
+	ExistingContent string
 	FilePrompt      string
+	Incremented     bool
 }
 
 type generateProjectPathTemplate struct {
@@ -141,12 +144,6 @@ func (s *TbGenerateProjectService) GenerateCode(req systemReq.GenerateProjectCod
 	}
 	module := strings.TrimSpace(req.Module)
 	tableName := strings.TrimSpace(req.TableName)
-	if module == "" {
-		return GenerateProjectCodeResult{}, errors.New("module 必填")
-	}
-	if tableName == "" {
-		return GenerateProjectCodeResult{}, errors.New("TableName 必填")
-	}
 
 	var project system.TbGenerateProject
 	if err := global.GVA_DB.Where("id = ?", req.TemplateProjectId).First(&project).Error; err != nil {
@@ -181,6 +178,9 @@ func (s *TbGenerateProjectService) GenerateCode(req systemReq.GenerateProjectCod
 	}
 
 	vars := mergeCodeGenerationPlaceholderValues(buildCodeGenerationVars(module, tableName), req.PlaceholderValues)
+	if err := saveGeneratePlaceholderValues(int(instance.ID), req.PlaceholderValues); err != nil {
+		return GenerateProjectCodeResult{}, err
+	}
 	result := GenerateProjectCodeResult{
 		TemplateProjectId:  int(project.ID),
 		ProjectInstanceId:  int(instance.ID),
@@ -202,6 +202,7 @@ func (s *TbGenerateProjectService) GenerateCode(req systemReq.GenerateProjectCod
 		pathTemplate := templates[int(pathObj.ID)]
 		content := renderCodeGenerationText(pathTemplate.Content, vars)
 		filePrompt := renderCodeGenerationText(pathTemplate.Prompt, vars)
+		incremented := pathObj.Incremented == 1
 		fileResult := GenerateProjectCodeFile{
 			Path:         targetPath,
 			AbsolutePath: targetPath,
@@ -209,26 +210,45 @@ func (s *TbGenerateProjectService) GenerateCode(req systemReq.GenerateProjectCod
 			PathId:       pathObj.ID,
 			Status:       "generated",
 			Bytes:        len([]byte(content)),
-			Instruction:  buildGenerateCodeFileInstruction(relativePath, targetPath),
+			Instruction:  buildGenerateCodeFileInstruction(relativePath, targetPath, incremented),
 		}
 		result.TargetPaths = append(result.TargetPaths, targetPath)
 
 		fileStatus := "generated"
-		if _, err := os.Stat(targetPath); err == nil {
-			if !req.Overwrite {
-				result.SkippedCount++
-				fileResult.Status = "skipped"
+		existingContent := ""
+		if existingBytes, err := os.ReadFile(targetPath); err == nil {
+			existingContent = string(existingBytes)
+			if incremented {
+				if nextContent, status, applied := applyIncrementalTemplateContent(targetPath, existingContent, content); applied {
+					fileResult.Status = status
+					fileResult.Bytes = len([]byte(nextContent))
+					if status == "skipped" {
+						result.SkippedCount++
+					} else {
+						if err := os.WriteFile(targetPath, []byte(nextContent), 0o644); err != nil {
+							return GenerateProjectCodeResult{}, fmt.Errorf("增量写入文件失败(%s): %w", targetPath, err)
+						}
+						result.GeneratedCount++
+					}
+					result.Files = append(result.Files, fileResult)
+					continue
+				}
+
+				fileResult.Status = "incremented"
+				fileResult.Bytes = len(existingBytes)
 				result.Files = append(result.Files, fileResult)
 				drafts = append(drafts, generateProjectCodeDraft{
 					File:            fileResult,
 					TemplateContent: content,
+					ExistingContent: existingContent,
 					FilePrompt:      filePrompt,
+					Incremented:     true,
 				})
 				continue
 			}
 			fileStatus = "overwritten"
 		} else if err != nil && !os.IsNotExist(err) {
-			return GenerateProjectCodeResult{}, fmt.Errorf("检查文件失败(%s): %w", targetPath, err)
+			return GenerateProjectCodeResult{}, fmt.Errorf("读取文件失败(%s): %w", targetPath, err)
 		}
 
 		if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
@@ -244,13 +264,88 @@ func (s *TbGenerateProjectService) GenerateCode(req systemReq.GenerateProjectCod
 		drafts = append(drafts, generateProjectCodeDraft{
 			File:            fileResult,
 			TemplateContent: content,
+			ExistingContent: existingContent,
 			FilePrompt:      filePrompt,
+			Incremented:     incremented,
 		})
 	}
 
-	result.Prompt = buildCodeGenerationTaskPromptContent(module, tableName, req.Overwrite, result.ProjectName, result.DiskPath, result.PathSet, drafts)
+	result.Prompt = buildCodeGenerationTaskPromptContent(module, tableName, result.ProjectName, result.DiskPath, result.PathSet, drafts)
 
 	return result, nil
+}
+
+func saveGeneratePlaceholderValues(projectInstanceId int, values map[string]string) error {
+	if projectInstanceId <= 0 {
+		return nil
+	}
+	data, err := json.Marshal(values)
+	if err != nil {
+		return fmt.Errorf("保存生成代码占位符参数失败: %w", err)
+	}
+	return global.GVA_DB.Model(&system.TbGenerateProjectInstance{}).
+		Where("id = ?", projectInstanceId).
+		Update("generate_placeholder_values", string(data)).Error
+}
+
+func applyIncrementalTemplateContent(targetPath string, existingContent string, templateContent string) (string, string, bool) {
+	fragment := strings.TrimSpace(templateContent)
+	if fragment == "" {
+		return existingContent, "skipped", true
+	}
+	if !strings.EqualFold(filepath.Ext(targetPath), ".java") {
+		return existingContent, "", false
+	}
+	if isIncrementalTemplateDuplicate(existingContent, fragment) {
+		return existingContent, "skipped", true
+	}
+
+	insertIndex := strings.LastIndex(existingContent, "}")
+	if insertIndex < 0 {
+		return existingContent, "", false
+	}
+
+	prefix := strings.TrimRight(existingContent[:insertIndex], " \t\r\n")
+	suffix := existingContent[insertIndex:]
+	nextContent := prefix + "\n\n" + strings.TrimRight(templateContent, " \t\r\n") + "\n" + suffix
+	return nextContent, "incremented", true
+}
+
+func isIncrementalTemplateDuplicate(existingContent string, fragment string) bool {
+	if strings.Contains(existingContent, fragment) {
+		return true
+	}
+
+	constantPattern := regexp.MustCompile(`\bString\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*"([^"]+)"`)
+	matches := constantPattern.FindAllStringSubmatch(fragment, -1)
+	for _, match := range matches {
+		if len(match) < 3 {
+			continue
+		}
+		constantName := strings.TrimSpace(match[1])
+		constantValue := strings.TrimSpace(match[2])
+		if constantName != "" && strings.Contains(existingContent, constantName) {
+			return true
+		}
+		if constantValue != "" && strings.Contains(existingContent, constantValue) {
+			return true
+		}
+	}
+	return false
+}
+
+func parseGeneratePlaceholderValues(raw string) map[string]string {
+	var values map[string]string
+	if strings.TrimSpace(raw) == "" {
+		return map[string]string{}
+	}
+	if err := json.Unmarshal([]byte(raw), &values); err != nil {
+		return map[string]string{}
+	}
+	if values == nil {
+		return map[string]string{}
+	}
+	return values
 }
 
 func (s *TbGenerateProjectService) UpdateSelectedProjectInstance(templateProjectId int, projectInstanceId int) error {
@@ -383,12 +478,13 @@ func (s *TbGenerateProjectService) copyProjectInstancesTx(tx *gorm.DB, sourcePro
 	selectedInstanceMap := make(map[int]int, len(instances))
 	for _, instance := range instances {
 		newInstance := system.TbGenerateProjectInstance{
-			TemplateProjectId:       int(targetProject.ID),
-			ProjectName:             instance.ProjectName,
-			DiskPath:                instance.DiskPath,
-			Remark:                  instance.Remark,
-			UserName:                instance.UserName,
-			SelectedPathSetIdentity: instance.SelectedPathSetIdentity,
+			TemplateProjectId:         int(targetProject.ID),
+			ProjectName:               instance.ProjectName,
+			DiskPath:                  instance.DiskPath,
+			Remark:                    instance.Remark,
+			UserName:                  instance.UserName,
+			SelectedPathSetIdentity:   instance.SelectedPathSetIdentity,
+			GeneratePlaceholderValues: instance.GeneratePlaceholderValues,
 		}
 		if err := tx.Create(&newInstance).Error; err != nil {
 			return err
@@ -597,28 +693,30 @@ func mergeCodeGenerationPlaceholderValues(vars map[string]string, values map[str
 	return next
 }
 
-func buildCodeGenerationTaskPromptContent(module string, tableName string, overwrite bool, projectName string, diskPath string, pathSet int, drafts []generateProjectCodeDraft) string {
+func buildCodeGenerationTaskPromptContent(module string, tableName string, projectName string, diskPath string, pathSet int, drafts []generateProjectCodeDraft) string {
 	var builder strings.Builder
 	builder.WriteString("# Codex 代码生成任务\n\n")
-	builder.WriteString("请按下面的绝对路径逐个读取目标文件，把每个带提示词或模板内容的文件改造成最终可用代码。\n\n")
+	builder.WriteString("代码模板已经由系统生成到目标目录。请不要根据提示词重新还原模板内容，而是按下面的绝对路径读取真实文件和相邻目录，把生成结果检查并修复为最终可用代码。\n\n")
 
 	builder.WriteString("## 输入参数\n\n")
 	builder.WriteString(fmt.Sprintf("- 项目: %s\n", markdownInline(projectName)))
 	builder.WriteString(fmt.Sprintf("- module: `%s`\n", module))
 	builder.WriteString(fmt.Sprintf("- TableName: `%s`\n", tableName))
 	builder.WriteString(fmt.Sprintf("- 磁盘输出路径: `%s`\n", diskPath))
-	builder.WriteString(fmt.Sprintf("- pathSet: `%d`\n", pathSet))
-	builder.WriteString(fmt.Sprintf("- 覆盖已存在文件: `%t`\n\n", overwrite))
+	builder.WriteString(fmt.Sprintf("- pathSet: `%d`\n\n", pathSet))
 
 	builder.WriteString("## 总体修改规则\n\n")
 	for index, rule := range []string{
-		"读取每个目标文件的绝对路径，目标文件当前是代码模板生成的文件或已有代码。",
+		"逐个读取目标文件绝对路径；目标文件当前已经是模板生成后的文件或已有代码。",
+		"同时读取目标文件所在目录、同模块相邻目录和同类文件，优先借鉴当前项目真实代码风格。",
 		"每个目标文件如果提供了“文件提示词”，优先按该文件提示词理解这个文件的职责和改造边界。",
+		"状态为 incremented 的目标文件是增量文件，必须读取目标文件现有内容，在正确位置追加或合并必要代码，不要整体覆盖原文件。",
+		"状态为 generated 或 overwritten 的目标文件已经按模板写入，可在当前文件基础上改造成最终业务代码。",
 		"生成最终代码时删除“根据实际情况修改”“示例”“提示词”等说明，只保留必要业务注释。",
 		"package、import、类名、SQL id、字段和方法都要按当前项目上下文、module 和 TableName 调整。",
 		"字段只保留前端或业务真正使用的字段，不要机械罗列数据库所有字段。",
 		"id、stationCode 等示例字段只作为参考，不符合实际业务时替换。",
-		"状态为 skipped 的目标文件没有被本次写入模板内容，如需参考模板，请看本提示词中对应的“模板内容”。",
+		"不要修改未列入目标文件的无关文件；如果需要参考，只读取不改动。",
 	} {
 		builder.WriteString(fmt.Sprintf("%d. %s\n", index+1, rule))
 	}
@@ -635,9 +733,11 @@ func buildCodeGenerationTaskPromptContent(module string, tableName string, overw
 			appendMarkdownFence(&builder, "text", draft.FilePrompt)
 			builder.WriteString("\n")
 		}
-		builder.WriteString("模板内容:\n\n")
-		appendMarkdownFence(&builder, guessMarkdownFenceLanguage(draft.File.RelativePath), draft.TemplateContent)
-		builder.WriteString("\n")
+		if draft.Incremented {
+			builder.WriteString("处理要求: 这是增量文件，请打开目标文件读取现有内容，并按当前文件结构追加或合并必要代码。\n\n")
+		} else {
+			builder.WriteString("处理要求: 这是模板已生成的目标文件，请打开目标文件并结合相邻目录代码风格修复为最终业务代码。\n\n")
+		}
 	}
 
 	builder.WriteString("## 输出要求\n\n")
@@ -647,8 +747,11 @@ func buildCodeGenerationTaskPromptContent(module string, tableName string, overw
 	return builder.String()
 }
 
-func buildGenerateCodeFileInstruction(relativePath string, absolutePath string) string {
-	return fmt.Sprintf("读取 `%s`，结合文件提示词、代码模板和产品文档改写为最终业务代码；最终文件路径保持为 `%s`。", absolutePath, relativePath)
+func buildGenerateCodeFileInstruction(relativePath string, absolutePath string, incremented bool) string {
+	if incremented {
+		return fmt.Sprintf("读取 `%s`，保留现有内容并按当前文件结构追加或合并必要代码；最终文件路径保持为 `%s`。", absolutePath, relativePath)
+	}
+	return fmt.Sprintf("读取 `%s`，结合文件提示词、相邻目录代码风格和产品文档修复为最终业务代码；最终文件路径保持为 `%s`。", absolutePath, relativePath)
 }
 
 func markdownInline(value string) string {

@@ -114,6 +114,67 @@ const formatPathFileLabel = (pathObj: any) => {
   return fileName;
 };
 
+const PATH_PLACEHOLDER_DEFAULTS: Record<string, string> = {
+  module: 'btStation',
+  Module: 'BtStation',
+  moduleName: 'btStation',
+  ModuleName: 'BtStation',
+  TableName: 'BtStation',
+  tableName: 'btStation',
+  table_name: 'bt_station',
+  TABLE_NAME: 'BT_STATION',
+};
+
+const PATH_PLACEHOLDER_DESCRIPTIONS: Record<string, string> = {
+  module: '模块名，小驼峰',
+  Module: '模块名，大驼峰',
+  moduleName: '模块名，小驼峰',
+  ModuleName: '模块名，大驼峰',
+  TableName: '实体/类名，大驼峰',
+  tableName: '实体/变量名，小驼峰',
+  table_name: '表名/SQL 名，下划线',
+  TABLE_NAME: '常量名，大写下划线',
+};
+
+const extractPathPlaceholdersFromText = (text: any): DbTemplatePlaceholder[] => {
+  const raw = String(text || '');
+  const keys = new Set<string>();
+  [
+    /\{\{\s*([A-Za-z][A-Za-z0-9_]*)\s*\}\}/g,
+    /\$\{\s*([A-Za-z][A-Za-z0-9_]*)\s*\}/g,
+  ].forEach((pattern) => {
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(raw)) !== null) {
+      if (match[1]) keys.add(match[1]);
+    }
+  });
+  return Array.from(keys).map((key) => ({
+    key,
+    description: PATH_PLACEHOLDER_DESCRIPTIONS[key] || '',
+    value: PATH_PLACEHOLDER_DEFAULTS[key] || '',
+  }));
+};
+
+const mergePathPlaceholders = (items: DbTemplatePlaceholder[]): DbTemplatePlaceholder[] => {
+  const merged = new Map<string, DbTemplatePlaceholder>();
+  items.forEach((item) => {
+    const key = String(item?.key || '').trim();
+    if (!key) return;
+    const current = merged.get(key);
+    if (!current) {
+      merged.set(key, {
+        key,
+        description: String(item.description || PATH_PLACEHOLDER_DESCRIPTIONS[key] || '').trim(),
+        value: String(item.value || PATH_PLACEHOLDER_DEFAULTS[key] || '').trim(),
+      });
+      return;
+    }
+    if (!current.description && item.description) current.description = item.description;
+    if (!current.value && item.value) current.value = item.value;
+  });
+  return Array.from(merged.values());
+};
+
 const getLanguageType = (filename: string) => {
   const fn = (filename || '').toLowerCase();
   if (fn.includes('.json')) return 'json';
@@ -530,6 +591,7 @@ export default function ProjectConfigDialog({
   const [promptDraft, setPromptDraft] = useState('');
   const [placeholderPath, setPlaceholderPath] = useState<any | null>(null);
   const [placeholderRows, setPlaceholderRows] = useState<DbTemplatePlaceholder[]>([]);
+  const [loadingPlaceholders, setLoadingPlaceholders] = useState(false);
   const [loadingProjects, setLoadingProjects] = useState(false);
   const [loadingPaths, setLoadingPaths] = useState(false);
   const [savingProject, setSavingProject] = useState(false);
@@ -549,6 +611,13 @@ export default function ProjectConfigDialog({
   const pathSetDisplayNumberRef = useRef<Map<string, number>>(new Map());
   const cancelPathSetNameSaveRef = useRef<Set<string>>(new Set());
   const initialPathDetailAppliedRef = useRef('');
+
+  const pathPlaceholderOptions = useMemo(() => (
+    mergePathPlaceholders([
+      ...paths.flatMap((pathObj) => parseDbTemplatePlaceholders(pathObj?.dynamicPlaceholders)),
+      ...placeholderRows,
+    ])
+  ), [paths, placeholderRows]);
 
   useEffect(() => {
     const previousBodyOverflow = document.body.style.overflow;
@@ -1136,9 +1205,41 @@ export default function ProjectConfigDialog({
     }
   };
 
-  const openPathPlaceholderDialog = (pathObj: any) => {
+  const openPathPlaceholderDialog = async (pathObj: any) => {
     setPlaceholderPath(pathObj);
-    setPlaceholderRows(parseDbTemplatePlaceholders(pathObj?.dynamicPlaceholders));
+    const savedPlaceholders = parseDbTemplatePlaceholders(pathObj?.dynamicPlaceholders);
+    setPlaceholderRows([]);
+    setLoadingPlaceholders(true);
+    try {
+      const inferredPlaceholders: DbTemplatePlaceholder[] = [
+        ...extractPathPlaceholdersFromText(pathObj?.fileUrl),
+        ...extractPathPlaceholdersFromText(pathObj?.fileName),
+      ];
+      const res: any = await getModelListByPathId(Number(pathObj.ID || 0));
+      let models = unwrapResponseData(res);
+      if (!Array.isArray(models)) models = [];
+      models
+        .filter((item: any) => Number(item.pathId || 0) === Number(pathObj.ID || 0))
+        .forEach((model: any) => {
+          inferredPlaceholders.push(...extractPathPlaceholdersFromText(model?.content));
+          inferredPlaceholders.push(...extractPathPlaceholdersFromText(model?.prompt));
+        });
+      const savedMap = new Map(savedPlaceholders.map((item) => [String(item.key || '').trim(), item]));
+      const nextRows = mergePathPlaceholders(inferredPlaceholders).map((item) => {
+        const saved = savedMap.get(item.key);
+        if (!saved) return item;
+        return {
+          ...item,
+          description: saved.description || item.description,
+          value: saved.value || item.value,
+        };
+      });
+      setPlaceholderRows(nextRows);
+    } catch (e) {
+      toast.error('读取文件占位符失败');
+    } finally {
+      setLoadingPlaceholders(false);
+    }
   };
 
   const addPathPlaceholderRow = () => {
@@ -1149,6 +1250,19 @@ export default function ProjectConfigDialog({
     setPlaceholderRows((rows) => rows.map((row, rowIndex) => rowIndex === index ? { ...row, ...patch } : row));
   };
 
+  const updatePathPlaceholderKey = (index: number, key: string) => {
+    const option = pathPlaceholderOptions.find((item) => item.key === key);
+    setPlaceholderRows((rows) => rows.map((row, rowIndex) => {
+      if (rowIndex !== index) return row;
+      return {
+        ...row,
+        key,
+        description: row.description || option?.description || PATH_PLACEHOLDER_DESCRIPTIONS[key] || '',
+        value: row.value || option?.value || PATH_PLACEHOLDER_DEFAULTS[key] || '',
+      };
+    }));
+  };
+
   const removePathPlaceholderRow = (index: number) => {
     setPlaceholderRows((rows) => rows.filter((_, rowIndex) => rowIndex !== index));
   };
@@ -1157,6 +1271,7 @@ export default function ProjectConfigDialog({
     if (savingPlaceholders) return;
     setPlaceholderPath(null);
     setPlaceholderRows([]);
+    setLoadingPlaceholders(false);
   };
 
   const savePathPlaceholders = async () => {
@@ -2467,6 +2582,13 @@ export default function ProjectConfigDialog({
             </div>
 
             <div className="min-h-0 flex-1 overflow-y-auto bg-[#242424] px-7 py-6">
+              <datalist id="path-placeholder-key-options">
+                {pathPlaceholderOptions.map((item) => (
+                  <option key={item.key} value={item.key}>
+                    {item.description || item.value || item.key}
+                  </option>
+                ))}
+              </datalist>
               <div className="overflow-hidden rounded-lg border border-white/15">
                 <div className="grid grid-cols-[minmax(160px,0.9fr)_minmax(180px,1.2fr)_minmax(180px,1.2fr)_48px] border-b border-white/15 bg-[#171717] text-sm font-extrabold text-gray-400">
                   <div className="px-4 py-3">占位符 key</div>
@@ -2474,7 +2596,9 @@ export default function ProjectConfigDialog({
                   <div className="px-4 py-3">默认 value</div>
                   <div />
                 </div>
-                {placeholderRows.length === 0 ? (
+                {loadingPlaceholders ? (
+                  <div className="px-4 py-8 text-center text-sm font-bold text-gray-500">正在读取占位符...</div>
+                ) : placeholderRows.length === 0 ? (
                   <div className="px-4 py-8 text-center text-sm font-bold text-gray-500">暂无占位符</div>
                 ) : placeholderRows.map((row, index) => (
                   <div
@@ -2484,7 +2608,8 @@ export default function ProjectConfigDialog({
                     <div className="p-2">
                       <input
                         value={row.key || ''}
-                        onChange={(event) => updatePathPlaceholderRow(index, { key: event.target.value })}
+                        onChange={(event) => updatePathPlaceholderKey(index, event.target.value)}
+                        list="path-placeholder-key-options"
                         className="w-full rounded-lg border border-white/15 bg-[#111111] px-3 py-2 font-mono text-sm font-bold text-white outline-none transition placeholder:text-gray-600 focus:border-teal-400 focus:ring-2 focus:ring-teal-500/20"
                         placeholder="menu_parent_id"
                         autoFocus={index === 0}
@@ -2542,7 +2667,7 @@ export default function ProjectConfigDialog({
               <button
                 type="button"
                 onClick={savePathPlaceholders}
-                disabled={savingPlaceholders}
+                disabled={savingPlaceholders || loadingPlaceholders}
                 className="inline-flex items-center gap-2 rounded-lg bg-[#0f172a] px-5 py-2.5 text-sm font-extrabold text-white transition-colors hover:bg-[#111c34] disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {savingPlaceholders ? <RefreshCw size={16} className="animate-spin" /> : <Save size={16} />}
