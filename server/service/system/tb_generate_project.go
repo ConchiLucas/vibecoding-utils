@@ -177,8 +177,13 @@ func (s *TbGenerateProjectService) GenerateCode(req systemReq.GenerateProjectCod
 		return GenerateProjectCodeResult{}, err
 	}
 
-	vars := mergeCodeGenerationPlaceholderValues(buildCodeGenerationVars(module, tableName), req.PlaceholderValues)
-	if err := saveGeneratePlaceholderValues(int(instance.ID), req.PlaceholderValues); err != nil {
+	vars := normalizeCodeGenerationDerivedVars(mergeCodeGenerationPlaceholderValues(buildCodeGenerationVars(module, tableName), req.PlaceholderValues))
+	for key, value := range renderLatestGenerateFieldSnippets(project.BusinessType) {
+		if strings.TrimSpace(key) != "" {
+			vars[key] = value
+		}
+	}
+	if err := saveGeneratePlaceholderValues(int(instance.ID), vars); err != nil {
 		return GenerateProjectCodeResult{}, err
 	}
 	result := GenerateProjectCodeResult{
@@ -693,6 +698,18 @@ func mergeCodeGenerationPlaceholderValues(vars map[string]string, values map[str
 	return next
 }
 
+func normalizeCodeGenerationDerivedVars(vars map[string]string) map[string]string {
+	module := strings.TrimSpace(vars["module"])
+	if module == "" {
+		return vars
+	}
+	vars["module"] = module
+	vars["packageModule"] = toPackageModuleName(module)
+	vars["moduleName"] = toCamelName(module)
+	vars["ModuleName"] = upperFirst(vars["moduleName"])
+	return vars
+}
+
 func buildCodeGenerationTaskPromptContent(module string, tableName string, projectName string, diskPath string, pathSet int, drafts []generateProjectCodeDraft) string {
 	var builder strings.Builder
 	builder.WriteString("# Codex 代码生成任务\n\n")
@@ -803,16 +820,19 @@ func appendMarkdownFence(builder *strings.Builder, language string, content stri
 }
 
 func buildCodeGenerationVars(module string, tableName string) map[string]string {
+	moduleName := toCamelName(module)
+	packageModule := toPackageModuleName(module)
 	return map[string]string{
-		"module":     module,
-		"Module":     upperFirst(module),
-		"MODULE":     strings.ToUpper(module),
-		"moduleName": module,
-		"ModuleName": upperFirst(module),
-		"TableName":  tableName,
-		"tableName":  lowerFirst(tableName),
-		"TABLE_NAME": strings.ToUpper(toSnakeCase(tableName)),
-		"table_name": toSnakeCase(tableName),
+		"module":        module,
+		"Module":        upperFirst(moduleName),
+		"MODULE":        strings.ToUpper(toSnakeCase(module)),
+		"packageModule": packageModule,
+		"moduleName":    moduleName,
+		"ModuleName":    upperFirst(moduleName),
+		"TableName":     tableName,
+		"tableName":     lowerFirst(tableName),
+		"TABLE_NAME":    strings.ToUpper(toSnakeCase(tableName)),
+		"table_name":    toSnakeCase(tableName),
 	}
 }
 
@@ -874,21 +894,58 @@ func lowerFirst(value string) string {
 	return string(runes)
 }
 
-func toSnakeCase(value string) string {
+func splitIdentifierWords(value string) []string {
+	var words []string
 	var builder strings.Builder
 	var previous rune
-	for index, current := range value {
-		if unicode.IsUpper(current) {
-			if index > 0 && (unicode.IsLower(previous) || unicode.IsDigit(previous)) {
-				builder.WriteRune('_')
-			}
-			builder.WriteRune(unicode.ToLower(current))
-		} else if current == '-' || current == ' ' {
-			builder.WriteRune('_')
-		} else {
-			builder.WriteRune(current)
+	flush := func() {
+		if builder.Len() == 0 {
+			return
 		}
+		words = append(words, strings.ToLower(builder.String()))
+		builder.Reset()
+	}
+	for _, current := range value {
+		if current == '/' || current == '\\' || current == '-' || current == '_' || unicode.IsSpace(current) || current == '.' {
+			flush()
+			previous = 0
+			continue
+		}
+		if unicode.IsUpper(current) && builder.Len() > 0 && (unicode.IsLower(previous) || unicode.IsDigit(previous)) {
+			flush()
+		}
+		builder.WriteRune(current)
 		previous = current
 	}
+	flush()
+	return words
+}
+
+func toCamelName(value string) string {
+	words := splitIdentifierWords(value)
+	if len(words) == 0 {
+		return ""
+	}
+	var builder strings.Builder
+	builder.WriteString(words[0])
+	for _, word := range words[1:] {
+		builder.WriteString(upperFirst(word))
+	}
 	return builder.String()
+}
+
+func toPackageModuleName(value string) string {
+	parts := strings.Split(strings.TrimSpace(value), "/")
+	var names []string
+	for _, part := range parts {
+		name := toCamelName(part)
+		if name != "" {
+			names = append(names, name)
+		}
+	}
+	return strings.Join(names, ".")
+}
+
+func toSnakeCase(value string) string {
+	return strings.Join(splitIdentifierWords(value), "_")
 }

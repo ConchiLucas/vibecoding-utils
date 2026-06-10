@@ -35,6 +35,22 @@ export const generateProjectCode = (data: any) => {
     return api.post('/tbgenerateproject/generateCode', data)
 }
 
+export const getGenerateFieldSnippetLatest = (businessType: string) => {
+    return api.get('/tbgeneratefieldsnippet/latest', { params: { businessType } })
+}
+
+export const getGenerateFieldSnippetHistory = (businessType: string) => {
+    return api.get('/tbgeneratefieldsnippet/history', { params: { businessType } })
+}
+
+export const previewGenerateFieldSnippet = (data: any) => {
+    return api.post('/tbgeneratefieldsnippet/preview', data)
+}
+
+export const saveGenerateFieldSnippet = (data: any) => {
+    return api.post('/tbgeneratefieldsnippet/save', data)
+}
+
 export const getProjectInstanceList = (templateProjectId: number, ensureDefault = true) => {
     return api.get('/tbgenerateprojectinstance/getTbGenerateProjectInstanceList', {
         params: {

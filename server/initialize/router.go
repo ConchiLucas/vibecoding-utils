@@ -96,6 +96,7 @@ func Routers() *gin.Engine {
 		systemRouter.InitTbGenerateDbTemplateRouter(PrivateGroup)
 		systemRouter.InitTbGenerateProjectPathRouter(PrivateGroup)
 		systemRouter.InitTbGenerateProjectPathModelRouter(PrivateGroup)
+		systemRouter.InitTbGenerateFieldSnippetRouter(PrivateGroup)
 		systemRouter.InitAIChatRouter(PrivateGroup)        // AI 对话
 		systemRouter.InitAIChatHistoryRouter(PrivateGroup) // AI 对话历史
 		systemRouter.InitAIConfigRouter(PrivateGroup)      // AI 配置管理

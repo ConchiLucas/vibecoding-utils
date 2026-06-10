@@ -35,6 +35,7 @@ type ServiceGroup struct {
 	TbGenerateDbTemplateScriptService
 	TbGenerateProjectPathService
 	TbGenerateProjectPathModelService
+	TbGenerateFieldSnippetService
 	AIChatService
 	AIChatHistoryService
 }

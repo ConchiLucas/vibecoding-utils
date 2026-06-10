@@ -1,8 +1,20 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Plus, Copy, ClipboardCopy, Database, FileCode, Edit2, Trash2, Search, Folder, Check, X, Wand2, RefreshCw } from 'lucide-react';
-import { getProjectList, createProject, updateProject, deleteProject, copyProject, generateProjectCode, getProjectInstanceList } from '@/api/code_generate_project';
+import { Plus, Copy, ClipboardCopy, Database, FileCode, Edit2, Trash2, Search, Folder, Check, X, Wand2, RefreshCw, Save, Eye, History } from 'lucide-react';
+import {
+  getProjectList,
+  createProject,
+  updateProject,
+  deleteProject,
+  copyProject,
+  generateProjectCode,
+  getProjectInstanceList,
+  getGenerateFieldSnippetLatest,
+  getGenerateFieldSnippetHistory,
+  previewGenerateFieldSnippet,
+  saveGenerateFieldSnippet,
+} from '@/api/code_generate_project';
 import { getDbTemplateScripts, getDbTemplateTypes } from '@/api/db_template';
 import { getModelListByPathId, getPathList } from '@/api/path_model';
 import toast from 'react-hot-toast';
@@ -35,6 +47,68 @@ const normalizeProjectRows = (value: any) => {
 };
 
 const DEFAULT_BUSINESS_TYPE = '未分类';
+
+type FieldSnippetTemplate = {
+  key: string;
+  description: string;
+  template: string;
+  separator: string;
+  excludeAudit: boolean;
+};
+
+const DEFAULT_FIELD_SNIPPET_TEMPLATES: FieldSnippetTemplate[] = [
+  {
+    key: 'javaEntityFields',
+    description: 'Java 实体字段',
+    template: '    /**\n     * {{comment}}\n     */\n    private {{javaType}} {{javaField}};',
+    separator: '\n\n',
+    excludeAudit: true,
+  },
+  {
+    key: 'tsModelFields',
+    description: 'TypeScript 模型字段',
+    template: '  /** {{comment}} */\n  {{javaField}}?: {{tsType}};',
+    separator: '\n',
+    excludeAudit: true,
+  },
+  {
+    key: 'vueTableColumns',
+    description: 'Vue c-table columns',
+    template: "            {\n                prop: '{{javaField}}',\n                label: '{{comment}}',\n                minWidth: '150',\n            },",
+    separator: '\n',
+    excludeAudit: true,
+  },
+];
+
+const parseFieldSnippetTemplates = (value: any): FieldSnippetTemplate[] => {
+  if (Array.isArray(value)) return value as FieldSnippetTemplate[];
+  if (!value) return DEFAULT_FIELD_SNIPPET_TEMPLATES.map((item) => ({ ...item }));
+  try {
+    const parsed = JSON.parse(String(value));
+    return Array.isArray(parsed) && parsed.length > 0
+      ? parsed.map((item) => ({
+        key: String(item.key || ''),
+        description: String(item.description || ''),
+        template: String(item.template || ''),
+        separator: typeof item.separator === 'string' ? item.separator : '\n',
+        excludeAudit: Boolean(item.excludeAudit),
+      }))
+      : DEFAULT_FIELD_SNIPPET_TEMPLATES.map((item) => ({ ...item }));
+  } catch (e) {
+    return DEFAULT_FIELD_SNIPPET_TEMPLATES.map((item) => ({ ...item }));
+  }
+};
+
+const parseRenderedSnippetMap = (value: any): Record<string, string> => {
+  if (!value) return {};
+  if (typeof value === 'object' && !Array.isArray(value)) return value as Record<string, string>;
+  try {
+    const parsed = JSON.parse(String(value));
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch (e) {
+    return {};
+  }
+};
 
 const getProjectBusinessType = (project: any) => {
   const typeName = String(project?.businessType || '').trim();
@@ -135,6 +209,7 @@ const GENERATE_PLACEHOLDER_DEFAULTS: Record<string, string> = {
   Module: 'BtStation',
   moduleName: 'btStation',
   ModuleName: 'BtStation',
+  packageModule: 'btStation',
   TableName: 'BtStation',
   tableName: 'btStation',
   table_name: 'bt_station',
@@ -142,10 +217,11 @@ const GENERATE_PLACEHOLDER_DEFAULTS: Record<string, string> = {
 };
 
 const GENERATE_PLACEHOLDER_DESCRIPTIONS: Record<string, string> = {
-  module: '模块名，小驼峰',
+  module: '模块目录名，可包含 /',
   Module: '模块名，大驼峰',
   moduleName: '模块名，小驼峰',
   ModuleName: '模块名，大驼峰',
+  packageModule: 'Java 包路径，点号分隔',
   TableName: '实体/类名，大驼峰',
   tableName: '实体/变量名，小驼峰',
   table_name: '表名/SQL 名，下划线',
@@ -230,6 +306,13 @@ const toPascalName = (value: string) => splitNameWords(value).map(capitalizeName
 
 const toSnakeName = (value: string) => splitNameWords(value).join('_');
 
+const toPackageModuleName = (value: string) => String(value || '')
+  .trim()
+  .split('/')
+  .map((part) => toCamelName(part))
+  .filter(Boolean)
+  .join('.');
+
 const getGeneratePlaceholderKeyStyle = (key: string): GeneratePlaceholderKeyStyle => {
   const raw = String(key || '').trim();
   if (!raw) return 'other';
@@ -255,6 +338,7 @@ const getGeneratePlaceholderKeySignature = (key: string) => {
 };
 
 const buildDynamicGeneratePlaceholderGroups = (rows: DbTemplatePlaceholder[]): GeneratePlaceholderGroup[] => {
+  const rowKeys = new Set(rows.map((row) => String(row.key || '').trim()).filter(Boolean));
   const buckets = new Map<string, DbTemplatePlaceholder[]>();
   rows.forEach((row) => {
     const key = String(row.key || '').trim();
@@ -267,8 +351,29 @@ const buildDynamicGeneratePlaceholderGroups = (rows: DbTemplatePlaceholder[]): G
   });
 
   const groups: GeneratePlaceholderGroup[] = [];
+  if (rowKeys.has('module') && (rowKeys.has('packageModule') || rowKeys.has('moduleName') || rowKeys.has('ModuleName'))) {
+    const keys = ['module', 'packageModule', 'moduleName', 'ModuleName'].filter((key) => rowKeys.has(key));
+    groups.push({
+      keys,
+      parentKey: 'module',
+      childKeys: keys.filter((key) => key !== 'module'),
+      derivedLabelKey: 'module',
+      buildValues: (value: string) => ({
+        module: value,
+        packageModule: toPackageModuleName(value),
+        moduleName: toCamelName(value),
+        ModuleName: toPascalName(value),
+      }),
+      getBaseValue: (allRows: DbTemplatePlaceholder[]) => {
+        const rowMap = new Map(allRows.map((row) => [row.key, row]));
+        return rowMap.get('module')?.value || GENERATE_PLACEHOLDER_DEFAULTS.module || '';
+      },
+    });
+  }
+
   buckets.forEach((bucket) => {
     const uniqueKeys = Array.from(new Set(bucket.map((row) => row.key).filter(Boolean)));
+    if (uniqueKeys.some((key) => groups.some((group) => group.keys.includes(key)))) return;
     const uniqueStyles = new Set(uniqueKeys.map(getGeneratePlaceholderKeyStyle));
     if (uniqueKeys.length < 2 || uniqueStyles.size < 2) return;
 
@@ -423,6 +528,20 @@ export default function ProjectDashboard() {
   const [applyingGeneratePlaceholders, setApplyingGeneratePlaceholders] = useState(false);
   const [selectedBusinessType, setSelectedBusinessType] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [fieldSnippetBusinessType, setFieldSnippetBusinessType] = useState<string | null>(null);
+  const [fieldSnippetName, setFieldSnippetName] = useState('');
+  const [fieldSnippetSourceText, setFieldSnippetSourceText] = useState('');
+  const [fieldSnippetTemplates, setFieldSnippetTemplates] = useState<FieldSnippetTemplate[]>(() => DEFAULT_FIELD_SNIPPET_TEMPLATES.map((item) => ({ ...item })));
+  const [fieldSnippetPreview, setFieldSnippetPreview] = useState<Record<string, string>>({});
+  const [fieldSnippetColumns, setFieldSnippetColumns] = useState<any[]>([]);
+  const [fieldSnippetHistory, setFieldSnippetHistory] = useState<any[]>([]);
+  const [showFieldSnippetHistory, setShowFieldSnippetHistory] = useState(false);
+  const [showFieldSnippetSource, setShowFieldSnippetSource] = useState(false);
+  const [showFieldSnippetFields, setShowFieldSnippetFields] = useState(false);
+  const [editingFieldSnippetIndex, setEditingFieldSnippetIndex] = useState<number | null>(null);
+  const [selectedFieldSnippetIndex, setSelectedFieldSnippetIndex] = useState(0);
+  const [loadingFieldSnippet, setLoadingFieldSnippet] = useState(false);
+  const [savingFieldSnippet, setSavingFieldSnippet] = useState(false);
   const [editingBusinessType, setEditingBusinessType] = useState<string | null>(null);
   const [editingBusinessTypeName, setEditingBusinessTypeName] = useState('');
   const [savingBusinessType, setSavingBusinessType] = useState(false);
@@ -595,6 +714,131 @@ export default function ProjectDashboard() {
       toast.error('删除业务类型失败');
     } finally {
       setSavingBusinessType(false);
+    }
+  };
+
+  const loadFieldSnippetHistory = async (businessType: string) => {
+    const historyRes: any = await getGenerateFieldSnippetHistory(businessType);
+    setFieldSnippetHistory(normalizeProjectRows(unwrapResponseData(historyRes)));
+  };
+
+  const previewFieldSnippet = async (businessType: string, sourceText = fieldSnippetSourceText, snippets = fieldSnippetTemplates) => {
+    const previewRes: any = await previewGenerateFieldSnippet({
+      businessType,
+      sourceText,
+      snippets,
+    });
+    const preview = unwrapResponseData(previewRes) || {};
+    setFieldSnippetPreview(preview.rendered || {});
+    setFieldSnippetColumns(Array.isArray(preview.columns) ? preview.columns : []);
+  };
+
+  const applyFieldSnippetRecord = async (record: any, businessType: string) => {
+    const nextName = String(record?.name || '字段片段');
+    const nextSourceText = String(record?.sourceText || '');
+    const nextTemplates = parseFieldSnippetTemplates(record?.snippets);
+    setFieldSnippetName(nextName);
+    setFieldSnippetSourceText(nextSourceText);
+    setFieldSnippetTemplates(nextTemplates);
+    setSelectedFieldSnippetIndex(0);
+    setEditingFieldSnippetIndex(null);
+    setFieldSnippetPreview(parseRenderedSnippetMap(record?.rendered));
+    await previewFieldSnippet(businessType, nextSourceText, nextTemplates);
+  };
+
+  const openFieldSnippetDialog = async (businessType?: string | null) => {
+    const nextBusinessType = businessType || selectedBusinessType || businessTypes[0]?.typeName || DEFAULT_BUSINESS_TYPE;
+    setFieldSnippetBusinessType(nextBusinessType);
+    setLoadingFieldSnippet(true);
+    try {
+      const latestRes: any = await getGenerateFieldSnippetLatest(nextBusinessType);
+      const latest = unwrapResponseData(latestRes);
+      await loadFieldSnippetHistory(nextBusinessType);
+      if (latest && latest.ID) {
+        await applyFieldSnippetRecord(latest, nextBusinessType);
+      } else {
+        const nextTemplates = DEFAULT_FIELD_SNIPPET_TEMPLATES.map((item) => ({ ...item }));
+        setFieldSnippetName('字段片段');
+        setFieldSnippetSourceText('');
+        setFieldSnippetTemplates(nextTemplates);
+        setSelectedFieldSnippetIndex(0);
+        setEditingFieldSnippetIndex(null);
+        setFieldSnippetPreview({});
+        setFieldSnippetColumns([]);
+      }
+    } catch (e) {
+      toast.error('读取字段片段失败');
+    } finally {
+      setLoadingFieldSnippet(false);
+    }
+  };
+
+  const closeFieldSnippetDialog = () => {
+    if (savingFieldSnippet) return;
+    setFieldSnippetBusinessType(null);
+    setShowFieldSnippetHistory(false);
+    setShowFieldSnippetSource(false);
+    setShowFieldSnippetFields(false);
+    setEditingFieldSnippetIndex(null);
+    setFieldSnippetHistory([]);
+  };
+
+  const updateFieldSnippetTemplate = (index: number, patch: Partial<FieldSnippetTemplate>) => {
+    setFieldSnippetTemplates((items) => items.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item));
+  };
+
+  const addFieldSnippetTemplate = () => {
+    setFieldSnippetTemplates((items) => [
+      ...items,
+      {
+        key: 'customFields',
+        description: '自定义字段片段',
+        template: '{{javaField}}',
+        separator: '\n',
+        excludeAudit: true,
+      },
+    ]);
+    setSelectedFieldSnippetIndex(fieldSnippetTemplates.length);
+    setEditingFieldSnippetIndex(fieldSnippetTemplates.length);
+  };
+
+  const removeFieldSnippetTemplate = (index: number) => {
+    setFieldSnippetTemplates((items) => items.filter((_, itemIndex) => itemIndex !== index));
+    setSelectedFieldSnippetIndex((current) => Math.max(0, Math.min(current, fieldSnippetTemplates.length - 2)));
+    if (editingFieldSnippetIndex === index) {
+      setEditingFieldSnippetIndex(null);
+    }
+  };
+
+  const handlePreviewFieldSnippet = async () => {
+    if (!fieldSnippetBusinessType) return;
+    try {
+      await previewFieldSnippet(fieldSnippetBusinessType);
+      toast.success('预览已刷新');
+    } catch (e) {
+      toast.error('预览失败');
+    }
+  };
+
+  const handleSaveFieldSnippet = async () => {
+    if (!fieldSnippetBusinessType) return;
+    setSavingFieldSnippet(true);
+    try {
+      const res: any = await saveGenerateFieldSnippet({
+        businessType: fieldSnippetBusinessType,
+        name: fieldSnippetName,
+        sourceText: fieldSnippetSourceText,
+        snippets: fieldSnippetTemplates,
+        userName: 'conchi',
+      });
+      const saved = unwrapResponseData(res);
+      setFieldSnippetPreview(parseRenderedSnippetMap(saved?.rendered));
+      await loadFieldSnippetHistory(fieldSnippetBusinessType);
+      toast.success('字段片段已保存');
+    } catch (e) {
+      toast.error('保存字段片段失败');
+    } finally {
+      setSavingFieldSnippet(false);
     }
   };
 
@@ -819,6 +1063,14 @@ export default function ProjectDashboard() {
       setCopyingDbSqlPreview(false);
     }
   };
+
+  const selectedFieldSnippetTemplate = fieldSnippetTemplates[selectedFieldSnippetIndex] || fieldSnippetTemplates[0];
+  const selectedFieldSnippetPreview = selectedFieldSnippetTemplate?.key
+    ? fieldSnippetPreview[selectedFieldSnippetTemplate.key] || ''
+    : '';
+  const editingFieldSnippetTemplate = editingFieldSnippetIndex !== null
+    ? fieldSnippetTemplates[editingFieldSnippetIndex]
+    : null;
 
   const updateGeneratePlaceholderRow = (index: number, value: string) => {
     setGeneratePlaceholderRows((rows) => rows.map((row, rowIndex) => rowIndex === index ? { ...row, value } : row));
@@ -1061,13 +1313,22 @@ export default function ProjectDashboard() {
               {selectedBusinessType || '全部业务类型'} · {filteredProjects.length} 张卡片
             </p>
           </div>
-          <button
-            onClick={openCreateProject}
-            className="flex items-center gap-2 bg-gray-900 hover:bg-gray-800 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm"
-          >
-            <Plus size={16} />
-            <span>新建卡片</span>
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => openFieldSnippetDialog(selectedBusinessType || businessTypes[0]?.typeName || DEFAULT_BUSINESS_TYPE)}
+              className="flex items-center gap-2 border border-gray-200 bg-white px-4 py-2 text-sm font-bold text-gray-700 shadow-sm transition-colors hover:bg-gray-50 rounded-lg"
+            >
+              <Database size={16} />
+              <span>字段片段库</span>
+            </button>
+            <button
+              onClick={openCreateProject}
+              className="flex items-center gap-2 bg-gray-900 hover:bg-gray-800 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm"
+            >
+              <Plus size={16} />
+              <span>新建卡片</span>
+            </button>
+          </div>
         </div>
 
         {loading ? (
@@ -1538,6 +1799,585 @@ export default function ProjectDashboard() {
                 >
                   {savingProject ? '保存中...' : '保存设置'}
                 </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {fieldSnippetBusinessType && (
+          <div className="fixed inset-0 z-[60] flex bg-white">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="relative flex h-full w-full flex-col overflow-hidden bg-white"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-5">
+                <div className="min-w-0">
+                  <div className="text-xs font-bold uppercase tracking-wider text-teal-600">字段片段库</div>
+                  <h2 className="mt-1 truncate text-xl font-bold text-slate-900">
+                    {fieldSnippetBusinessType}
+                  </h2>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowFieldSnippetHistory(true)}
+                    className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-700 transition-colors hover:bg-slate-50"
+                  >
+                    <History size={16} />
+                    历史记录
+                  </button>
+                  <button
+                    type="button"
+                    onClick={closeFieldSnippetDialog}
+                    disabled={savingFieldSnippet}
+                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+                    title="关闭"
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+              </div>
+
+              <div className="min-h-0 flex-1 overflow-y-auto p-6">
+                {loadingFieldSnippet ? (
+                  <div className="flex h-64 items-center justify-center text-sm font-bold text-slate-400">
+                    字段片段加载中...
+                  </div>
+                ) : (
+                  <div className="space-y-5">
+                    <section className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <label className="mb-2 block text-sm font-bold text-slate-700">记录名称</label>
+                          <input
+                            value={fieldSnippetName}
+                            onChange={(event) => setFieldSnippetName(event.target.value)}
+                            className="w-[360px] max-w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900 outline-none transition focus:border-teal-400 focus:ring-2 focus:ring-teal-500/20"
+                            placeholder="例如：运单字段片段"
+                          />
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <div className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-600">
+                            字段样本：<span className="font-mono text-teal-700">{fieldSnippetColumns.length}</span> 个字段
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setShowFieldSnippetFields(true)}
+                            className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-700 transition-colors hover:bg-slate-50"
+                          >
+                            <Eye size={16} />
+                            查看字段
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setShowFieldSnippetSource(true)}
+                            className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-700 transition-colors hover:bg-slate-50"
+                          >
+                            <Database size={16} />
+                            重新解析
+                          </button>
+                        </div>
+                      </div>
+                    </section>
+
+                    <div className="grid grid-cols-1 gap-5 xl:grid-cols-[420px_1fr]">
+                      <section className="min-h-0 rounded-lg border border-slate-200 bg-white">
+                        <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+                          <h3 className="text-sm font-extrabold text-slate-800">片段模版</h3>
+                          <button
+                            type="button"
+                            onClick={addFieldSnippetTemplate}
+                            className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-600 transition-colors hover:bg-slate-50"
+                          >
+                            <Plus size={14} />
+                            新增片段
+                          </button>
+                        </div>
+                        <div className="max-h-[calc(100vh-300px)] overflow-y-auto p-3">
+                          {fieldSnippetTemplates.length === 0 ? (
+                            <div className="rounded-lg border border-dashed border-slate-200 py-12 text-center text-sm font-bold text-slate-400">
+                              暂无片段模版
+                            </div>
+                          ) : fieldSnippetTemplates.map((item, index) => {
+                            const active = index === selectedFieldSnippetIndex;
+                            return (
+                              <button
+                                type="button"
+                                key={`${item.key}-${index}`}
+                                onClick={() => setSelectedFieldSnippetIndex(index)}
+                                className={`mb-2 block w-full rounded-lg border p-3 text-left transition-colors last:mb-0 ${
+                                  active ? 'border-teal-400 bg-teal-50' : 'border-slate-200 bg-white hover:bg-slate-50'
+                                }`}
+                              >
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="min-w-0">
+                                    <div className="truncate font-mono text-sm font-extrabold text-slate-800">{item.key || '未命名片段'}</div>
+                                    <div className="mt-1 truncate text-xs font-semibold text-slate-500">{item.description || '暂无描述'}</div>
+                                    <div className="mt-2 flex flex-wrap gap-1.5">
+                                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-slate-500">
+                                        {item.excludeAudit ? '排除审计字段' : '包含所有字段'}
+                                      </span>
+                                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-slate-500">
+                                        分隔符 {item.separator ? '已设置' : '空'}
+                                      </span>
+                                    </div>
+                                  </div>
+                                  <div className="flex shrink-0 items-center gap-1">
+                                    <span
+                                      role="button"
+                                      tabIndex={0}
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        setEditingFieldSnippetIndex(index);
+                                      }}
+                                      onKeyDown={(event) => {
+                                        if (event.key === 'Enter' || event.key === ' ') {
+                                          event.preventDefault();
+                                          event.stopPropagation();
+                                          setEditingFieldSnippetIndex(index);
+                                        }
+                                      }}
+                                      className="rounded-lg p-2 text-slate-400 transition-colors hover:bg-white hover:text-teal-600"
+                                      title="编辑片段"
+                                    >
+                                      <Edit2 size={15} />
+                                    </span>
+                                    <span
+                                      role="button"
+                                      tabIndex={0}
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        removeFieldSnippetTemplate(index);
+                                      }}
+                                      onKeyDown={(event) => {
+                                        if (event.key === 'Enter' || event.key === ' ') {
+                                          event.preventDefault();
+                                          event.stopPropagation();
+                                          removeFieldSnippetTemplate(index);
+                                        }
+                                      }}
+                                      className="rounded-lg p-2 text-slate-400 transition-colors hover:bg-red-50 hover:text-red-600"
+                                      title="删除片段"
+                                    >
+                                      <Trash2 size={15} />
+                                    </span>
+                                  </div>
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </section>
+
+                      <section className="min-h-0 rounded-lg border border-slate-200 bg-white">
+                        <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+                          <div className="min-w-0">
+                            <h3 className="truncate text-sm font-extrabold text-slate-800">
+                              预览结果：{selectedFieldSnippetTemplate?.key || '-'}
+                            </h3>
+                            <p className="mt-1 text-xs font-semibold text-slate-400">
+                              文件模版中使用 {'{{'}{selectedFieldSnippetTemplate?.key || '片段key'}{'}}'} 即可替换为这里的结果
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={handlePreviewFieldSnippet}
+                            className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-600 transition-colors hover:bg-slate-50"
+                          >
+                            <Eye size={14} />
+                            刷新预览
+                          </button>
+                        </div>
+                        <div className="h-[calc(100vh-300px)] overflow-auto bg-slate-950 p-4">
+                          {selectedFieldSnippetTemplate ? (
+                            <pre className="whitespace-pre-wrap font-mono text-xs font-semibold leading-5 text-slate-100">
+                              {selectedFieldSnippetPreview || '暂无预览，请点击刷新预览'}
+                            </pre>
+                          ) : (
+                            <div className="flex h-full items-center justify-center text-sm font-bold text-slate-500">请选择一个片段</div>
+                          )}
+                        </div>
+                      </section>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex justify-end gap-3 border-t border-slate-200 bg-white px-6 py-4">
+                <button
+                  type="button"
+                  onClick={closeFieldSnippetDialog}
+                  disabled={savingFieldSnippet}
+                  className="rounded-lg px-5 py-2.5 text-sm font-bold text-slate-600 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  onClick={handlePreviewFieldSnippet}
+                  disabled={savingFieldSnippet}
+                  className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-5 py-2.5 text-sm font-bold text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <Eye size={16} />
+                  预览
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveFieldSnippet}
+                  disabled={savingFieldSnippet}
+                  className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-5 py-2.5 text-sm font-bold text-white shadow-lg shadow-slate-900/15 transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {savingFieldSnippet ? <RefreshCw size={16} className="animate-spin" /> : <Save size={16} />}
+                  保存为最新
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {fieldSnippetBusinessType && showFieldSnippetSource && (
+          <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-slate-900/45 backdrop-blur-sm"
+              onClick={() => setShowFieldSnippetSource(false)}
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.96, y: 16 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: 16 }}
+              className="relative flex max-h-[86vh] w-full max-w-5xl flex-col overflow-hidden rounded-lg bg-white shadow-2xl"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-5">
+                <div className="min-w-0">
+                  <div className="text-xs font-bold uppercase tracking-wider text-teal-600">字段来源</div>
+                  <h2 className="mt-1 truncate text-xl font-bold text-slate-900">{fieldSnippetBusinessType}</h2>
+                  <p className="mt-1 text-sm font-semibold text-slate-400">
+                    粘贴建表 SQL 或字段清单，解析后会刷新字段样本和所有片段预览。
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowFieldSnippetSource(false)}
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700"
+                  title="关闭"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+              <div className="min-h-0 flex-1 p-5">
+                <textarea
+                  value={fieldSnippetSourceText}
+                  onChange={(event) => setFieldSnippetSourceText(event.target.value)}
+                  className="h-[56vh] w-full resize-none rounded-lg border border-slate-200 bg-slate-950 px-4 py-3 font-mono text-sm font-semibold leading-6 text-slate-100 outline-none transition focus:border-teal-400 focus:ring-2 focus:ring-teal-500/20"
+                  placeholder={"CREATE TABLE ...\n  id bigint COMMENT '主键',\n  waybill_no varchar(64) COMMENT '运单号'\n);"}
+                />
+              </div>
+              <div className="flex justify-end gap-3 border-t border-slate-200 px-6 py-4">
+                <button
+                  type="button"
+                  onClick={() => setShowFieldSnippetSource(false)}
+                  className="rounded-lg px-5 py-2.5 text-sm font-bold text-slate-600 transition-colors hover:bg-slate-100"
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await handlePreviewFieldSnippet();
+                    setShowFieldSnippetSource(false);
+                  }}
+                  className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-5 py-2.5 text-sm font-bold text-white shadow-lg shadow-slate-900/15 transition-colors hover:bg-slate-800"
+                >
+                  <RefreshCw size={16} />
+                  解析字段
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {fieldSnippetBusinessType && showFieldSnippetFields && (
+          <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-slate-900/45 backdrop-blur-sm"
+              onClick={() => setShowFieldSnippetFields(false)}
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.96, y: 16 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: 16 }}
+              className="relative flex max-h-[82vh] w-full max-w-6xl flex-col overflow-hidden rounded-lg bg-white shadow-2xl"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-5">
+                <div className="min-w-0">
+                  <div className="text-xs font-bold uppercase tracking-wider text-teal-600">解析字段</div>
+                  <h2 className="mt-1 truncate text-xl font-bold text-slate-900">
+                    {fieldSnippetColumns.length} 个字段
+                  </h2>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowFieldSnippetFields(false)}
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700"
+                  title="关闭"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+              <div className="min-h-0 flex-1 overflow-auto p-5">
+                {fieldSnippetColumns.length === 0 ? (
+                  <div className="rounded-lg border border-dashed border-slate-200 py-16 text-center text-sm font-bold text-slate-400">
+                    暂无字段，请先解析字段来源
+                  </div>
+                ) : (
+                  <div className="overflow-hidden rounded-lg border border-slate-200">
+                    <table className="w-full min-w-[900px] text-left text-sm">
+                      <thead className="bg-slate-50 text-xs font-extrabold uppercase text-slate-400">
+                        <tr>
+                          <th className="px-4 py-3">字段</th>
+                          <th className="px-4 py-3">说明</th>
+                          <th className="px-4 py-3">Java</th>
+                          <th className="px-4 py-3">TypeScript</th>
+                          <th className="px-4 py-3">Python</th>
+                          <th className="px-4 py-3">常用变量</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {fieldSnippetColumns.map((column, index) => (
+                          <tr key={`${column.columnName || column.javaField || index}-${index}`} className="align-top">
+                            <td className="px-4 py-3">
+                              <div className="font-mono font-extrabold text-slate-800">{column.columnName || '-'}</div>
+                              <div className="mt-1 font-mono text-xs font-semibold text-slate-400">{column.dbType || ''}</div>
+                            </td>
+                            <td className="px-4 py-3 font-semibold text-slate-600">{column.comment || '-'}</td>
+                            <td className="px-4 py-3 font-mono font-semibold text-slate-600">
+                              {column.javaType || '-'} {column.javaField || ''}
+                            </td>
+                            <td className="px-4 py-3 font-mono font-semibold text-slate-600">{column.tsType || '-'}</td>
+                            <td className="px-4 py-3 font-mono font-semibold text-slate-600">{column.pythonType || '-'}</td>
+                            <td className="px-4 py-3">
+                              <div className="flex flex-wrap gap-1.5">
+                                {[column.javaField, column.snakeField, column.pascalField, column.upperField].filter(Boolean).map((value) => (
+                                  <span key={value} className="rounded-full bg-slate-100 px-2 py-0.5 font-mono text-[11px] font-bold text-slate-500">
+                                    {value}
+                                  </span>
+                                ))}
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {fieldSnippetBusinessType && editingFieldSnippetTemplate && editingFieldSnippetIndex !== null && (
+          <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-slate-900/45 backdrop-blur-sm"
+              onClick={() => setEditingFieldSnippetIndex(null)}
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.96, y: 16 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: 16 }}
+              className="relative flex max-h-[88vh] w-full max-w-6xl flex-col overflow-hidden rounded-lg bg-white shadow-2xl"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-5">
+                <div className="min-w-0">
+                  <div className="text-xs font-bold uppercase tracking-wider text-teal-600">编辑片段</div>
+                  <h2 className="mt-1 truncate text-xl font-bold text-slate-900">{editingFieldSnippetTemplate.key || '未命名片段'}</h2>
+                  <p className="mt-1 text-sm font-semibold text-slate-400">
+                    可使用字段变量：{'{{columnName}}'}、{'{{comment}}'}、{'{{javaField}}'}、{'{{javaType}}'}、{'{{tsType}}'}、{'{{pythonType}}'} 等。
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setEditingFieldSnippetIndex(null)}
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700"
+                  title="关闭"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+              <div className="grid min-h-0 flex-1 grid-cols-1 gap-5 overflow-y-auto p-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+                <section className="space-y-4">
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                    <div>
+                      <label className="mb-2 block text-sm font-bold text-slate-700">片段 key</label>
+                      <input
+                        value={editingFieldSnippetTemplate.key}
+                        onChange={(event) => updateFieldSnippetTemplate(editingFieldSnippetIndex, { key: event.target.value })}
+                        className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 font-mono text-sm font-semibold text-slate-900 outline-none transition focus:border-teal-400 focus:ring-2 focus:ring-teal-500/20"
+                        placeholder="例如：javaEntityFields"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-2 block text-sm font-bold text-slate-700">描述</label>
+                      <input
+                        value={editingFieldSnippetTemplate.description}
+                        onChange={(event) => updateFieldSnippetTemplate(editingFieldSnippetIndex, { description: event.target.value })}
+                        className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900 outline-none transition focus:border-teal-400 focus:ring-2 focus:ring-teal-500/20"
+                        placeholder="例如：Java 实体字段"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="mb-2 block text-sm font-bold text-slate-700">片段模版</label>
+                    <textarea
+                      value={editingFieldSnippetTemplate.template}
+                      onChange={(event) => updateFieldSnippetTemplate(editingFieldSnippetIndex, { template: event.target.value })}
+                      className="h-[34vh] w-full resize-none rounded-lg border border-slate-200 bg-slate-950 px-4 py-3 font-mono text-sm font-semibold leading-6 text-slate-100 outline-none transition focus:border-teal-400 focus:ring-2 focus:ring-teal-500/20"
+                      placeholder="输入单个字段的输出格式"
+                    />
+                  </div>
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-[1fr_auto]">
+                    <div>
+                      <label className="mb-2 block text-sm font-bold text-slate-700">字段分隔符</label>
+                      <input
+                        value={editingFieldSnippetTemplate.separator}
+                        onChange={(event) => updateFieldSnippetTemplate(editingFieldSnippetIndex, { separator: event.target.value })}
+                        className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 font-mono text-sm font-semibold text-slate-900 outline-none transition focus:border-teal-400 focus:ring-2 focus:ring-teal-500/20"
+                        placeholder="例如：\\n 或逗号换行"
+                      />
+                    </div>
+                    <label className="mt-7 flex h-10 items-center gap-2 rounded-lg border border-slate-200 px-3 text-sm font-bold text-slate-600">
+                      <input
+                        type="checkbox"
+                        checked={editingFieldSnippetTemplate.excludeAudit}
+                        onChange={(event) => updateFieldSnippetTemplate(editingFieldSnippetIndex, { excludeAudit: event.target.checked })}
+                        className="h-4 w-4 rounded border-slate-300 text-teal-600 focus:ring-teal-500"
+                      />
+                      排除审计字段
+                    </label>
+                  </div>
+                </section>
+                <section className="min-h-0 rounded-lg border border-slate-200 bg-white">
+                  <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+                    <div className="min-w-0">
+                      <h3 className="truncate text-sm font-extrabold text-slate-800">当前片段预览</h3>
+                      <p className="mt-1 text-xs font-semibold text-slate-400">
+                        保存前可先刷新预览确认输出。
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handlePreviewFieldSnippet}
+                      className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-600 transition-colors hover:bg-slate-50"
+                    >
+                      <Eye size={14} />
+                      刷新
+                    </button>
+                  </div>
+                  <div className="h-[50vh] overflow-auto bg-slate-950 p-4">
+                    <pre className="whitespace-pre-wrap font-mono text-xs font-semibold leading-5 text-slate-100">
+                      {fieldSnippetPreview[editingFieldSnippetTemplate.key] || '暂无预览，请点击刷新'}
+                    </pre>
+                  </div>
+                </section>
+              </div>
+              <div className="flex justify-end gap-3 border-t border-slate-200 px-6 py-4">
+                <button
+                  type="button"
+                  onClick={() => setEditingFieldSnippetIndex(null)}
+                  className="rounded-lg px-5 py-2.5 text-sm font-bold text-slate-600 transition-colors hover:bg-slate-100"
+                >
+                  完成
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {fieldSnippetBusinessType && showFieldSnippetHistory && (
+          <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-slate-900/45 backdrop-blur-sm"
+              onClick={() => setShowFieldSnippetHistory(false)}
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.96, y: 16 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: 16 }}
+              className="relative flex max-h-[78vh] w-full max-w-3xl flex-col overflow-hidden rounded-lg bg-white shadow-2xl"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-5">
+                <div className="min-w-0">
+                  <div className="text-xs font-bold uppercase tracking-wider text-teal-600">字段片段历史</div>
+                  <h2 className="mt-1 truncate text-xl font-bold text-slate-900">{fieldSnippetBusinessType}</h2>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowFieldSnippetHistory(false)}
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700"
+                  title="关闭"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+              <div className="min-h-0 flex-1 overflow-y-auto p-5">
+                {fieldSnippetHistory.length === 0 ? (
+                  <div className="rounded-lg border border-dashed border-slate-200 py-16 text-center text-sm font-bold text-slate-400">
+                    暂无历史记录
+                  </div>
+                ) : (
+                  <div className="overflow-hidden rounded-lg border border-slate-200">
+                    {fieldSnippetHistory.map((record) => (
+                      <button
+                        type="button"
+                        key={record.ID}
+                        onClick={async () => {
+                          await applyFieldSnippetRecord(record, fieldSnippetBusinessType);
+                          setShowFieldSnippetHistory(false);
+                        }}
+                        className="block w-full border-b border-slate-100 px-4 py-3 text-left transition-colors last:border-b-0 hover:bg-slate-50"
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="truncate text-sm font-extrabold text-slate-800">{record.name || `记录 ${record.ID}`}</div>
+                            <div className="mt-1 font-mono text-xs font-semibold text-slate-400">{record.createdAt || `ID ${record.ID}`}</div>
+                          </div>
+                          <div className="shrink-0 rounded-full bg-slate-100 px-2.5 py-1 font-mono text-xs font-bold text-slate-500">
+                            #{record.ID}
+                          </div>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             </motion.div>
           </div>

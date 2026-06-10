@@ -81,6 +81,7 @@ func RegisterTables() {
 		system.TbGenerateProjectPathGroup{},
 		system.TbGenerateProjectPath{},
 		system.TbGenerateProjectPathModel{},
+		system.TbGenerateFieldSnippet{},
 		system.TbAIConfig{},
 	)
 

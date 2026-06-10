@@ -36,6 +36,7 @@ type ApiGroup struct {
 	TbGenerateDbTemplateScriptApi
 	TbGenerateProjectPathApi
 	TbGenerateProjectPathModelApi
+	TbGenerateFieldSnippetApi
 	AIChatApi
 	AIChatHistoryApi
 }
@@ -75,6 +76,7 @@ var (
 	tbGenerateDbTemplateScriptService = service.ServiceGroupApp.SystemServiceGroup.TbGenerateDbTemplateScriptService
 	tbGenerateProjectPathService      = service.ServiceGroupApp.SystemServiceGroup.TbGenerateProjectPathService
 	tbGenerateProjectPathModelService = service.ServiceGroupApp.SystemServiceGroup.TbGenerateProjectPathModelService
+	tbGenerateFieldSnippetService     = service.ServiceGroupApp.SystemServiceGroup.TbGenerateFieldSnippetService
 	aiChatService                     = service.ServiceGroupApp.SystemServiceGroup.AIChatService
 	aiChatHistoryService              = service.ServiceGroupApp.SystemServiceGroup.AIChatHistoryService
 )

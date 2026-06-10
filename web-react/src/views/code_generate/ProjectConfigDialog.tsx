@@ -2126,7 +2126,7 @@ export default function ProjectConfigDialog({
                       <div
                         key={pathObj.ID}
                         data-testid="path-row"
-                        onClick={() => openEditPath(pathObj)}
+                        onClick={() => openPathContentEditor(pathObj)}
                         className={`grid w-full cursor-pointer grid-cols-[minmax(520px,3fr)_minmax(220px,1fr)_120px_212px] items-center gap-3 px-4 py-3 text-left transition-colors ${active ? 'bg-gray-900 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'}`}
                       >
                         <div className="min-w-0">
@@ -2184,9 +2184,17 @@ export default function ProjectConfigDialog({
                           >
                             <FileCode size={14} />
                           </button>
-                          <span className={`flex h-8 w-8 items-center justify-center rounded-lg ${active ? 'bg-white/10 text-white' : 'text-gray-400'}`} title="编辑路径">
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              openEditPath(pathObj);
+                            }}
+                            className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${active ? 'text-white/70 hover:bg-white/10 hover:text-white' : 'text-gray-300 hover:bg-gray-100 hover:text-gray-700'}`}
+                            title="编辑路径"
+                          >
                             <Edit2 size={14} />
-                          </span>
+                          </button>
                           <button
                             type="button"
                             onClick={(event) => {

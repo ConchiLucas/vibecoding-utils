@@ -36,6 +36,7 @@ type RouterGroup struct {
 	TbGenerateDbTemplateRouter
 	TbGenerateProjectPathRouter
 	TbGenerateProjectPathModelRouter
+	TbGenerateFieldSnippetRouter
 	AIChatRouter
 	AIChatHistoryRouter
 }
@@ -74,6 +75,7 @@ var (
 	tbGenerateDbTemplateScriptApi = api.ApiGroupApp.SystemApiGroup.TbGenerateDbTemplateScriptApi
 	tbGenerateProjectPathApi      = api.ApiGroupApp.SystemApiGroup.TbGenerateProjectPathApi
 	tbGenerateProjectPathModelApi = api.ApiGroupApp.SystemApiGroup.TbGenerateProjectPathModelApi
+	tbGenerateFieldSnippetApi     = api.ApiGroupApp.SystemApiGroup.TbGenerateFieldSnippetApi
 	aiChatApi                     = api.ApiGroupApp.SystemApiGroup.AIChatApi
 	aiChatHistoryApi              = api.ApiGroupApp.SystemApiGroup.AIChatHistoryApi
 )
