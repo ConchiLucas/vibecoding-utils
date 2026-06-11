@@ -33,6 +33,8 @@ type GenerateProjectCodeResult struct {
 	TemplateProjectId  int                       `json:"templateProjectId"`
 	ProjectInstanceId  int                       `json:"projectInstanceId"`
 	ProjectName        string                    `json:"projectName"`
+	Module             string                    `json:"module"`
+	TableName          string                    `json:"tableName"`
 	DiskPath           string                    `json:"diskPath"`
 	PathSet            int                       `json:"pathSet"`
 	Prompt             string                    `json:"prompt"`
@@ -45,8 +47,13 @@ type GenerateProjectCodeResult struct {
 }
 
 var (
-	codePlaceholderPattern       = regexp.MustCompile(`\{\{\s*([A-Za-z][A-Za-z0-9_]*)\s*\}\}`)
-	codeDollarPlaceholderPattern = regexp.MustCompile(`\$\{\s*([A-Za-z][A-Za-z0-9_]*)\s*\}`)
+	codePlaceholderPattern        = regexp.MustCompile(`\{\{\s*([A-Za-z][A-Za-z0-9_]*)\s*\}\}`)
+	codeDollarPlaceholderPattern  = regexp.MustCompile(`\$\{\s*([A-Za-z][A-Za-z0-9_]*)\s*\}`)
+	codeAnglePlaceholderPattern   = regexp.MustCompile(`\{\{\s*<\s*([A-Za-z][A-Za-z0-9_]*)\s*>\s*\}\}`)
+	codeAngleDollarPattern        = regexp.MustCompile(`\$\{\s*<\s*([A-Za-z][A-Za-z0-9_]*)\s*>\s*\}`)
+	codeBracketPlaceholderPattern = regexp.MustCompile(`\{\[\s*<\s*([A-Za-z][A-Za-z0-9_]*)\s*>\s*\]\}`)
+	codeScopedPlaceholderPattern  = regexp.MustCompile(`\{\{\s*(?:manual|field|snippet|parsed)\s*:\s*<?\s*([A-Za-z][A-Za-z0-9_]*)\s*>?\s*\}\}`)
+	codeScopedDollarPattern       = regexp.MustCompile(`\$\{\s*(?:manual|field|snippet|parsed)\s*:\s*<?\s*([A-Za-z][A-Za-z0-9_]*)\s*>?\s*\}`)
 )
 
 const codeGenerationModifyInstructions = `请读取每个目标文件的绝对路径。目标文件当前由代码模板生成，每个文件还有独立的文件提示词，请结合产品文档把模板改造成最终可用代码。生成最终代码时删除模板提示说明，只保留必要的业务注释；package、import、类名、SQL id、字段和方法都按实际模块与项目上下文调整；字段只保留前端或业务真正使用的字段，不要机械罗列数据库所有字段；示例字段只作为结构参考，不符合业务时替换。`
@@ -179,10 +186,14 @@ func (s *TbGenerateProjectService) GenerateCode(req systemReq.GenerateProjectCod
 
 	vars := normalizeCodeGenerationDerivedVars(mergeCodeGenerationPlaceholderValues(buildCodeGenerationVars(module, tableName), req.PlaceholderValues))
 	for key, value := range renderLatestGenerateFieldSnippets(project.BusinessType) {
-		if strings.TrimSpace(key) != "" {
-			vars[key] = value
+		cleanKey := strings.TrimSpace(key)
+		if cleanKey != "" && cleanKey != "moduleName" {
+			vars[cleanKey] = value
 		}
 	}
+	vars = normalizeCodeGenerationDerivedVars(vars)
+	module = vars["module"]
+	tableName = vars["TableName"]
 	if err := saveGeneratePlaceholderValues(int(instance.ID), vars); err != nil {
 		return GenerateProjectCodeResult{}, err
 	}
@@ -190,6 +201,8 @@ func (s *TbGenerateProjectService) GenerateCode(req systemReq.GenerateProjectCod
 		TemplateProjectId:  int(project.ID),
 		ProjectInstanceId:  int(instance.ID),
 		ProjectName:        instance.ProjectName,
+		Module:             module,
+		TableName:          tableName,
 		DiskPath:           diskPath,
 		PathSet:            pathSet,
 		ModifyInstructions: codeGenerationModifyInstructions,
@@ -700,13 +713,23 @@ func mergeCodeGenerationPlaceholderValues(vars map[string]string, values map[str
 
 func normalizeCodeGenerationDerivedVars(vars map[string]string) map[string]string {
 	module := strings.TrimSpace(vars["module"])
-	if module == "" {
-		return vars
+	if module != "" {
+		vars["module"] = module
+		vars["packageModule"] = toPackageModuleName(module)
+		vars["moduleName"] = toCamelName(module)
+		vars["ModuleName"] = upperFirst(vars["moduleName"])
 	}
-	vars["module"] = module
-	vars["packageModule"] = toPackageModuleName(module)
-	vars["moduleName"] = toCamelName(module)
-	vars["ModuleName"] = upperFirst(vars["moduleName"])
+	tableName := strings.TrimSpace(vars["TableName"])
+	if tableName == "" {
+		tableName = upperFirst(strings.TrimSpace(vars["tableName"]))
+	}
+	if tableName != "" {
+		vars["TableName"] = tableName
+		vars["tableName"] = lowerFirst(tableName)
+		vars["TABLE_NAME"] = strings.ToUpper(toSnakeCase(tableName))
+		vars["table_name"] = toSnakeCase(tableName)
+		vars["kebabTableName"] = toKebabCase(tableName)
+	}
 	return vars
 }
 
@@ -823,40 +846,28 @@ func buildCodeGenerationVars(module string, tableName string) map[string]string 
 	moduleName := toCamelName(module)
 	packageModule := toPackageModuleName(module)
 	return map[string]string{
-		"module":        module,
-		"Module":        upperFirst(moduleName),
-		"MODULE":        strings.ToUpper(toSnakeCase(module)),
-		"packageModule": packageModule,
-		"moduleName":    moduleName,
-		"ModuleName":    upperFirst(moduleName),
-		"TableName":     tableName,
-		"tableName":     lowerFirst(tableName),
-		"TABLE_NAME":    strings.ToUpper(toSnakeCase(tableName)),
-		"table_name":    toSnakeCase(tableName),
+		"module":         module,
+		"Module":         upperFirst(moduleName),
+		"MODULE":         strings.ToUpper(toSnakeCase(module)),
+		"packageModule":  packageModule,
+		"moduleName":     moduleName,
+		"ModuleName":     upperFirst(moduleName),
+		"TableName":      tableName,
+		"tableName":      lowerFirst(tableName),
+		"kebabTableName": toKebabCase(tableName),
+		"TABLE_NAME":     strings.ToUpper(toSnakeCase(tableName)),
+		"table_name":     toSnakeCase(tableName),
 	}
 }
 
 func renderCodeGenerationText(text string, vars map[string]string) string {
-	rendered := codePlaceholderPattern.ReplaceAllStringFunc(text, func(match string) string {
-		parts := codePlaceholderPattern.FindStringSubmatch(match)
-		if len(parts) != 2 {
-			return match
-		}
-		if value, ok := vars[parts[1]]; ok {
-			return value
-		}
-		return match
-	})
-	rendered = codeDollarPlaceholderPattern.ReplaceAllStringFunc(rendered, func(match string) string {
-		parts := codeDollarPlaceholderPattern.FindStringSubmatch(match)
-		if len(parts) != 2 {
-			return match
-		}
-		if value, ok := vars[parts[1]]; ok {
-			return value
-		}
-		return match
-	})
+	rendered := replaceCodeGenerationPlaceholders(text, codeScopedPlaceholderPattern, vars)
+	rendered = replaceCodeGenerationPlaceholders(rendered, codeScopedDollarPattern, vars)
+	rendered = replaceCodeGenerationPlaceholders(rendered, codeAnglePlaceholderPattern, vars)
+	rendered = replaceCodeGenerationPlaceholders(rendered, codeAngleDollarPattern, vars)
+	rendered = replaceCodeGenerationPlaceholders(rendered, codeBracketPlaceholderPattern, vars)
+	rendered = replaceCodeGenerationPlaceholders(rendered, codePlaceholderPattern, vars)
+	rendered = replaceCodeGenerationPlaceholders(rendered, codeDollarPlaceholderPattern, vars)
 
 	replacer := strings.NewReplacer(
 		"{[<moduleName>]}", vars["moduleName"],
@@ -865,6 +876,19 @@ func renderCodeGenerationText(text string, vars map[string]string) string {
 		"{[<tableName>]}", vars["tableName"],
 	)
 	return replacer.Replace(rendered)
+}
+
+func replaceCodeGenerationPlaceholders(text string, pattern *regexp.Regexp, vars map[string]string) string {
+	return pattern.ReplaceAllStringFunc(text, func(match string) string {
+		parts := pattern.FindStringSubmatch(match)
+		if len(parts) != 2 {
+			return match
+		}
+		if value, ok := vars[parts[1]]; ok {
+			return value
+		}
+		return match
+	})
 }
 
 func firstNonEmptyString(values ...string) string {
@@ -948,4 +972,8 @@ func toPackageModuleName(value string) string {
 
 func toSnakeCase(value string) string {
 	return strings.Join(splitIdentifierWords(value), "_")
+}
+
+func toKebabCase(value string) string {
+	return strings.Join(splitIdentifierWords(value), "-")
 }

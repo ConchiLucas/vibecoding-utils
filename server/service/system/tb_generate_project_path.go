@@ -852,12 +852,15 @@ func (s *TbGenerateProjectPathService) BuildPromptSummary(req systemReq.BuildGen
 		return GenerateProjectPromptSummaryResult{}, err
 	}
 
-	diskPathSource := instance.DiskPath
-	if strings.TrimSpace(diskPathSource) == "" && instance.TemplateProjectId > 0 {
-		var project system.TbGenerateProject
+	var project system.TbGenerateProject
+	if instance.TemplateProjectId > 0 {
 		if err := global.GVA_DB.Where("id = ?", instance.TemplateProjectId).First(&project).Error; err != nil {
 			return GenerateProjectPromptSummaryResult{}, err
 		}
+	}
+
+	diskPathSource := instance.DiskPath
+	if strings.TrimSpace(diskPathSource) == "" && project.ID > 0 {
 		diskPathSource = project.DiskPath
 	}
 	diskPath, err := normalizeCodeGenerationRoot(diskPathSource)
@@ -884,7 +887,16 @@ func (s *TbGenerateProjectPathService) BuildPromptSummary(req systemReq.BuildGen
 		return GenerateProjectPromptSummaryResult{}, err
 	}
 
-	vars := mergeCodeGenerationPlaceholderValues(buildCodeGenerationVars(module, tableName), parseGeneratePlaceholderValues(instance.GeneratePlaceholderValues))
+	vars := normalizeCodeGenerationDerivedVars(mergeCodeGenerationPlaceholderValues(buildCodeGenerationVars(module, tableName), parseGeneratePlaceholderValues(instance.GeneratePlaceholderValues)))
+	if project.ID > 0 {
+		for key, value := range renderLatestGenerateFieldSnippets(project.BusinessType) {
+			cleanKey := strings.TrimSpace(key)
+			if cleanKey != "" && cleanKey != "moduleName" {
+				vars[cleanKey] = value
+			}
+		}
+		vars = normalizeCodeGenerationDerivedVars(vars)
+	}
 	module = vars["module"]
 	tableName = vars["TableName"]
 	result := GenerateProjectPromptSummaryResult{

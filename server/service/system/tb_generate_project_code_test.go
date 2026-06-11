@@ -8,8 +8,8 @@ import (
 
 func TestRenderCodeGenerationTextReplacesSupportedPlaceholders(t *testing.T) {
 	vars := buildCodeGenerationVars("btStation", "BtStation")
-	got := renderCodeGenerationText("{{module}}/{{TableName}}/{{table_name}}/{[<moduleName>]}", vars)
-	want := "btStation/BtStation/bt_station/btStation"
+	got := renderCodeGenerationText("{{module}}/{{TableName}}/{{table_name}}/{[<moduleName>]}/{[<TableName>]}/{{<moduleName>}}", vars)
+	want := "btStation/BtStation/bt_station/btStation/BtStation/btStation"
 	if got != want {
 		t.Fatalf("renderCodeGenerationText = %q, want %q", got, want)
 	}
@@ -71,6 +71,59 @@ func TestRenderCodeGenerationTextReplacesDynamicPlaceholders(t *testing.T) {
 	want := "pzh/btWaybillList/BtStation"
 	if got != want {
 		t.Fatalf("renderCodeGenerationText = %q, want %q", got, want)
+	}
+}
+
+func TestRenderCodeGenerationTextReplacesScopedPlaceholders(t *testing.T) {
+	vars := mergeCodeGenerationPlaceholderValues(buildCodeGenerationVars("btStation", "BtStation"), map[string]string{
+		"javaEntityFields": "private Long id;",
+	})
+	got := renderCodeGenerationText("{{manual:moduleName}}/{{field:TableName}}/${field:javaEntityFields}/{{snippet:table_name}}/{{manual:<moduleName>}}", vars)
+	want := "btStation/BtStation/private Long id;/bt_station/btStation"
+	if got != want {
+		t.Fatalf("renderCodeGenerationText = %q, want %q", got, want)
+	}
+}
+
+func TestBuildGenerateFieldSourcePlaceholdersDerivesTablePlaceholders(t *testing.T) {
+	sql := `
+CREATE TABLE cs_bt_train_operation_tracking (
+    id bigint COMMENT '主键ID',
+    train_no varchar(64) COMMENT '班列编号'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='班列作业跟踪表';
+`
+	values := buildGenerateFieldSourcePlaceholders(sql)
+	wants := map[string]string{
+		"tableName":      "btTrainOperationTracking",
+		"TableName":      "BtTrainOperationTracking",
+		"table_name":     "bt_train_operation_tracking",
+		"TABLE_NAME":     "BT_TRAIN_OPERATION_TRACKING",
+		"kebabTableName": "bt-train-operation-tracking",
+		"commentName":    "班列作业跟踪",
+	}
+	for key, want := range wants {
+		if values[key] != want {
+			t.Fatalf("values[%q] = %q, want %q", key, values[key], want)
+		}
+	}
+	if _, ok := values["moduleName"]; ok {
+		t.Fatalf("moduleName should not be derived from field snippets: %#v", values)
+	}
+}
+
+func TestParseGenerateFieldColumnsSkipsCreateTableLine(t *testing.T) {
+	sql := `
+CREATE TABLE cs_bt_train_operation_tracking (
+    id bigint COMMENT '主键ID',
+    train_no varchar(64) COMMENT '班列编号'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='班列作业跟踪表';
+`
+	columns := parseGenerateFieldColumns(sql)
+	if len(columns) != 2 {
+		t.Fatalf("len(columns) = %d, want 2: %#v", len(columns), columns)
+	}
+	if columns[0].ColumnName != "id" || columns[1].ColumnName != "train_no" {
+		t.Fatalf("columns parsed incorrectly: %#v", columns)
 	}
 }
 

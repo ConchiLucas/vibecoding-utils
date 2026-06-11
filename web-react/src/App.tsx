@@ -34,6 +34,7 @@ import ConfigManager from './views/config-manager/ConfigManager';
 import AgileRequestManager from './views/agile-request/AgileRequestManager';
 import AgileTableSamplesManager from './views/agile-table-samples/AgileTableSamplesManager';
 import LogManager from './views/log-manager/LogManager';
+import DevelopmentPrepareManager from './views/development-prepare/DevelopmentPrepareManager';
 
 // A simple protective wrapper for authenticated routes
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
@@ -105,6 +106,7 @@ function App() {
           <Route path="agile-table-samples" element={<AgileTableSamplesManager />} />
           <Route path="agile-request" element={<AgileRequestManager />} />
           <Route path="log-manager" element={<LogManager />} />
+          <Route path="development-prepare" element={<DevelopmentPrepareManager />} />
         </Route>
 
         {/* Fallback */}

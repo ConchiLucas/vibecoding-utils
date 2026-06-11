@@ -65,8 +65,36 @@ const DEFAULT_FIELD_SNIPPET_TEMPLATES: FieldSnippetTemplate[] = [
     excludeAudit: true,
   },
   {
+    key: 'javaAccessors',
+    description: 'Java Getter/Setter',
+    template: '    public {{javaType}} get{{pascalField}}() {\n        return {{javaField}};\n    }\n\n    public void set{{pascalField}}({{javaType}} {{javaField}}) {\n        this.{{javaField}} = {{javaField}};\n    }',
+    separator: '\n\n',
+    excludeAudit: true,
+  },
+  {
+    key: 'javaQueryFields',
+    description: 'Java Query 字段',
+    template: '    /**\n     * {{comment}}\n     */\n    private {{javaType}} {{javaField}};',
+    separator: '\n\n',
+    excludeAudit: false,
+  },
+  {
+    key: 'javaQueryAccessors',
+    description: 'Java Query Getter/Setter',
+    template: '    public {{javaType}} get{{pascalField}}() {\n        return {{javaField}};\n    }\n\n    public void set{{pascalField}}({{javaType}} {{javaField}}) {\n        this.{{javaField}} = {{javaField}};\n    }',
+    separator: '\n\n',
+    excludeAudit: false,
+  },
+  {
     key: 'tsModelFields',
     description: 'TypeScript 模型字段',
+    template: '  /** {{comment}} */\n  {{javaField}}?: {{tsType}};',
+    separator: '\n',
+    excludeAudit: true,
+  },
+  {
+    key: 'tsQueryFields',
+    description: 'TypeScript 查询字段',
     template: '  /** {{comment}} */\n  {{javaField}}?: {{tsType}};',
     separator: '\n',
     excludeAudit: true,
@@ -76,6 +104,48 @@ const DEFAULT_FIELD_SNIPPET_TEMPLATES: FieldSnippetTemplate[] = [
     description: 'Vue c-table columns',
     template: "            {\n                prop: '{{javaField}}',\n                label: '{{comment}}',\n                minWidth: '150',\n            },",
     separator: '\n',
+    excludeAudit: true,
+  },
+  {
+    key: 'vueQueryOpts',
+    description: 'Vue 查询条件 opts',
+    template: "            {{javaField}}: {\n                label: '{{comment}}',\n                span: 6,\n                comp: 'el-input'\n            }",
+    separator: ',\n',
+    excludeAudit: true,
+  },
+  {
+    key: 'vueFormItems',
+    description: 'Vue 表单项',
+    template: "                <el-form-item label=\"{{comment}}\" prop=\"{{javaField}}\">\n                    <el-input\n                            v-model=\"formData.{{javaField}}\"\n                            placeholder=\"请输入\"\n                    />\n                </el-form-item>",
+    separator: '\n\n',
+    excludeAudit: true,
+  },
+  {
+    key: 'vueFormRules',
+    description: 'Vue 表单规则',
+    template: "    {{javaField}}: [\n        { required: false, message: '请输入{{comment}}', trigger: 'blur' }\n    ]",
+    separator: ',\n',
+    excludeAudit: true,
+  },
+  {
+    key: 'sqlSelectColumns',
+    description: 'SQL 查询列',
+    template: '    ,t.{{columnName}}',
+    separator: '\n',
+    excludeAudit: false,
+  },
+  {
+    key: 'sqlWhereConditions',
+    description: 'SQL 查询条件',
+    template: "<#if condition.{{javaField}}?? && condition.{{javaField}} != ''>\n    and t.{{columnName}} = :{{javaField}}\n</#if>",
+    separator: '\n',
+    excludeAudit: true,
+  },
+  {
+    key: 'sqlCreateColumns',
+    description: 'SQL 建表字段',
+    template: "    {{columnName}} {{dbType}} COMMENT '{{comment}}'",
+    separator: ',\n',
     excludeAudit: true,
   },
 ];
@@ -212,6 +282,7 @@ const GENERATE_PLACEHOLDER_DEFAULTS: Record<string, string> = {
   packageModule: 'btStation',
   TableName: 'BtStation',
   tableName: 'btStation',
+  kebabTableName: 'bt-station',
   table_name: 'bt_station',
   TABLE_NAME: 'BT_STATION',
 };
@@ -224,31 +295,59 @@ const GENERATE_PLACEHOLDER_DESCRIPTIONS: Record<string, string> = {
   packageModule: 'Java 包路径，点号分隔',
   TableName: '实体/类名，大驼峰',
   tableName: '实体/变量名，小驼峰',
+  kebabTableName: 'Vue 组件标签名，短横线',
   table_name: '表名/SQL 名，下划线',
   TABLE_NAME: '常量名，大写下划线',
+  commentName: '页面/业务中文名称',
 };
 
-const extractGeneratePlaceholdersFromText = (text: any): DbTemplatePlaceholder[] => {
+type GeneratePlaceholderSource = 'manual' | 'fieldSnippet';
+type GenerateCodePlaceholder = DbTemplatePlaceholder & {
+  source?: GeneratePlaceholderSource;
+};
+
+const isGenerateFieldSnippetPlaceholder = (row: GenerateCodePlaceholder | undefined | null) => row?.source === 'fieldSnippet';
+
+const getGeneratePlaceholderSourceByScope = (scope: string): GeneratePlaceholderSource | undefined => {
+  const value = String(scope || '').trim().toLowerCase();
+  if (value === 'manual') return 'manual';
+  if (value === 'field' || value === 'snippet' || value === 'parsed') return 'fieldSnippet';
+  return undefined;
+};
+
+const extractGeneratePlaceholdersFromText = (text: any): GenerateCodePlaceholder[] => {
   const raw = String(text || '');
-  const keys = new Set<string>();
+  const rows = new Map<string, GenerateCodePlaceholder>();
   [
-    /\{\{\s*([A-Za-z][A-Za-z0-9_]*)\s*\}\}/g,
-    /\$\{\s*([A-Za-z][A-Za-z0-9_]*)\s*\}/g,
+    /\{\{\s*(?:(manual|field|snippet|parsed)\s*:\s*)?<?\s*([A-Za-z][A-Za-z0-9_]*)\s*>?\s*\}\}/g,
+    /\$\{\s*(?:(manual|field|snippet|parsed)\s*:\s*)?<?\s*([A-Za-z][A-Za-z0-9_]*)\s*>?\s*\}/g,
+    /\{\[\s*<\s*([A-Za-z][A-Za-z0-9_]*)\s*>\s*\]\}/g,
   ].forEach((pattern) => {
     let match: RegExpExecArray | null;
     while ((match = pattern.exec(raw)) !== null) {
-      if (match[1]) keys.add(match[1]);
+      const key = String(match[2] || match[1] || '').trim();
+      if (!key) continue;
+      const source = match[2] ? getGeneratePlaceholderSourceByScope(match[1] || '') : undefined;
+      const current = rows.get(key);
+      if (!current) {
+        rows.set(key, {
+          key,
+          source,
+          description: GENERATE_PLACEHOLDER_DESCRIPTIONS[key] || '',
+          value: GENERATE_PLACEHOLDER_DEFAULTS[key] || '',
+        });
+        continue;
+      }
+      if (source === 'fieldSnippet' || (!current.source && source)) {
+        current.source = source;
+      }
     }
   });
-  return Array.from(keys).map((key) => ({
-    key,
-    description: GENERATE_PLACEHOLDER_DESCRIPTIONS[key] || '',
-    value: GENERATE_PLACEHOLDER_DEFAULTS[key] || '',
-  }));
+  return Array.from(rows.values());
 };
 
-const mergeGeneratePlaceholders = (items: DbTemplatePlaceholder[]): DbTemplatePlaceholder[] => {
-  const merged = new Map<string, DbTemplatePlaceholder>();
+const mergeGeneratePlaceholders = (items: GenerateCodePlaceholder[]): GenerateCodePlaceholder[] => {
+  const merged = new Map<string, GenerateCodePlaceholder>();
   items.forEach((item) => {
     const key = String(item?.key || '').trim();
     if (!key) return;
@@ -263,6 +362,7 @@ const mergeGeneratePlaceholders = (items: DbTemplatePlaceholder[]): DbTemplatePl
     }
     if (!current.description && item.description) current.description = item.description;
     if (!current.value && item.value) current.value = item.value;
+    if (item.source === 'fieldSnippet' || (!current.source && item.source)) current.source = item.source;
   });
   return Array.from(merged.values());
 };
@@ -275,11 +375,10 @@ type GeneratePlaceholderGroup = {
   childKeys: string[];
   derivedLabelKey: string;
   buildValues: (value: string) => GeneratePlaceholderDerivedValues;
-  getBaseValue: (rows: DbTemplatePlaceholder[]) => string;
+  getBaseValue: (rows: GenerateCodePlaceholder[]) => string;
 };
 
 type GeneratePlaceholderKeyStyle = 'camel' | 'pascal' | 'snake' | 'upperSnake' | 'other';
-
 const splitNameWords = (value: string) => {
   const spaced = String(value || '')
     .trim()
@@ -306,12 +405,92 @@ const toPascalName = (value: string) => splitNameWords(value).map(capitalizeName
 
 const toSnakeName = (value: string) => splitNameWords(value).join('_');
 
+const toKebabName = (value: string) => splitNameWords(value).join('-');
+
 const toPackageModuleName = (value: string) => String(value || '')
   .trim()
   .split('/')
   .map((part) => toCamelName(part))
   .filter(Boolean)
   .join('.');
+
+const GENERATE_PHYSICAL_TABLE_PREFIXES = ['cs_'];
+
+const extractGenerateSourceTableName = (sourceText: any) => {
+  const match = String(sourceText || '').match(/\bcreate\s+table\s+(?:if\s+not\s+exists\s+)?([^\s(]+)/i);
+  if (!match?.[1]) return '';
+  const raw = String(match[1] || '').trim().replace(/\($/, '');
+  const parts = raw.split('.');
+  return String(parts[parts.length - 1] || '').trim().replace(/^[`"\[]+|[`"\]]+$/g, '');
+};
+
+const stripGeneratePhysicalTablePrefix = (tableName: string) => {
+  const trimmed = String(tableName || '').trim();
+  const lower = trimmed.toLowerCase();
+  const prefix = GENERATE_PHYSICAL_TABLE_PREFIXES.find((item) => lower.startsWith(item));
+  return prefix && trimmed.length > prefix.length ? trimmed.slice(prefix.length) : trimmed;
+};
+
+const unescapeGenerateSqlComment = (value: string) => String(value || '')
+  .replace(/\\'/g, "'")
+  .replace(/''/g, "'")
+  .replace(/\\"/g, '"');
+
+const extractGenerateSourceCommentName = (sourceText: any) => {
+  const raw = String(sourceText || '');
+  const patterns = [
+    /\bcomment\s*=\s*'((?:\\'|''|[^'])*)'/i,
+    /\bcomment\s*=\s*"((?:\\"|[^"])*)"/i,
+    /\bcomment\s+on\s+table\s+[\s\S]+?\s+is\s+'((?:\\'|''|[^'])*)'/i,
+  ];
+  for (const pattern of patterns) {
+    const match = raw.match(pattern);
+    const comment = match?.[1] ? unescapeGenerateSqlComment(match[1]).trim() : '';
+    if (comment) return comment.endsWith('表') ? comment.slice(0, -1) : comment;
+  }
+  return '';
+};
+
+const buildGenerateFieldSourcePlaceholderValues = (sourceText: any): DbTemplatePlaceholderValues => {
+  const values: DbTemplatePlaceholderValues = {};
+  const physicalTableName = extractGenerateSourceTableName(sourceText);
+  if (physicalTableName) {
+    const logicalTableName = stripGeneratePhysicalTablePrefix(physicalTableName);
+    values.tableName = toCamelName(logicalTableName);
+    values.TableName = toPascalName(logicalTableName);
+    values.table_name = toSnakeName(logicalTableName);
+    values.TABLE_NAME = values.table_name.toUpperCase();
+    values.kebabTableName = toKebabName(logicalTableName);
+  }
+  const commentName = extractGenerateSourceCommentName(sourceText);
+  if (commentName) values.commentName = commentName;
+  return values;
+};
+
+const buildLatestGenerateFieldSnippetPlaceholderValues = async (project: any): Promise<DbTemplatePlaceholderValues> => {
+  try {
+    const latestRes: any = await getGenerateFieldSnippetLatest(getProjectBusinessType(project));
+    const latest = unwrapResponseData(latestRes);
+    if (!latest || !latest.ID) return {};
+    const values: DbTemplatePlaceholderValues = {
+      ...parseRenderedSnippetMap(latest.rendered),
+      ...buildGenerateFieldSourcePlaceholderValues(latest.sourceText),
+    };
+    delete values.moduleName;
+    return values;
+  } catch (e) {
+    return {};
+  }
+};
+
+const applyLatestGenerateFieldSnippetValues = (
+  rows: GenerateCodePlaceholder[],
+  values: DbTemplatePlaceholderValues = {},
+) => rows.map((row) => {
+  const key = String(row.key || '').trim();
+  if (!key || key === 'moduleName' || typeof values[key] === 'undefined') return row;
+  return { ...row, source: 'fieldSnippet' as GeneratePlaceholderSource, value: String(values[key] ?? '') };
+});
 
 const getGeneratePlaceholderKeyStyle = (key: string): GeneratePlaceholderKeyStyle => {
   const raw = String(key || '').trim();
@@ -337,7 +516,7 @@ const getGeneratePlaceholderKeySignature = (key: string) => {
   return words.length >= 2 ? words.join('|') : '';
 };
 
-const buildDynamicGeneratePlaceholderGroups = (rows: DbTemplatePlaceholder[]): GeneratePlaceholderGroup[] => {
+const buildDynamicGeneratePlaceholderGroups = (rows: GenerateCodePlaceholder[]): GeneratePlaceholderGroup[] => {
   const rowKeys = new Set(rows.map((row) => String(row.key || '').trim()).filter(Boolean));
   const buckets = new Map<string, DbTemplatePlaceholder[]>();
   rows.forEach((row) => {
@@ -364,9 +543,30 @@ const buildDynamicGeneratePlaceholderGroups = (rows: DbTemplatePlaceholder[]): G
         moduleName: toCamelName(value),
         ModuleName: toPascalName(value),
       }),
-      getBaseValue: (allRows: DbTemplatePlaceholder[]) => {
+      getBaseValue: (allRows: GenerateCodePlaceholder[]) => {
         const rowMap = new Map(allRows.map((row) => [row.key, row]));
         return rowMap.get('module')?.value || GENERATE_PLACEHOLDER_DEFAULTS.module || '';
+      },
+    });
+  }
+
+  if (rowKeys.has('tableName') && rowKeys.has('kebabTableName')) {
+    const keys = ['tableName', 'TableName', 'table_name', 'TABLE_NAME', 'kebabTableName'].filter((key) => rowKeys.has(key));
+    groups.push({
+      keys,
+      parentKey: 'tableName',
+      childKeys: keys.filter((key) => key !== 'tableName'),
+      derivedLabelKey: 'tableName',
+      buildValues: (value: string) => ({
+        tableName: toCamelName(value),
+        TableName: toPascalName(value),
+        table_name: toSnakeName(value),
+        TABLE_NAME: toSnakeName(value).toUpperCase(),
+        kebabTableName: toKebabName(value),
+      }),
+      getBaseValue: (allRows: GenerateCodePlaceholder[]) => {
+        const rowMap = new Map(allRows.map((row) => [row.key, row]));
+        return rowMap.get('tableName')?.value || rowMap.get('TableName')?.value || GENERATE_PLACEHOLDER_DEFAULTS.tableName || '';
       },
     });
   }
@@ -391,7 +591,7 @@ const buildDynamicGeneratePlaceholderGroups = (rows: DbTemplatePlaceholder[]): G
         next[key] = buildGeneratePlaceholderValueForStyle(value, getGeneratePlaceholderKeyStyle(key));
         return next;
       }, {}),
-      getBaseValue: (allRows: DbTemplatePlaceholder[]) => {
+      getBaseValue: (allRows: GenerateCodePlaceholder[]) => {
         const rowMap = new Map(allRows.map((row) => [row.key, row]));
         return (
           rowMap.get(parentKey)?.value ||
@@ -414,7 +614,7 @@ const isGroupedGeneratePlaceholderKey = (key: string, groups: GeneratePlaceholde
   groups.some((group) => group.keys.includes(key))
 );
 
-const normalizeGeneratePlaceholderRows = (rows: DbTemplatePlaceholder[]) => {
+const normalizeGeneratePlaceholderRows = (rows: GenerateCodePlaceholder[]) => {
   const activeGroups = buildDynamicGeneratePlaceholderGroups(rows);
   if (activeGroups.length === 0) return rows;
 
@@ -423,11 +623,15 @@ const normalizeGeneratePlaceholderRows = (rows: DbTemplatePlaceholder[]) => {
 
   activeGroups.forEach((group) => {
     const derivedValues = group.buildValues(group.getBaseValue(rows));
+    const groupSource = group.keys.some((key) => isGenerateFieldSnippetPlaceholder(rowMap.get(key)))
+      ? 'fieldSnippet'
+      : undefined;
     group.keys.forEach((key) => {
       const current = rowMap.get(key);
       nextRows.push({
         key,
         description: current?.description || GENERATE_PLACEHOLDER_DESCRIPTIONS[key] || '',
+        source: current?.source || groupSource,
         value: derivedValues[key] || '',
       });
     });
@@ -438,14 +642,26 @@ const normalizeGeneratePlaceholderRows = (rows: DbTemplatePlaceholder[]) => {
 
 const buildGenerateCodePlaceholderPayload = async (project: any) => {
   const templateProjectId = Number(project?.ID || 0);
-  if (!templateProjectId) return { projectInstanceId: 0, pathSet: 0, pathIds: [] as number[], placeholders: [] as DbTemplatePlaceholder[] };
+  if (!templateProjectId) return {
+    projectInstanceId: 0,
+    pathSet: 0,
+    pathIds: [] as number[],
+    placeholders: [] as GenerateCodePlaceholder[],
+    latestPlaceholderValues: {} as DbTemplatePlaceholderValues,
+  };
 
   const instanceRes: any = await getProjectInstanceList(templateProjectId, true);
   const instances = normalizeProjectRows(unwrapResponseData(instanceRes));
   const selectedInstanceId = Number(project?.selectedProjectInstanceId || 0);
   const instance = instances.find((item: any) => Number(item.ID || 0) === selectedInstanceId) || instances[0] || null;
   const projectInstanceId = Number(instance?.ID || 0);
-  if (!projectInstanceId) return { projectInstanceId: 0, pathSet: 0, pathIds: [] as number[], placeholders: [] as DbTemplatePlaceholder[] };
+  if (!projectInstanceId) return {
+    projectInstanceId: 0,
+    pathSet: 0,
+    pathIds: [] as number[],
+    placeholders: [] as GenerateCodePlaceholder[],
+    latestPlaceholderValues: {} as DbTemplatePlaceholderValues,
+  };
 
   const { pathSet, pathIds } = resolveGeneratePathFilter(instance);
   const pathRes: any = await getPathList(projectInstanceId);
@@ -458,7 +674,7 @@ const buildGenerateCodePlaceholderPayload = async (project: any) => {
       return Number(pathObj.pathSet || 0) === Number(pathSet || 0);
     });
 
-  const placeholders: DbTemplatePlaceholder[] = [...mergeDbTemplatePlaceholders(paths)];
+  const placeholders: GenerateCodePlaceholder[] = [...mergeDbTemplatePlaceholders(paths)];
   for (const pathObj of paths) {
     placeholders.push(...extractGeneratePlaceholdersFromText(pathObj.fileUrl));
     placeholders.push(...extractGeneratePlaceholdersFromText(pathObj.fileName));
@@ -470,12 +686,14 @@ const buildGenerateCodePlaceholderPayload = async (project: any) => {
     });
   }
 
+  const latestPlaceholderValues = await buildLatestGenerateFieldSnippetPlaceholderValues(project);
   return {
     projectInstanceId,
     pathSet,
     pathIds,
     placeholders: mergeGeneratePlaceholders(placeholders),
     storedPlaceholderValues: parseStoredGeneratePlaceholderValues(instance?.generatePlaceholderValues),
+    latestPlaceholderValues,
   };
 };
 
@@ -523,7 +741,7 @@ export default function ProjectDashboard() {
   const [dbPlaceholderRows, setDbPlaceholderRows] = useState<DbTemplatePlaceholder[]>([]);
   const [applyingDbPlaceholders, setApplyingDbPlaceholders] = useState(false);
   const [generatePlaceholderProject, setGeneratePlaceholderProject] = useState<any | null>(null);
-  const [generatePlaceholderRows, setGeneratePlaceholderRows] = useState<DbTemplatePlaceholder[]>([]);
+  const [generatePlaceholderRows, setGeneratePlaceholderRows] = useState<GenerateCodePlaceholder[]>([]);
   const [generatePlaceholderMeta, setGeneratePlaceholderMeta] = useState<{ projectInstanceId: number; pathSet: number; pathIds: number[] } | null>(null);
   const [applyingGeneratePlaceholders, setApplyingGeneratePlaceholders] = useState(false);
   const [selectedBusinessType, setSelectedBusinessType] = useState<string | null>(null);
@@ -820,8 +1038,8 @@ export default function ProjectDashboard() {
     }
   };
 
-  const handleSaveFieldSnippet = async () => {
-    if (!fieldSnippetBusinessType) return;
+  const saveFieldSnippetAsLatest = async (options?: { successMessage?: string }) => {
+    if (!fieldSnippetBusinessType) return false;
     setSavingFieldSnippet(true);
     try {
       const res: any = await saveGenerateFieldSnippet({
@@ -833,12 +1051,27 @@ export default function ProjectDashboard() {
       });
       const saved = unwrapResponseData(res);
       setFieldSnippetPreview(parseRenderedSnippetMap(saved?.rendered));
+      await previewFieldSnippet(fieldSnippetBusinessType);
       await loadFieldSnippetHistory(fieldSnippetBusinessType);
-      toast.success('字段片段已保存');
+      toast.success(options?.successMessage || '字段片段已保存');
+      return true;
     } catch (e) {
       toast.error('保存字段片段失败');
+      return false;
     } finally {
       setSavingFieldSnippet(false);
+    }
+  };
+
+  const handleSaveFieldSnippet = async () => {
+    await saveFieldSnippetAsLatest();
+  };
+
+  const handleParseAndSaveFieldSnippet = async () => {
+    if (!fieldSnippetBusinessType) return;
+    const saved = await saveFieldSnippetAsLatest({ successMessage: '字段已解析并保存为最新' });
+    if (saved) {
+      setShowFieldSnippetSource(false);
     }
   };
 
@@ -902,7 +1135,8 @@ export default function ProjectDashboard() {
         payload.placeholders.map((item) => ({ ...item })),
         payload.storedPlaceholderValues,
       );
-      setGeneratePlaceholderRows(normalizeGeneratePlaceholderRows(restoredRows));
+      const latestRows = applyLatestGenerateFieldSnippetValues(restoredRows, payload.latestPlaceholderValues);
+      setGeneratePlaceholderRows(normalizeGeneratePlaceholderRows(latestRows));
       setGeneratePlaceholderMeta({
         projectInstanceId: payload.projectInstanceId,
         pathSet: payload.pathSet,
@@ -1073,13 +1307,16 @@ export default function ProjectDashboard() {
     : null;
 
   const updateGeneratePlaceholderRow = (index: number, value: string) => {
-    setGeneratePlaceholderRows((rows) => rows.map((row, rowIndex) => rowIndex === index ? { ...row, value } : row));
+    setGeneratePlaceholderRows((rows) => rows.map((row, rowIndex) => (
+      rowIndex === index && !isGenerateFieldSnippetPlaceholder(row) ? { ...row, value } : row
+    )));
   };
 
   const updateGenerateNamePlaceholderGroup = (group: GeneratePlaceholderGroup, value: string) => {
     const derivedValues = group.buildValues(value);
     setGeneratePlaceholderRows((rows) => rows.map((row) => {
       if (!group.keys.includes(row.key)) return row;
+      if (isGenerateFieldSnippetPlaceholder(row)) return row;
       return {
         ...row,
         value: derivedValues[row.key] || '',
@@ -1087,30 +1324,34 @@ export default function ProjectDashboard() {
     }));
   };
 
-  const renderGeneratePlaceholderRows = () => {
-    const activeGroups = buildDynamicGeneratePlaceholderGroups(generatePlaceholderRows)
+  const renderGeneratePlaceholderRows = (
+    rows: GenerateCodePlaceholder[],
+    options: { readOnly?: boolean; autoFocus?: boolean } = {},
+  ) => {
+    const activeGroups = buildDynamicGeneratePlaceholderGroups(rows)
       .map((group) => ({
         group,
         rows: group.keys
-          .map((key) => generatePlaceholderRows.find((row) => row.key === key))
-          .filter(Boolean) as DbTemplatePlaceholder[],
+          .map((key) => rows.find((row) => row.key === key))
+          .filter(Boolean) as GenerateCodePlaceholder[],
       }))
       .filter((item) => item.rows.length > 0);
     const hasGroupedRows = activeGroups.length > 0;
-    const normalRows = generatePlaceholderRows.filter((row) => !isGroupedGeneratePlaceholderKey(row.key, activeGroups.map((item) => item.group)));
+    const normalRows = rows.filter((row) => !isGroupedGeneratePlaceholderKey(row.key, activeGroups.map((item) => item.group)));
 
     return (
       <>
         {activeGroups.map(({ group }, groupIndex) => {
-          const parentRow = generatePlaceholderRows.find((row) => row.key === group.parentKey) ||
-            generatePlaceholderRows.find((row) => group.keys.includes(row.key));
+          const parentRow = rows.find((row) => row.key === group.parentKey) ||
+            rows.find((row) => group.keys.includes(row.key));
           if (!parentRow) return null;
+          const readOnly = Boolean(options.readOnly) || group.keys.some((key) => isGenerateFieldSnippetPlaceholder(rows.find((row) => row.key === key)));
           return (
             <React.Fragment key={group.parentKey}>
-              <div className="grid grid-cols-[minmax(140px,0.8fr)_minmax(180px,1fr)_minmax(220px,1.2fr)] items-center border-b border-slate-100 bg-teal-50/50">
+              <div className="grid grid-cols-[minmax(112px,0.75fr)_minmax(130px,0.85fr)_minmax(170px,1.2fr)] items-center border-b border-slate-100 bg-teal-50/50">
                 <div className="px-4 py-3">
                   <div className="font-mono text-sm font-extrabold text-slate-800">{group.parentKey}</div>
-                  <div className="mt-1 text-[11px] font-bold text-teal-700">父节点</div>
+                  <div className="mt-1 text-[11px] font-bold text-teal-700">{readOnly ? '字段片段库' : '父节点'}</div>
                 </div>
                 <div className="px-4 py-3 text-sm font-medium text-slate-500">
                   {parentRow.description || GENERATE_PLACEHOLDER_DESCRIPTIONS[group.parentKey]}
@@ -1119,19 +1360,23 @@ export default function ProjectDashboard() {
                   <input
                     type="text"
                     value={parentRow.value || ''}
-                    onChange={(event) => updateGenerateNamePlaceholderGroup(group, event.target.value)}
-                    className="w-full rounded-lg border border-teal-300 bg-white px-3 py-2 font-mono text-sm font-semibold text-slate-900 outline-none transition focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20"
-                    autoFocus={groupIndex === 0}
+                    onChange={readOnly ? undefined : (event) => updateGenerateNamePlaceholderGroup(group, event.target.value)}
+                    readOnly={readOnly}
+                    disabled={readOnly}
+                    className={readOnly
+                      ? 'w-full cursor-not-allowed rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 font-mono text-sm font-semibold text-slate-500 outline-none'
+                      : 'w-full rounded-lg border border-teal-300 bg-white px-3 py-2 font-mono text-sm font-semibold text-slate-900 outline-none transition focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20'}
+                    autoFocus={Boolean(options.autoFocus) && !readOnly && groupIndex === 0}
                   />
                 </div>
               </div>
               {group.childKeys.map((key) => {
-                const row = generatePlaceholderRows.find((item) => item.key === key);
+                const row = rows.find((item) => item.key === key);
                 if (!row) return null;
                 return (
                   <div
                     key={key}
-                    className="grid grid-cols-[minmax(140px,0.8fr)_minmax(180px,1fr)_minmax(220px,1.2fr)] items-center border-b border-slate-100 bg-slate-50/60"
+                    className="grid grid-cols-[minmax(112px,0.75fr)_minmax(130px,0.85fr)_minmax(170px,1.2fr)] items-center border-b border-slate-100 bg-slate-50/60"
                   >
                     <div className="px-4 py-3 pl-8">
                       <div className="font-mono text-sm font-bold text-slate-600">{row.key}</div>
@@ -1143,6 +1388,7 @@ export default function ProjectDashboard() {
                         type="text"
                         value={row.value || ''}
                         readOnly
+                        disabled={Boolean(options.readOnly) || isGenerateFieldSnippetPlaceholder(row)}
                         className="w-full cursor-not-allowed rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 font-mono text-sm font-semibold text-slate-500 outline-none"
                       />
                     </div>
@@ -1154,10 +1400,11 @@ export default function ProjectDashboard() {
         })}
         {normalRows.map((row, index) => {
           const realIndex = generatePlaceholderRows.findIndex((item) => item.key === row.key);
+          const readOnly = Boolean(options.readOnly) || isGenerateFieldSnippetPlaceholder(row);
           return (
             <div
               key={`${row.key}-${index}`}
-              className="grid grid-cols-[minmax(140px,0.8fr)_minmax(180px,1fr)_minmax(220px,1.2fr)] items-center border-b border-slate-100 last:border-b-0"
+              className="grid grid-cols-[minmax(112px,0.75fr)_minmax(130px,0.85fr)_minmax(170px,1.2fr)] items-center border-b border-slate-100 last:border-b-0"
             >
               <div className="break-all px-4 py-3 font-mono text-sm font-bold text-slate-700">{row.key}</div>
               <div className="px-4 py-3 text-sm font-medium text-slate-500">{row.description || '-'}</div>
@@ -1165,9 +1412,13 @@ export default function ProjectDashboard() {
                 <input
                   type="text"
                   value={row.value || ''}
-                  onChange={(event) => updateGeneratePlaceholderRow(realIndex, event.target.value)}
-                  className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 font-mono text-sm font-semibold text-slate-900 outline-none transition focus:border-teal-400 focus:bg-white focus:ring-2 focus:ring-teal-500/20"
-                  autoFocus={!hasGroupedRows && index === 0}
+                  onChange={readOnly ? undefined : (event) => updateGeneratePlaceholderRow(realIndex, event.target.value)}
+                  readOnly={readOnly}
+                  disabled={readOnly}
+                  className={readOnly
+                    ? 'w-full cursor-not-allowed rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 font-mono text-sm font-semibold text-slate-500 outline-none'
+                    : 'w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 font-mono text-sm font-semibold text-slate-900 outline-none transition focus:border-teal-400 focus:bg-white focus:ring-2 focus:ring-teal-500/20'}
+                  autoFocus={Boolean(options.autoFocus) && !readOnly && !hasGroupedRows && index === 0}
                 />
               </div>
             </div>
@@ -1176,6 +1427,45 @@ export default function ProjectDashboard() {
       </>
     );
   };
+
+  const renderGeneratePlaceholderSection = (
+    title: string,
+    description: string,
+    rows: GenerateCodePlaceholder[],
+    options: { readOnly?: boolean; autoFocus?: boolean; emptyText: string; tone?: 'manual' | 'fieldSnippet' },
+  ) => (
+    <div className="min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white">
+      <div className="flex items-start justify-between gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3">
+        <div className="min-w-0">
+          <div className="text-sm font-extrabold text-slate-800">{title}</div>
+          <div className="mt-0.5 text-xs font-semibold text-slate-400">{description}</div>
+        </div>
+        <div className={options.tone === 'fieldSnippet'
+          ? 'shrink-0 rounded-full bg-teal-50 px-2.5 py-1 text-xs font-bold text-teal-700 ring-1 ring-teal-200'
+          : 'shrink-0 rounded-full bg-white px-2.5 py-1 text-xs font-bold text-slate-500 ring-1 ring-slate-200'}
+        >
+          {rows.length}
+        </div>
+      </div>
+      {rows.length > 0 ? (
+        <>
+          <div className="grid grid-cols-[minmax(112px,0.75fr)_minmax(130px,0.85fr)_minmax(170px,1.2fr)] border-b border-slate-200 bg-white text-xs font-bold text-slate-500">
+            <div className="px-4 py-3">占位符 key</div>
+            <div className="px-4 py-3">描述</div>
+            <div className="px-4 py-3">value</div>
+          </div>
+          {renderGeneratePlaceholderRows(rows, options)}
+        </>
+      ) : (
+        <div className="px-4 py-8 text-center text-sm font-bold text-slate-400">
+          {options.emptyText}
+        </div>
+      )}
+    </div>
+  );
+
+  const manualGeneratePlaceholderRows = generatePlaceholderRows.filter((row) => !isGenerateFieldSnippetPlaceholder(row));
+  const fieldSnippetGeneratePlaceholderRows = generatePlaceholderRows.filter(isGenerateFieldSnippetPlaceholder);
 
   const closeGeneratePlaceholderDialog = () => {
     if (applyingGeneratePlaceholders) return;
@@ -1530,7 +1820,7 @@ export default function ProjectDashboard() {
             />
             <motion.div
               initial={{ opacity: 0, scale: 0.95, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="relative flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-lg bg-white shadow-2xl"
+              className="relative flex max-h-[88vh] w-full max-w-6xl flex-col overflow-hidden rounded-lg bg-white shadow-2xl"
               onClick={(event) => event.stopPropagation()}
             >
               <div className="border-b border-slate-200 px-6 py-5">
@@ -1564,13 +1854,19 @@ export default function ProjectDashboard() {
                     正在读取动态占位符...
                   </div>
                 ) : generatePlaceholderRows.length > 0 ? (
-                  <div className="overflow-hidden rounded-lg border border-slate-200">
-                    <div className="grid grid-cols-[minmax(140px,0.8fr)_minmax(180px,1fr)_minmax(220px,1.2fr)] border-b border-slate-200 bg-slate-50 text-sm font-bold text-slate-600">
-                      <div className="px-4 py-3">占位符 key</div>
-                      <div className="px-4 py-3">描述</div>
-                      <div className="px-4 py-3">value</div>
-                    </div>
-                    {renderGeneratePlaceholderRows()}
+                  <div className="grid gap-4 xl:grid-cols-2">
+                    {renderGeneratePlaceholderSection(
+                      '手动输入',
+                      '可手动填写，派生项会自动同步',
+                      manualGeneratePlaceholderRows,
+                      { autoFocus: true, emptyText: '暂无手动输入占位符', tone: 'manual' },
+                    )}
+                    {renderGeneratePlaceholderSection(
+                      '字段片段库',
+                      '来自最新解析结果，不允许修改',
+                      fieldSnippetGeneratePlaceholderRows,
+                      { readOnly: true, emptyText: '暂无字段片段库占位符', tone: 'fieldSnippet' },
+                    )}
                   </div>
                 ) : (
                   <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm font-bold text-slate-400">
@@ -2087,20 +2383,19 @@ export default function ProjectDashboard() {
                 <button
                   type="button"
                   onClick={() => setShowFieldSnippetSource(false)}
+                  disabled={savingFieldSnippet}
                   className="rounded-lg px-5 py-2.5 text-sm font-bold text-slate-600 transition-colors hover:bg-slate-100"
                 >
                   取消
                 </button>
                 <button
                   type="button"
-                  onClick={async () => {
-                    await handlePreviewFieldSnippet();
-                    setShowFieldSnippetSource(false);
-                  }}
-                  className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-5 py-2.5 text-sm font-bold text-white shadow-lg shadow-slate-900/15 transition-colors hover:bg-slate-800"
+                  onClick={handleParseAndSaveFieldSnippet}
+                  disabled={savingFieldSnippet}
+                  className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-5 py-2.5 text-sm font-bold text-white shadow-lg shadow-slate-900/15 transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  <RefreshCw size={16} />
-                  解析字段
+                  {savingFieldSnippet ? <RefreshCw size={16} className="animate-spin" /> : <Save size={16} />}
+                  解析并保存
                 </button>
               </div>
             </motion.div>
@@ -2398,7 +2693,7 @@ export default function ProjectDashboard() {
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="relative flex max-h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-lg bg-white shadow-2xl"
+              className="relative flex max-h-[88vh] w-full max-w-6xl flex-col overflow-hidden rounded-lg bg-white shadow-2xl"
               onClick={(event) => event.stopPropagation()}
             >
               <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-5">
@@ -2420,13 +2715,19 @@ export default function ProjectDashboard() {
               </div>
 
               <div className="min-h-0 flex-1 overflow-y-auto p-6">
-                <div className="overflow-hidden rounded-lg border border-slate-200">
-                  <div className="grid grid-cols-[minmax(140px,0.8fr)_minmax(200px,1.2fr)_minmax(220px,1.4fr)] border-b border-slate-200 bg-slate-50 text-sm font-bold text-slate-600">
-                    <div className="px-4 py-3">占位符 key</div>
-                    <div className="px-4 py-3">描述</div>
-                    <div className="px-4 py-3">value</div>
-                  </div>
-                  {renderGeneratePlaceholderRows()}
+                <div className="grid gap-4 xl:grid-cols-2">
+                  {renderGeneratePlaceholderSection(
+                    '手动输入',
+                    '可手动填写，派生项会自动同步',
+                    manualGeneratePlaceholderRows,
+                    { autoFocus: true, emptyText: '暂无手动输入占位符', tone: 'manual' },
+                  )}
+                  {renderGeneratePlaceholderSection(
+                    '字段片段库',
+                    '来自最新解析结果，不允许修改',
+                    fieldSnippetGeneratePlaceholderRows,
+                    { readOnly: true, emptyText: '暂无字段片段库占位符', tone: 'fieldSnippet' },
+                  )}
                 </div>
               </div>
 

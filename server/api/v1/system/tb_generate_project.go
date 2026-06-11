@@ -234,8 +234,16 @@ func buildGenerateProjectPromptURL(c *gin.Context, req systemReq.GenerateProject
 	query := url.Values{}
 	query.Set("projectInstanceId", strconv.Itoa(res.ProjectInstanceId))
 	query.Set("pathSet", strconv.Itoa(res.PathSet))
-	query.Set("module", strings.TrimSpace(req.Module))
-	query.Set("tableName", strings.TrimSpace(req.TableName))
+	module := strings.TrimSpace(res.Module)
+	if module == "" {
+		module = strings.TrimSpace(req.Module)
+	}
+	tableName := strings.TrimSpace(res.TableName)
+	if tableName == "" {
+		tableName = strings.TrimSpace(req.TableName)
+	}
+	query.Set("module", module)
+	query.Set("tableName", tableName)
 
 	pathIds := make([]string, 0, len(res.Files))
 	for _, file := range res.Files {

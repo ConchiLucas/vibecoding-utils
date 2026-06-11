@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { useUserStore } from '../../stores/useUserStore';
-import { CloudLightning, Terminal, LogOut, Key, ArrowLeft, User, Route, GitMerge, Settings, FileCode, Moon, Sun, Sparkles, Send, Database, ScrollText } from 'lucide-react';
+import { CloudLightning, LogOut, Key, ArrowLeft, User, Route, GitMerge, Settings, FileCode, Moon, Sun, Sparkles, Send, Database, ScrollText, ClipboardCheck, Terminal } from 'lucide-react';
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
 
@@ -50,15 +50,16 @@ export default function Header() {
   };
 
   const navLinks = [
-    { name: '项目池', path: '/projects', icon: CloudLightning },
-    { name: '脚本库', path: '/script-manager', icon: Terminal },
-    { name: '接口转发', path: '/interfaces', icon: Route },
-    { name: '表关系', path: '/keywords', icon: GitMerge },
+    { name: '开发准备', path: '/development-prepare', icon: ClipboardCheck },
     { name: '代码生成', path: '/code-generate', icon: FileCode },
-    { name: '配置管理', path: '/config', icon: Settings },
+    { name: '表关系', path: '/keywords', icon: GitMerge },
     { name: '表样本', path: '/agile-table-samples', icon: Database },
-    { name: '敏捷请求', path: '/agile-request', icon: Send },
     { name: '日志管理', path: '/log-manager', icon: ScrollText },
+    { name: '项目池', path: '/projects', icon: CloudLightning },
+    { name: '接口转发', path: '/interfaces', icon: Route },
+    { name: '脚本库', path: '/script-manager', icon: Terminal },
+    { name: '敏捷请求', path: '/agile-request', icon: Send },
+    { name: '配置管理', path: '/config', icon: Settings },
   ];
 
   const isScriptRoute = location.pathname.includes('/scripts');

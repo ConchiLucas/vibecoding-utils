@@ -24,6 +24,18 @@ const normalizePlaceholderKey = (value: any) => {
   if (dollarMatch) {
     key = dollarMatch[1];
   }
+  const bracketMatch = key.match(/^\{\[\s*<\s*(.+?)\s*>\s*\]\}$/);
+  if (bracketMatch) {
+    key = bracketMatch[1];
+  }
+  const scopedMatch = key.match(/^(?:manual|field|snippet|parsed)\s*:\s*(.+)$/i);
+  if (scopedMatch) {
+    key = scopedMatch[1];
+  }
+  const angleMatch = key.match(/^<\s*(.+?)\s*>$/);
+  if (angleMatch) {
+    key = angleMatch[1];
+  }
   return key.trim();
 };
 
@@ -83,8 +95,9 @@ export const applyDbTemplatePlaceholderValues = (text: string, values: DbTemplat
     const originalKey = String(key || '').trim();
     const escapedOriginalKey = escapeRegExp(originalKey);
     const replacedByNormalizedKey = next
-      .replace(new RegExp(`\\{\\{\\s*${escaped}\\s*\\}\\}`, 'g'), replacement)
-      .replace(new RegExp(`\\$\\{\\s*${escaped}\\s*\\}`, 'g'), replacement);
+      .replace(new RegExp(`\\{\\{\\s*(?:(?:manual|field|snippet|parsed)\\s*:\\s*)?<?\\s*${escaped}\\s*>?\\s*\\}\\}`, 'g'), replacement)
+      .replace(new RegExp(`\\$\\{\\s*(?:(?:manual|field|snippet|parsed)\\s*:\\s*)?<?\\s*${escaped}\\s*>?\\s*\\}`, 'g'), replacement)
+      .replace(new RegExp(`\\{\\[\\s*<\\s*${escaped}\\s*>\\s*\\]\\}`, 'g'), replacement);
     if (!originalKey || originalKey === cleanKey) {
       return replacedByNormalizedKey;
     }

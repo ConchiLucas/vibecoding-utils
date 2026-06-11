@@ -65,12 +65,15 @@ func Routers() *gin.Engine {
 	}
 
 	{
-		systemRouter.InitUserRouter(PrivateGroup)              // 注册用户路由
-		systemRouter.InitServerRouter(PrivateGroup)            // 服务器管理
-		systemRouter.InitProjectRouter(PrivateGroup)           // 项目管理
-		systemRouter.InitProjectScriptRouter(PrivateGroup)     // 脚本管理
-		systemRouter.InitScriptManagerRouter(PrivateGroup)     // 脚本库流程管理
-		systemRouter.InitLogManagerRouter(PrivateGroup)        // 日志管理
+		systemRouter.InitUserRouter(PrivateGroup)          // 注册用户路由
+		systemRouter.InitServerRouter(PrivateGroup)        // 服务器管理
+		systemRouter.InitProjectRouter(PrivateGroup)       // 项目管理
+		systemRouter.InitProjectScriptRouter(PrivateGroup) // 脚本管理
+		systemRouter.InitScriptManagerRouter(PrivateGroup) // 脚本库流程管理
+		systemRouter.InitLogManagerRouter(PrivateGroup)    // 日志管理
+
+		systemRouter.InitTbDevelopmentPrepareRouter(PrivateGroup)
+
 		systemRouter.InitProjectRouteRouter(PrivateGroup)      // 项目路由配置
 		systemRouter.InitProjectGroupRouter(PrivateGroup)      // 项目组管理
 		systemRouter.InitTbDictDataRouter(PrivateGroup)        // 字典数据路由

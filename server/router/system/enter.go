@@ -11,6 +11,7 @@ type RouterGroup struct {
 	ProjectScriptRouter
 	ScriptManagerRouter
 	LogManagerRouter
+	TbDevelopmentPrepareRouter
 	ProjectRouteRouter
 	ProjectGroupRouter
 	TbDictDataRouter
@@ -49,6 +50,7 @@ var (
 	scriptApi                     = api.ApiGroupApp.SystemApiGroup.ProjectScriptApi
 	scriptManagerApi              = api.ApiGroupApp.SystemApiGroup.ScriptManagerApi
 	logManagerApi                 = api.ApiGroupApp.SystemApiGroup.LogManagerApi
+	tbDevelopmentPrepareApi       = api.ApiGroupApp.SystemApiGroup.TbDevelopmentPrepareApi
 	projectRouteApi               = api.ApiGroupApp.SystemApiGroup.ProjectRouteApi
 	projectGroupApi               = api.ApiGroupApp.SystemApiGroup.ProjectGroupApi
 	tbDictDataApi                 = api.ApiGroupApp.SystemApiGroup.TbDictDataApi

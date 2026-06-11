@@ -12,6 +12,7 @@ export default function Layout() {
     location.pathname === '/script-manager' || 
     location.pathname === '/agile-request' || 
     location.pathname === '/log-manager' ||
+    location.pathname === '/development-prepare' ||
     location.pathname === '/agile-table-samples' ||
     location.pathname.includes('/templates');
 

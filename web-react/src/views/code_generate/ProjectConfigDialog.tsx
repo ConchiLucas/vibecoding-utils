@@ -140,12 +140,14 @@ const extractPathPlaceholdersFromText = (text: any): DbTemplatePlaceholder[] => 
   const raw = String(text || '');
   const keys = new Set<string>();
   [
-    /\{\{\s*([A-Za-z][A-Za-z0-9_]*)\s*\}\}/g,
-    /\$\{\s*([A-Za-z][A-Za-z0-9_]*)\s*\}/g,
+    /\{\{\s*(?:(?:manual|field|snippet|parsed)\s*:\s*)?<?\s*([A-Za-z][A-Za-z0-9_]*)\s*>?\s*\}\}/g,
+    /\$\{\s*(?:(?:manual|field|snippet|parsed)\s*:\s*)?<?\s*([A-Za-z][A-Za-z0-9_]*)\s*>?\s*\}/g,
+    /\{\[\s*<\s*([A-Za-z][A-Za-z0-9_]*)\s*>\s*\]\}/g,
   ].forEach((pattern) => {
     let match: RegExpExecArray | null;
     while ((match = pattern.exec(raw)) !== null) {
-      if (match[1]) keys.add(match[1]);
+      const key = match[2] || match[1];
+      if (key) keys.add(key);
     }
   });
   return Array.from(keys).map((key) => ({
@@ -1970,7 +1972,12 @@ export default function ProjectConfigDialog({
                                 <div
                                   key={group.key}
                                   data-testid="path-group-row"
-                                  className="grid grid-cols-[minmax(360px,1fr)_minmax(280px,360px)] items-center gap-3 bg-white px-4 py-2 text-gray-700 transition-colors hover:bg-gray-50"
+                                  onClick={() => {
+                                    setActivePathSetKey(section.key);
+                                    setActivePathGroupKey(group.key);
+                                  }}
+                                  className="grid cursor-pointer grid-cols-[minmax(360px,1fr)_minmax(280px,360px)] items-center gap-3 bg-white px-4 py-2 text-gray-700 transition-colors hover:bg-gray-50"
+                                  title={`进入 ${group.basePath} 子目录`}
                                 >
                                   <div className="min-w-0">
                                     <div className="mb-0.5 flex items-center gap-1.5 text-xs font-bold text-gray-400">
@@ -1982,6 +1989,7 @@ export default function ProjectConfigDialog({
                                         type="text"
                                         value={editingValue}
                                         disabled={savingThisGroup}
+                                        onClick={(event) => event.stopPropagation()}
                                         onChange={(event) => setPathGroupEdits((prev) => ({ ...prev, [editKey]: event.target.value }))}
                                         onBlur={(event) => savePathGroup(section, group, event.target.value)}
                                         onKeyDown={(event) => {

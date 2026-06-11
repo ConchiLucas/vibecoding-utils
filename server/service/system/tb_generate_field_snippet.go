@@ -32,9 +32,14 @@ type GenerateFieldSnippetPreview struct {
 }
 
 var (
-	fieldLinePattern    = regexp.MustCompile(`^\s*[` + "`" + `"]?([A-Za-z_][A-Za-z0-9_]*)[` + "`" + `"]?\s+([A-Za-z0-9_()]+)`)
-	fieldCommentPattern = regexp.MustCompile(`(?i)comment\s+['"]([^'"]*)['"]`)
-	fieldSkipPattern    = regexp.MustCompile(`(?i)^\s*(primary|unique|key|index|constraint|foreign|check)\b`)
+	fieldLinePattern              = regexp.MustCompile(`^\s*[` + "`" + `"]?([A-Za-z_][A-Za-z0-9_]*)[` + "`" + `"]?\s+([A-Za-z0-9_()]+)`)
+	fieldCommentPattern           = regexp.MustCompile(`(?i)comment\s+['"]([^'"]*)['"]`)
+	fieldSkipPattern              = regexp.MustCompile(`(?i)^\s*(create|primary|unique|key|index|constraint|foreign|check)\b`)
+	createTableNamePattern        = regexp.MustCompile(`(?is)\bcreate\s+table\s+(?:if\s+not\s+exists\s+)?([^\s(]+)`)
+	mysqlTableCommentPattern      = regexp.MustCompile(`(?is)\bcomment\s*=\s*'((?:\\'|''|[^'])*)'`)
+	mysqlDoubleCommentPattern     = regexp.MustCompile(`(?is)\bcomment\s*=\s*"((?:\\"|[^"])*)"`)
+	commentOnTablePattern         = regexp.MustCompile(`(?is)\bcomment\s+on\s+table\s+.+?\s+is\s+'((?:\\'|''|[^'])*)'`)
+	generatePhysicalTablePrefixes = []string{"cs_"}
 )
 
 func (s *TbGenerateFieldSnippetService) GetLatestGenerateFieldSnippet(businessType string) (system.TbGenerateFieldSnippet, error) {
@@ -81,9 +86,78 @@ func renderLatestGenerateFieldSnippets(businessType string) map[string]string {
 	}
 	var snippets []systemReq.GenerateFieldSnippetTemplate
 	if err := json.Unmarshal([]byte(record.Snippets), &snippets); err != nil {
-		return map[string]string{}
+		return buildGenerateFieldSourcePlaceholders(record.SourceText)
 	}
-	return buildGenerateFieldSnippetPreview(record.SourceText, snippets).Rendered
+	rendered := buildGenerateFieldSnippetPreview(record.SourceText, snippets).Rendered
+	for key, value := range buildGenerateFieldSourcePlaceholders(record.SourceText) {
+		rendered[key] = value
+	}
+	delete(rendered, "moduleName")
+	return rendered
+}
+
+func buildGenerateFieldSourcePlaceholders(sourceText string) map[string]string {
+	values := make(map[string]string)
+	tableName := extractGenerateSourceTableName(sourceText)
+	if tableName != "" {
+		logicalName := stripGeneratePhysicalTablePrefix(tableName)
+		pascalName := upperFirst(toCamelName(logicalName))
+		values["TableName"] = pascalName
+		values["tableName"] = lowerFirst(pascalName)
+		values["table_name"] = toSnakeCase(logicalName)
+		values["TABLE_NAME"] = strings.ToUpper(values["table_name"])
+		values["kebabTableName"] = toKebabCase(logicalName)
+	}
+	commentName := extractGenerateSourceCommentName(sourceText)
+	if commentName != "" {
+		values["commentName"] = commentName
+	}
+	return values
+}
+
+func extractGenerateSourceTableName(sourceText string) string {
+	match := createTableNamePattern.FindStringSubmatch(sourceText)
+	if len(match) < 2 {
+		return ""
+	}
+	raw := strings.TrimSpace(match[1])
+	raw = strings.TrimRight(raw, "(")
+	parts := strings.Split(raw, ".")
+	name := strings.TrimSpace(parts[len(parts)-1])
+	name = strings.Trim(name, "`\"[]")
+	return strings.TrimSpace(name)
+}
+
+func stripGeneratePhysicalTablePrefix(tableName string) string {
+	trimmed := strings.TrimSpace(tableName)
+	lower := strings.ToLower(trimmed)
+	for _, prefix := range generatePhysicalTablePrefixes {
+		if strings.HasPrefix(lower, prefix) && len(trimmed) > len(prefix) {
+			return trimmed[len(prefix):]
+		}
+	}
+	return trimmed
+}
+
+func extractGenerateSourceCommentName(sourceText string) string {
+	for _, pattern := range []*regexp.Regexp{mysqlTableCommentPattern, mysqlDoubleCommentPattern, commentOnTablePattern} {
+		match := pattern.FindStringSubmatch(sourceText)
+		if len(match) < 2 {
+			continue
+		}
+		comment := strings.TrimSpace(unescapeGenerateSQLComment(match[1]))
+		if comment != "" {
+			return strings.TrimSuffix(comment, "表")
+		}
+	}
+	return ""
+}
+
+func unescapeGenerateSQLComment(value string) string {
+	next := strings.ReplaceAll(value, `\'`, `'`)
+	next = strings.ReplaceAll(next, `''`, `'`)
+	next = strings.ReplaceAll(next, `\"`, `"`)
+	return next
 }
 
 func buildGenerateFieldSnippetPreview(sourceText string, snippets []systemReq.GenerateFieldSnippetTemplate) GenerateFieldSnippetPreview {

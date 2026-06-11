@@ -48,6 +48,7 @@ func RegisterTables() {
 		system.TbLogProjectGroup{},
 		system.TbLogProject{},
 		system.TbLogProjectRoute{},
+		system.TbDevelopmentPrepare{},
 		system.TbProjectScript{},
 		system.TbScriptCategory{},
 		system.TbScriptWorkflow{},
