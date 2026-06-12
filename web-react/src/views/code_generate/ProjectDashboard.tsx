@@ -737,6 +737,8 @@ export default function ProjectDashboard() {
   const [dbSqlPreviewTitle, setDbSqlPreviewTitle] = useState('');
   const [dbSqlPreviewContent, setDbSqlPreviewContent] = useState('');
   const [copyingDbSqlPreview, setCopyingDbSqlPreview] = useState(false);
+  const [generateValuePreview, setGenerateValuePreview] = useState<{ title: string; description: string; content: string } | null>(null);
+  const [copyingGenerateValuePreview, setCopyingGenerateValuePreview] = useState(false);
   const [dbPlaceholderProject, setDbPlaceholderProject] = useState<any | null>(null);
   const [dbPlaceholderRows, setDbPlaceholderRows] = useState<DbTemplatePlaceholder[]>([]);
   const [applyingDbPlaceholders, setApplyingDbPlaceholders] = useState(false);
@@ -1324,6 +1326,43 @@ export default function ProjectDashboard() {
     }));
   };
 
+  const openGenerateValuePreview = (row: GenerateCodePlaceholder) => {
+    const key = String(row.key || '').trim() || '字段片段';
+    setGenerateValuePreview({
+      title: key,
+      description: row.description || GENERATE_PLACEHOLDER_DESCRIPTIONS[key] || '',
+      content: String(row.value ?? ''),
+    });
+  };
+
+  const handleCopyGenerateValuePreview = async () => {
+    if (!generateValuePreview?.content) return;
+    setCopyingGenerateValuePreview(true);
+    try {
+      await copyTextToClipboard(generateValuePreview.content);
+      toast.success('预览内容已复制');
+    } catch (e) {
+      toast.error('复制预览内容失败');
+    } finally {
+      setCopyingGenerateValuePreview(false);
+    }
+  };
+
+  const renderGenerateReadOnlyValue = (row: GenerateCodePlaceholder) => {
+    const content = String(row.value ?? '');
+    return (
+      <button
+        type="button"
+        onClick={() => openGenerateValuePreview(row)}
+        className="flex h-10 w-full min-w-0 items-center gap-2 rounded-lg border border-slate-200 bg-slate-100 px-3 text-left font-mono text-sm font-semibold text-slate-500 outline-none transition hover:border-teal-300 hover:bg-white hover:text-slate-800 focus:border-teal-400 focus:ring-2 focus:ring-teal-500/20"
+        title={content || '查看完整内容'}
+      >
+        <span className="min-w-0 flex-1 truncate">{content || '空内容'}</span>
+        <Eye size={14} className="shrink-0 text-teal-600" />
+      </button>
+    );
+  };
+
   const renderGeneratePlaceholderRows = (
     rows: GenerateCodePlaceholder[],
     options: { readOnly?: boolean; autoFocus?: boolean } = {},
@@ -1357,17 +1396,15 @@ export default function ProjectDashboard() {
                   {parentRow.description || GENERATE_PLACEHOLDER_DESCRIPTIONS[group.parentKey]}
                 </div>
                 <div className="p-2">
-                  <input
-                    type="text"
-                    value={parentRow.value || ''}
-                    onChange={readOnly ? undefined : (event) => updateGenerateNamePlaceholderGroup(group, event.target.value)}
-                    readOnly={readOnly}
-                    disabled={readOnly}
-                    className={readOnly
-                      ? 'w-full cursor-not-allowed rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 font-mono text-sm font-semibold text-slate-500 outline-none'
-                      : 'w-full rounded-lg border border-teal-300 bg-white px-3 py-2 font-mono text-sm font-semibold text-slate-900 outline-none transition focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20'}
-                    autoFocus={Boolean(options.autoFocus) && !readOnly && groupIndex === 0}
-                  />
+                  {readOnly ? renderGenerateReadOnlyValue(parentRow) : (
+                    <input
+                      type="text"
+                      value={parentRow.value || ''}
+                      onChange={(event) => updateGenerateNamePlaceholderGroup(group, event.target.value)}
+                      className="w-full rounded-lg border border-teal-300 bg-white px-3 py-2 font-mono text-sm font-semibold text-slate-900 outline-none transition focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20"
+                      autoFocus={Boolean(options.autoFocus) && groupIndex === 0}
+                    />
+                  )}
                 </div>
               </div>
               {group.childKeys.map((key) => {
@@ -1384,13 +1421,7 @@ export default function ProjectDashboard() {
                     </div>
                     <div className="px-4 py-3 text-sm font-medium text-slate-500">{row.description || '-'}</div>
                     <div className="p-2">
-                      <input
-                        type="text"
-                        value={row.value || ''}
-                        readOnly
-                        disabled={Boolean(options.readOnly) || isGenerateFieldSnippetPlaceholder(row)}
-                        className="w-full cursor-not-allowed rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 font-mono text-sm font-semibold text-slate-500 outline-none"
-                      />
+                      {renderGenerateReadOnlyValue(row)}
                     </div>
                   </div>
                 );
@@ -1409,17 +1440,15 @@ export default function ProjectDashboard() {
               <div className="break-all px-4 py-3 font-mono text-sm font-bold text-slate-700">{row.key}</div>
               <div className="px-4 py-3 text-sm font-medium text-slate-500">{row.description || '-'}</div>
               <div className="p-2">
-                <input
-                  type="text"
-                  value={row.value || ''}
-                  onChange={readOnly ? undefined : (event) => updateGeneratePlaceholderRow(realIndex, event.target.value)}
-                  readOnly={readOnly}
-                  disabled={readOnly}
-                  className={readOnly
-                    ? 'w-full cursor-not-allowed rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 font-mono text-sm font-semibold text-slate-500 outline-none'
-                    : 'w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 font-mono text-sm font-semibold text-slate-900 outline-none transition focus:border-teal-400 focus:bg-white focus:ring-2 focus:ring-teal-500/20'}
-                  autoFocus={Boolean(options.autoFocus) && !readOnly && !hasGroupedRows && index === 0}
-                />
+                {readOnly ? renderGenerateReadOnlyValue(row) : (
+                  <input
+                    type="text"
+                    value={row.value || ''}
+                    onChange={(event) => updateGeneratePlaceholderRow(realIndex, event.target.value)}
+                    className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 font-mono text-sm font-semibold text-slate-900 outline-none transition focus:border-teal-400 focus:bg-white focus:ring-2 focus:ring-teal-500/20"
+                    autoFocus={Boolean(options.autoFocus) && !hasGroupedRows && index === 0}
+                  />
+                )}
               </div>
             </div>
           );
@@ -2885,6 +2914,68 @@ export default function ProjectDashboard() {
                 className="h-full w-full resize-none rounded-lg border border-slate-800 bg-[#101418] p-5 font-mono text-sm font-semibold leading-6 text-slate-100 outline-none selection:bg-emerald-300/25"
               />
             </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {generateValuePreview && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm"
+            onClick={() => setGenerateValuePreview(null)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.96, y: 16 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: 16 }}
+              className="flex max-h-[86vh] w-full max-w-5xl flex-col overflow-hidden rounded-lg border border-slate-800 bg-slate-950 text-white shadow-2xl"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="flex min-h-[72px] items-center justify-between gap-4 border-b border-slate-800 bg-slate-900 px-6">
+                <div className="min-w-0">
+                  <div className="text-xs font-bold uppercase tracking-wider text-teal-300">字段片段库预览</div>
+                  <h2 className="mt-1 truncate text-lg font-extrabold text-white" title={generateValuePreview.title}>
+                    {generateValuePreview.title}
+                  </h2>
+                  {generateValuePreview.description && (
+                    <div className="mt-0.5 truncate text-xs font-semibold text-slate-400" title={generateValuePreview.description}>
+                      {generateValuePreview.description}
+                    </div>
+                  )}
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleCopyGenerateValuePreview}
+                    disabled={copyingGenerateValuePreview || !generateValuePreview.content}
+                    className="inline-flex items-center gap-2 rounded-lg bg-teal-400 px-4 py-2 text-sm font-bold text-slate-950 transition-colors hover:bg-teal-300 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {copyingGenerateValuePreview ? <RefreshCw size={16} className="animate-spin" /> : <ClipboardCopy size={16} />}
+                    复制
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setGenerateValuePreview(null)}
+                    className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-slate-700 text-slate-300 transition-colors hover:bg-slate-800 hover:text-white"
+                    title="关闭"
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+              </div>
+
+              <div className="min-h-0 flex-1 bg-slate-950 p-5">
+                <textarea
+                  value={generateValuePreview.content}
+                  readOnly
+                  spellCheck={false}
+                  className="h-[60vh] w-full resize-none rounded-lg border border-slate-800 bg-[#101418] p-5 font-mono text-sm font-semibold leading-6 text-slate-100 outline-none selection:bg-teal-300/25"
+                />
+              </div>
+            </motion.div>
           </motion.div>
         )}
       </AnimatePresence>

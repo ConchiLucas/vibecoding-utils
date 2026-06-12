@@ -136,20 +136,63 @@ const PATH_PLACEHOLDER_DESCRIPTIONS: Record<string, string> = {
   TABLE_NAME: '常量名，大写下划线',
 };
 
+const PATH_FIELD_SNIPPET_PLACEHOLDER_KEYS = new Set([
+  'TableName',
+  'tableName',
+  'kebabTableName',
+  'TABLE_NAME',
+  'table_name',
+  'commentName',
+  'javaEntityFields',
+  'javaAccessors',
+  'javaQueryFields',
+  'javaQueryAccessors',
+  'tsModelFields',
+  'tsQueryFields',
+  'vueTableColumns',
+  'vueQueryOpts',
+  'vueFormItems',
+  'vueFormRules',
+  'sqlSelectColumns',
+  'sqlWhereConditions',
+  'sqlCreateColumns',
+  'sqlInsertColumns',
+  'sqlInsertValues',
+  'sqlUpdateAssignments',
+  'sqlBatchInsertColumns',
+  'sqlBatchInsertValues',
+]);
+
+const isPathFieldSnippetScope = (scope: string) => {
+  const value = String(scope || '').trim().toLowerCase();
+  return value === 'field' || value === 'snippet' || value === 'parsed';
+};
+
+const isPathFieldSnippetPlaceholderKey = (key: string) => (
+  PATH_FIELD_SNIPPET_PLACEHOLDER_KEYS.has(String(key || '').trim())
+);
+
 const extractPathPlaceholdersFromText = (text: any): DbTemplatePlaceholder[] => {
   const raw = String(text || '');
   const keys = new Set<string>();
   [
-    /\{\{\s*(?:(?:manual|field|snippet|parsed)\s*:\s*)?<?\s*([A-Za-z][A-Za-z0-9_]*)\s*>?\s*\}\}/g,
-    /\$\{\s*(?:(?:manual|field|snippet|parsed)\s*:\s*)?<?\s*([A-Za-z][A-Za-z0-9_]*)\s*>?\s*\}/g,
-    /\{\[\s*<\s*([A-Za-z][A-Za-z0-9_]*)\s*>\s*\]\}/g,
+    /\{\{\s*(?:(manual|field|snippet|parsed)\s*:\s*)?<?\s*([A-Za-z][A-Za-z0-9_]*)\s*>?\s*\}\}/g,
+    /\$\{\s*(?:(manual|field|snippet|parsed)\s*:\s*)?<?\s*([A-Za-z][A-Za-z0-9_]*)\s*>?\s*\}/g,
   ].forEach((pattern) => {
     let match: RegExpExecArray | null;
     while ((match = pattern.exec(raw)) !== null) {
-      const key = match[2] || match[1];
+      if (isPathFieldSnippetScope(match[1] || '')) continue;
+      const key = match[2];
       if (key) keys.add(key);
     }
   });
+  const bracketPattern = /\{\[\s*<\s*([A-Za-z][A-Za-z0-9_]*)\s*>\s*\]\}/g;
+  let bracketMatch: RegExpExecArray | null;
+  while ((bracketMatch = bracketPattern.exec(raw)) !== null) {
+    if (bracketMatch[1]) {
+      keys.add(bracketMatch[1]);
+    }
+  }
   return Array.from(keys).map((key) => ({
     key,
     description: PATH_PLACEHOLDER_DESCRIPTIONS[key] || '',
@@ -618,7 +661,7 @@ export default function ProjectConfigDialog({
     mergePathPlaceholders([
       ...paths.flatMap((pathObj) => parseDbTemplatePlaceholders(pathObj?.dynamicPlaceholders)),
       ...placeholderRows,
-    ])
+    ]).filter((item) => !isPathFieldSnippetPlaceholderKey(item.key))
   ), [paths, placeholderRows]);
 
   useEffect(() => {
@@ -1280,7 +1323,9 @@ export default function ProjectConfigDialog({
     if (!placeholderPath?.ID) return;
     setSavingPlaceholders(true);
     try {
-      const dynamicPlaceholders = stringifyDbTemplatePlaceholders(placeholderRows);
+      const dynamicPlaceholders = stringifyDbTemplatePlaceholders(
+        placeholderRows.filter((row) => !isPathFieldSnippetPlaceholderKey(row.key)),
+      );
       await updatePath({
         ...placeholderPath,
         dynamicPlaceholders,
