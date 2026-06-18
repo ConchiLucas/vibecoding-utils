@@ -1674,7 +1674,7 @@ func upsertStartupLogLauncherRoute(tx *gorm.DB, projectID uint, workspace string
 	values := map[string]interface{}{
 		"route_name":            "全部服务启动器",
 		"local_project_path":    workspace,
-		"local_execute_command": "./restart_all_services.sh start",
+		"local_execute_command": "./restart_all_services.sh restart",
 		"local_start_command":   "",
 		"local_stop_command":    "./restart_all_services.sh stop",
 		"log_file_path":         "",
@@ -1696,7 +1696,7 @@ func upsertStartupLogLauncherRoute(tx *gorm.DB, projectID uint, workspace string
 		RouteKey:            startupLogLauncherKey,
 		RouteName:           "全部服务启动器",
 		LocalProjectPath:    workspace,
-		LocalExecuteCommand: "./restart_all_services.sh start",
+		LocalExecuteCommand: "./restart_all_services.sh restart",
 		LocalStopCommand:    "./restart_all_services.sh stop",
 		BuildType:           logRouteTypeScript,
 		Color:               "emerald",

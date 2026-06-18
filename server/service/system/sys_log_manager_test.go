@@ -355,7 +355,7 @@ func TestSyncDiscoveredStartupLogsCreatesFileLogProject(t *testing.T) {
 		routesByKey[route.RouteKey] = route
 	}
 	launcher := routesByKey[startupLogLauncherKey]
-	if launcher.BuildType != "script" || launcher.LocalExecuteCommand != "./restart_all_services.sh start" || launcher.LocalStopCommand != "./restart_all_services.sh stop" {
+	if launcher.BuildType != "script" || launcher.LocalExecuteCommand != "./restart_all_services.sh restart" || launcher.LocalStopCommand != "./restart_all_services.sh stop" {
 		t.Fatalf("launcher route = %#v, want synced restart_all_services route", launcher)
 	}
 	fileLog := routesByKey["rob_english_word_front"]
