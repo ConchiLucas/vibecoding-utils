@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Package, Database, Server, Trash2, Plus, CheckCircle2, Pencil, Eye, Bot } from 'lucide-react';
+import { Package, Database, Server, Trash2, Plus, CheckCircle2, Pencil, Eye, EyeOff, Bot } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useProjectStore } from '../../stores/useProjectStore';
 import { getTbProjectList, createTbProject, deleteTbProject, updateTbProject, TbProject } from '../../api/sysInterfaceProject';
@@ -48,6 +48,7 @@ export default function ConfigManager() {
   const [filterEnv, setFilterEnv] = useState<string>('');
   const [isAddingConn, setIsAddingConn] = useState(false);
   const [editingConnId, setEditingConnId] = useState<number | null>(null);
+  const [showDbPassword, setShowDbPassword] = useState(false);
   const [connForm, setConnForm] = useState<Partial<TbConnection>>({
     connectionName: '',
     connectionType: 'mysql',
@@ -242,6 +243,7 @@ export default function ConfigManager() {
       });
       setEditingConnId(null);
       setIsAddingConn(false);
+      setShowDbPassword(false);
       loadConnections();
     } catch (e) {
       toast.error(editingConnId ? '数据库配置修改失败' : '数据库配置添加失败');
@@ -268,6 +270,7 @@ export default function ConfigManager() {
   const handleEditConnection = (conn: TbConnection) => {
     setIsAddingConn(false);
     setEditingConnId(conn.ID);
+    setShowDbPassword(false);
     setConnForm({
       connectionName: conn.connectionName,
       connectionType: conn.connectionType || 'mysql',
@@ -283,6 +286,7 @@ export default function ConfigManager() {
   const handleCancelEdit = () => {
     setEditingConnId(null);
     setIsAddingConn(false);
+    setShowDbPassword(false);
     setConnForm({
       connectionName: '', connectionType: 'mysql', connectionUrl: '', databaseName: '', port: 3306, dbLoginName: '', dbLoginPassword: '', envName: ''
     });
@@ -502,6 +506,7 @@ export default function ConfigManager() {
                   onClick={() => {
                     setIsAddingConn(true);
                     setEditingConnId(null);
+                    setShowDbPassword(false);
                     setConnForm({
                       connectionName: '', connectionType: 'mysql', connectionUrl: '', databaseName: '', port: 3306, dbLoginName: '', dbLoginPassword: '', envName: ''
                     });
@@ -560,7 +565,25 @@ export default function ConfigManager() {
                      <input type="number" placeholder="端口 (如: 3306)" value={connForm.port || ''} onChange={e => setConnForm({...connForm, port: Number(e.target.value)})} className="px-3 py-2 border rounded-lg text-sm" />
                      <input placeholder="数据库名" value={connForm.databaseName} onChange={e => setConnForm({...connForm, databaseName: e.target.value})} className="px-3 py-2 border rounded-lg text-sm" />
                      <input placeholder="用户名" value={connForm.dbLoginName} onChange={e => setConnForm({...connForm, dbLoginName: e.target.value})} className="px-3 py-2 border rounded-lg text-sm" />
-                     <input placeholder="密码" type="password" value={connForm.dbLoginPassword} onChange={e => setConnForm({...connForm, dbLoginPassword: e.target.value})} className="px-3 py-2 border rounded-lg text-sm" />
+                     <div className="relative">
+                       <input
+                         placeholder="密码"
+                         type={showDbPassword ? 'text' : 'password'}
+                         value={connForm.dbLoginPassword}
+                         onChange={e => setConnForm({...connForm, dbLoginPassword: e.target.value})}
+                         className="w-full px-3 py-2 pr-10 border rounded-lg text-sm"
+                         autoComplete="off"
+                       />
+                       <button
+                         type="button"
+                         onClick={() => setShowDbPassword(prev => !prev)}
+                         className="absolute inset-y-0 right-0 flex w-10 items-center justify-center text-slate-400 transition hover:text-indigo-500 focus:outline-none focus:text-indigo-500"
+                         aria-label={showDbPassword ? '隐藏密码' : '查看密码'}
+                         title={showDbPassword ? '隐藏密码' : '查看密码'}
+                       >
+                         {showDbPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                       </button>
+                     </div>
                    </div>
                    <div className="mt-4 flex gap-3">
                      <button onClick={handleAddOrEditConnection} className="bg-indigo-600 text-white px-5 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700">

@@ -221,6 +221,25 @@ func (a *LogManagerApi) StopStream(c *gin.Context) {
 	}, fmt.Sprintf("日志管理服务关闭失败, 项目ID=%d", id))
 }
 
+func (a *LogManagerApi) RestartStream(c *gin.Context) {
+	id, err := parseLogManagerProjectID(c)
+	if err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	env := c.Query("env")
+	if env == "" {
+		env = "local"
+	}
+	serviceName := c.Query("service")
+	streamLogManager(c, "服务重启执行完成", func(logCh chan string) error {
+		if strings.TrimSpace(serviceName) != "" {
+			return logManagerService.StreamDockerComposeServiceRestart(uint(id), env, serviceName, logCh)
+		}
+		return logManagerService.StreamProjectRoute(uint(id), env, "restart", logCh)
+	}, fmt.Sprintf("日志管理服务重启失败, 项目ID=%d", id))
+}
+
 func (a *LogManagerApi) DockerLogStream(c *gin.Context) {
 	id, err := parseLogManagerProjectID(c)
 	if err != nil {

@@ -2,6 +2,8 @@
 
 [English](./README-en.md) | 简体中文
 
+本地启动请先看 [`START.md`](./START.md)。最短命令是：`./scripts/restart-dev.sh restart`。
+
 VibeDeploy 是一个面向多项目研发、数据库分析、代码生成和部署运维的本地工作台。它基于 Go + Gin 后端和 React 前端构建，保留了 easy-deploy 的基础能力，并围绕项目配置、脚本流程、接口调试、表关系分析和 AI 辅助代码生成做了定制。
 
 这个仓库不是单纯的后台管理模板，而是一个把“项目资料、部署命令、数据库结构、接口文档、脚本流程、生成配置”集中到同一个页面体系里的工具。
@@ -114,73 +116,7 @@ VibeDeploy 是一个面向多项目研发、数据库分析、代码生成和部
 
 ## 本地启动
 
-### 环境要求
-
-- Go 1.24+
-- Node.js 18+
-- npm 9+
-- 一个可用的系统数据库配置，默认模板在 `server/config.template.yaml`
-
-### 一键启动开发环境
-
-在仓库根目录执行：
-
-```bash
-./scripts/restart-dev.sh restart
-```
-
-脚本会自动完成：
-
-- 从 `server/config.template.yaml` 生成临时配置文件。
-- 使用固定端口启动后端和前端，默认后端 `23638`、前端 `29527`。
-- 后端使用 `go run ./cmd/http` 启动纯 HTTP 服务。
-- 前端使用 Vite 启动，并把 `VITE_BASE_API` 指向后端端口。
-- 如果 `web-react/node_modules` 不存在，会先执行 `npm ci`。
-
-启动后终端会输出固定地址：
-
-```text
-Backend:  http://localhost:23638
-Frontend: http://localhost:29527
-```
-
-停止已记录的开发服务：
-
-```bash
-./scripts/restart-dev.sh stop
-```
-
-临时覆盖端口：
-
-```bash
-BACKEND_PORT=8008 FRONTEND_PORT=5175 ./scripts/restart-dev.sh restart
-```
-
-开发环境默认登录页会预填：
-
-```text
-username: admin
-password: 123456
-```
-
-是否能直接登录取决于你的本地数据库是否已经初始化了对应账号。
-
-### 手动启动
-
-后端：
-
-```bash
-cd server
-go run ./cmd/http -c /path/to/config.yaml
-```
-
-前端：
-
-```bash
-cd web-react
-npm install
-VITE_BASE_API=http://localhost:8008 npm run dev
-```
+启动说明只维护在根目录 [`START.md`](./START.md)，默认使用 `./scripts/restart-dev.sh restart` 重启开发服务，避免重复启动时报端口占用。
 
 ## 构建
 
@@ -212,7 +148,7 @@ docs/desktop-build.md
 
 ## 常用文档
 
-- `docs/start-dev.md`：本地开发启动说明。
+- `START.md`：本地开发启动说明。
 - `docs/desktop-build.md`：Wails 桌面端打包说明。
 - `docs/ai-table-relations-import.md`：AI 导入表关系接口说明。
 - `docs/pipeline-env-injection.md`：脚本 pipeline 环境变量注入说明。

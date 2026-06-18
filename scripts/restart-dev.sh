@@ -59,6 +59,59 @@ port_in_use() {
   lsof -iTCP:"$1" -sTCP:LISTEN -n -P >/dev/null 2>&1
 }
 
+pid_for_port() {
+  if ! command -v lsof >/dev/null 2>&1; then
+    return 1
+  fi
+  lsof -tiTCP:"$1" -sTCP:LISTEN -n -P 2>/dev/null | head -n 1
+}
+
+pids_for_port() {
+  if ! command -v lsof >/dev/null 2>&1; then
+    return 1
+  fi
+  lsof -tiTCP:"$1" -sTCP:LISTEN -n -P 2>/dev/null
+}
+
+http_ready() {
+  local url="$1"
+
+  if ! command -v curl >/dev/null 2>&1; then
+    return 1
+  fi
+
+  curl -fsS "$url" >/dev/null 2>&1
+}
+
+adopt_running_services_if_ready() {
+  if ! port_in_use "$BACKEND_PORT" && ! port_in_use "$FRONTEND_PORT"; then
+    return 1
+  fi
+
+  if port_in_use "$BACKEND_PORT" &&
+     port_in_use "$FRONTEND_PORT" &&
+     http_ready "http://127.0.0.1:${BACKEND_PORT}/health" &&
+     http_ready "http://127.0.0.1:${FRONTEND_PORT}/"; then
+    BACKEND_PID="$(pid_for_port "$BACKEND_PORT" || true)"
+    FRONTEND_PID="$(pid_for_port "$FRONTEND_PORT" || true)"
+
+    mkdir -p "$(dirname "$PID_FILE")" "$LOG_DIR"
+    {
+      [ -n "${BACKEND_PID:-}" ] && echo "backend ${BACKEND_PID}"
+      [ -n "${FRONTEND_PID:-}" ] && echo "frontend ${FRONTEND_PID}"
+    } > "$PID_FILE"
+
+    echo "Existing dev services are already running. Adopted current PIDs."
+    echo "Backend:  http://localhost:${BACKEND_PORT}"
+    echo "Frontend: http://localhost:${FRONTEND_PORT}"
+    echo "Open: http://localhost:${FRONTEND_PORT}/projects"
+    echo "PID file: ${PID_FILE}"
+    return 0
+  fi
+
+  return 1
+}
+
 port_is_avoided() {
   local port="$1"
   shift || true
@@ -130,6 +183,28 @@ stop_recorded_processes() {
   rm -f "$PID_FILE"
 }
 
+stop_port_processes() {
+  local port="$1"
+  local label="$2"
+  local pids
+
+  pids="$(pids_for_port "$port" || true)"
+  if [ -z "$pids" ]; then
+    return 0
+  fi
+
+  echo "Stopping ${label} process(es) listening on port ${port}: ${pids//$'\n'/ }"
+  while read -r pid; do
+    if [ -z "${pid:-}" ]; then
+      continue
+    fi
+    if kill -0 "$pid" >/dev/null 2>&1; then
+      kill "$pid" >/dev/null 2>&1 || true
+      wait_for_exit "$pid" "${label}"
+    fi
+  done <<< "$pids"
+}
+
 write_backend_config() {
   mkdir -p "$(dirname "$CONFIG_PATH")" "$GOCACHE_DIR" "$LOG_DIR"
 
@@ -178,12 +253,21 @@ start_services() {
     echo "BACKEND_PORT and FRONTEND_PORT must be different: ${BACKEND_PORT}" >&2
     exit 1
   fi
+  if adopt_running_services_if_ready; then
+    return 0
+  fi
   if port_in_use "$BACKEND_PORT"; then
-    echo "Backend port ${BACKEND_PORT} is already in use. Stop that process or override BACKEND_PORT." >&2
+    stop_port_processes "$BACKEND_PORT" "backend"
+  fi
+  if port_in_use "$FRONTEND_PORT"; then
+    stop_port_processes "$FRONTEND_PORT" "frontend"
+  fi
+  if port_in_use "$BACKEND_PORT"; then
+    echo "Backend port ${BACKEND_PORT} is still in use after cleanup." >&2
     exit 1
   fi
   if port_in_use "$FRONTEND_PORT"; then
-    echo "Frontend port ${FRONTEND_PORT} is already in use. Stop that process or override FRONTEND_PORT." >&2
+    echo "Frontend port ${FRONTEND_PORT} is still in use after cleanup." >&2
     exit 1
   fi
 

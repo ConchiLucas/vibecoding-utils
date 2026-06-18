@@ -18,6 +18,7 @@ func (r *LogManagerRouter) InitLogManagerRouter(Router *gin.RouterGroup) {
 		logRouter.GET("serviceGroupStream/:id", logManagerApi.ServiceGroupStream)
 		logRouter.GET("deployStream/:id", logManagerApi.DeployStream)
 		logRouter.GET("stopStream/:id", logManagerApi.StopStream)
+		logRouter.GET("restartStream/:id", logManagerApi.RestartStream)
 		logRouter.GET("dockerLogStream/:id", logManagerApi.DockerLogStream)
 	}
 }

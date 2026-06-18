@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -18,6 +19,7 @@ import (
 	"github.com/flipped-aurora/easy-deploy/server/global"
 	"github.com/flipped-aurora/easy-deploy/server/model/system"
 	"github.com/flipped-aurora/easy-deploy/server/model/system/request"
+	"gopkg.in/yaml.v3"
 	"gorm.io/gorm"
 )
 
@@ -59,6 +61,20 @@ type launchdPlistInfo struct {
 	WorkingDirectory  string
 	StandardOutPath   string
 	StandardErrorPath string
+	ProgramArguments  []string
+}
+
+type composeRouteGroup struct {
+	WorkDir string
+	Route   system.TbLogProjectRoute
+}
+
+type composeServiceListState struct {
+	WorkDir   string
+	Route     system.TbLogProjectRoute
+	Services  []string
+	Emitted   map[string]struct{}
+	RouteOnly bool
 }
 
 func (s *LogManagerService) GetLogProjectPage(req request.TbLogProjectSearch) (list []system.TbLogProject, total int64, err error) {
@@ -245,6 +261,10 @@ func (s *LogManagerService) StreamProjectServiceGroup(projectId uint, action str
 		return fmt.Errorf("当前日志项目没有可执行的%s路线", logRouteScopeLabel(scope))
 	}
 
+	if normalizedAction == "restart" && strings.EqualFold(strings.TrimSpace(scope), "docker") {
+		return streamDockerComposeServiceGroupRestart(project, routes, logCh)
+	}
+
 	sendLog(logCh, fmt.Sprintf("📋 日志项目: %s", project.ProjectName))
 	sendLog(logCh, fmt.Sprintf("📦 本次%s %d 个%s", groupActionLabel(normalizedAction), len(routes), logRouteScopeLabel(scope)))
 
@@ -283,6 +303,40 @@ func (s *LogManagerService) StreamProjectRoute(projectId uint, targetEnv string,
 	sendLog(logCh, fmt.Sprintf("📋 日志项目: %s", project.ProjectName))
 	sendLog(logCh, fmt.Sprintf("📋 服务路线: %s", route.RouteName))
 	return executeLogRoute(context.Background(), project, route, normalizedAction, logCh)
+}
+
+func (s *LogManagerService) StreamDockerComposeServiceRestart(projectId uint, targetEnv string, serviceName string, logCh chan string) error {
+	project, err := s.GetLogProjectById(projectId)
+	if err != nil {
+		return fmt.Errorf("获取日志项目信息失败: %w", err)
+	}
+	route, err := findLogRoute(project.Routes, targetEnv)
+	if err != nil {
+		return err
+	}
+	workDir := resolveLogRouteWorkDir(project, route)
+	if strings.TrimSpace(workDir) == "" {
+		return fmt.Errorf("项目本地路径为空，无法定位 Docker Compose 服务")
+	}
+	if !isLogDockerComposeRoute(route, workDir) {
+		return fmt.Errorf("当前路线不是 Docker Compose 服务路线")
+	}
+
+	serviceName = strings.TrimSpace(serviceName)
+	if serviceName == "" {
+		return fmt.Errorf("Docker Compose 服务名为空")
+	}
+
+	sendLog(logCh, fmt.Sprintf("📋 日志项目: %s", project.ProjectName))
+	sendLog(logCh, fmt.Sprintf("📋 服务路线: %s", route.RouteName))
+	sendLog(logCh, fmt.Sprintf("🐳 Compose 服务: %s", serviceName))
+	sendLog(logCh, fmt.Sprintf("🏠 工作目录: %s", workDir))
+	sendLog(logCh, fmt.Sprintf("🔨 执行命令: docker compose restart %s", serviceName))
+	if err := runCommandArgsWithLog(context.Background(), workDir, "docker", []string{"compose", "restart", serviceName}, logCh); err != nil {
+		return fmt.Errorf("Docker Compose 服务重启失败: %w", err)
+	}
+	sendLog(logCh, fmt.Sprintf("✅ Docker Compose 服务 %s 重启完成", serviceName))
+	return nil
 }
 
 func (s *LogManagerService) StreamDockerLogs(ctx context.Context, projectId uint, targetEnv string, serviceName string, logCh chan string) error {
@@ -329,6 +383,40 @@ func (s *LogManagerService) ListDockerServices(projectId uint, scope string) ([]
 	routes := scopedLogRoutes(localLogRoutes(project.Routes), scope)
 	result := make([]DockerServiceSummary, 0)
 	seen := map[string]struct{}{}
+	composeStates := map[string]*composeServiceListState{}
+	composeStateOrder := make([]*composeServiceListState, 0)
+
+	appendComposeSummary := func(route system.TbLogProjectRoute, workDir string, serviceName string, source string, routeName string, state *composeServiceListState) {
+		serviceName = strings.TrimSpace(serviceName)
+		key := fmt.Sprintf("compose:%s:%s", filepath.Clean(workDir), serviceName)
+		if serviceName == "" {
+			key = fmt.Sprintf("compose:%s:route:%d", filepath.Clean(workDir), route.ID)
+		}
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		if state != nil {
+			state.Emitted[serviceName] = struct{}{}
+			if serviceName == "" {
+				state.RouteOnly = true
+			}
+		}
+		if strings.TrimSpace(routeName) == "" {
+			routeName = route.RouteName
+		}
+		result = append(result, DockerServiceSummary{
+			ProjectID:   project.ID,
+			RouteID:     route.ID,
+			RouteName:   routeName,
+			ServiceName: serviceName,
+			WorkDir:     workDir,
+			Source:      source,
+			RouteType:   logRouteTypeDockerCompose,
+			Running:     dockerComposeServiceRunning(workDir, serviceName),
+		})
+	}
+
 	for _, route := range routes {
 		workDir := resolveLogRouteWorkDir(project, route)
 		if isFileLogRoute(route) {
@@ -370,33 +458,41 @@ func (s *LogManagerService) ListDockerServices(projectId uint, scope string) ([]
 		if !isLogDockerComposeRoute(route, workDir) {
 			continue
 		}
-		services := composeServices(workDir)
+		stateKey := filepath.Clean(workDir)
+		state := composeStates[stateKey]
+		if state == nil {
+			state = &composeServiceListState{
+				WorkDir:  workDir,
+				Route:    route,
+				Services: composeServices(workDir),
+				Emitted:  map[string]struct{}{},
+			}
+			composeStates[stateKey] = state
+			composeStateOrder = append(composeStateOrder, state)
+		}
+		services := state.Services
 		if serviceName, ok := routeSpecificComposeService(route, services); ok {
-			services = []string{serviceName}
+			appendComposeSummary(route, workDir, serviceName, "docker-compose", route.RouteName, state)
+			continue
 		}
 		if len(services) == 0 {
-			services = []string{""}
+			appendComposeSummary(route, workDir, "", "route", route.RouteName, state)
+			continue
 		}
 		for _, serviceName := range services {
-			key := fmt.Sprintf("%d:%s", route.ID, serviceName)
-			if _, ok := seen[key]; ok {
+			appendComposeSummary(route, workDir, serviceName, "docker-compose", route.RouteName, state)
+		}
+	}
+
+	for _, state := range composeStateOrder {
+		if state.RouteOnly || len(state.Services) == 0 {
+			continue
+		}
+		for _, serviceName := range state.Services {
+			if _, ok := state.Emitted[serviceName]; ok {
 				continue
 			}
-			seen[key] = struct{}{}
-			source := "route"
-			if serviceName != "" {
-				source = "docker-compose"
-			}
-			result = append(result, DockerServiceSummary{
-				ProjectID:   project.ID,
-				RouteID:     route.ID,
-				RouteName:   route.RouteName,
-				ServiceName: serviceName,
-				WorkDir:     workDir,
-				Source:      source,
-				RouteType:   logRouteTypeDockerCompose,
-				Running:     dockerComposeServiceRunning(workDir, serviceName),
-			})
+			appendComposeSummary(state.Route, state.WorkDir, serviceName, "docker-compose", "Docker Compose 自动发现", state)
 		}
 	}
 	return result, nil
@@ -434,36 +530,76 @@ func routeSpecificComposeService(route system.TbLogProjectRoute, services []stri
 	return "", false
 }
 
+func streamDockerComposeServiceGroupRestart(project system.TbLogProject, routes []system.TbLogProjectRoute, logCh chan string) error {
+	groups := dockerComposeRouteGroups(project, routes)
+	if len(groups) == 0 {
+		return fmt.Errorf("当前日志项目没有可执行的 Docker Compose 服务路线")
+	}
+
+	sendLog(logCh, fmt.Sprintf("📋 日志项目: %s", project.ProjectName))
+	sendLog(logCh, fmt.Sprintf("📦 本次重启 %d 个 Docker Compose 编排", len(groups)))
+
+	var failed []string
+	for index, group := range groups {
+		services := composeServices(group.WorkDir)
+		sendLog(logCh, "")
+		sendLog(logCh, fmt.Sprintf("▶️ [%d/%d] Docker Compose: %s", index+1, len(groups), group.WorkDir))
+		if len(services) > 0 {
+			sendLog(logCh, fmt.Sprintf("🐳 Compose 服务: %s", strings.Join(services, ", ")))
+		}
+		sendLog(logCh, fmt.Sprintf("🏠 工作目录: %s", group.WorkDir))
+		sendLog(logCh, "🔨 执行命令: docker compose restart")
+		if err := runCommandArgsWithLog(context.Background(), group.WorkDir, "docker", []string{"compose", "restart"}, logCh); err != nil {
+			failed = append(failed, fmt.Sprintf("%s: %v", group.WorkDir, err))
+			sendLog(logCh, fmt.Sprintf("❌ Docker Compose 重启失败: %v", err))
+			continue
+		}
+		sendLog(logCh, "✅ Docker Compose 编排重启完成")
+	}
+
+	if len(failed) > 0 {
+		return fmt.Errorf("%d 个 Docker Compose 编排重启失败: %s", len(failed), strings.Join(failed, "；"))
+	}
+	sendLog(logCh, "✅ Docker Compose 服务组重启完成")
+	return nil
+}
+
+func dockerComposeRouteGroups(project system.TbLogProject, routes []system.TbLogProjectRoute) []composeRouteGroup {
+	groups := make([]composeRouteGroup, 0)
+	seen := map[string]struct{}{}
+	for _, route := range routes {
+		workDir := resolveLogRouteWorkDir(project, route)
+		if strings.TrimSpace(workDir) == "" || !isLogDockerComposeRoute(route, workDir) {
+			continue
+		}
+		key := filepath.Clean(workDir)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		groups = append(groups, composeRouteGroup{
+			WorkDir: workDir,
+			Route:   route,
+		})
+	}
+	return groups
+}
+
 func executeLogRoute(ctx context.Context, project system.TbLogProject, route system.TbLogProjectRoute, action string, logCh chan string) error {
 	if isFileLogRoute(route) {
-		return fmt.Errorf("文件日志路线不支持启动或关闭")
+		if action == "restart" {
+			return restartFileLogRoute(ctx, project, route, logCh)
+		}
+		return fmt.Errorf("文件日志路线不支持%s", groupActionLabel(action))
 	}
 	workDir := resolveLogRouteWorkDir(project, route)
 	if strings.TrimSpace(workDir) == "" {
 		return fmt.Errorf("服务目录为空")
 	}
 
-	commands := make([]string, 0, 2)
-	switch action {
-	case "stop":
-		stopCommand := strings.TrimSpace(route.LocalStopCommand)
-		if stopCommand == "" && isLogDockerComposeRoute(route, workDir) {
-			stopCommand = "docker compose down"
-		}
-		if stopCommand == "" {
-			return fmt.Errorf("关闭命令未配置")
-		}
-		commands = append(commands, stopCommand)
-	default:
-		if command := strings.TrimSpace(route.LocalExecuteCommand); command != "" {
-			commands = append(commands, command)
-		}
-		if command := strings.TrimSpace(route.LocalStartCommand); command != "" {
-			commands = append(commands, command)
-		}
-		if len(commands) == 0 {
-			return fmt.Errorf("启动命令未配置")
-		}
+	commands, err := logRouteActionCommands(route, action, workDir)
+	if err != nil {
+		return err
 	}
 
 	for _, command := range commands {
@@ -472,6 +608,269 @@ func executeLogRoute(ctx context.Context, project system.TbLogProject, route sys
 		if err := runShellCommandWithLog(ctx, workDir, command, logCh); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func logRouteActionCommands(route system.TbLogProjectRoute, action string, workDir string) ([]string, error) {
+	switch action {
+	case "stop":
+		return logRouteStopCommands(route, workDir)
+	case "restart":
+		stopCommands, err := logRouteStopCommands(route, workDir)
+		if err != nil {
+			return nil, err
+		}
+		startCommands, err := logRouteStartCommands(route)
+		if err != nil {
+			return nil, err
+		}
+		return append(stopCommands, startCommands...), nil
+	default:
+		return logRouteStartCommands(route)
+	}
+}
+
+func logRouteStopCommands(route system.TbLogProjectRoute, workDir string) ([]string, error) {
+	stopCommand := strings.TrimSpace(route.LocalStopCommand)
+	if stopCommand == "" && isLogDockerComposeRoute(route, workDir) {
+		stopCommand = "docker compose down"
+	}
+	if stopCommand == "" {
+		return nil, fmt.Errorf("关闭命令未配置")
+	}
+	return []string{stopCommand}, nil
+}
+
+func logRouteStartCommands(route system.TbLogProjectRoute) ([]string, error) {
+	commands := make([]string, 0, 2)
+	if command := strings.TrimSpace(route.LocalExecuteCommand); command != "" {
+		commands = append(commands, command)
+	}
+	if command := strings.TrimSpace(route.LocalStartCommand); command != "" {
+		commands = append(commands, command)
+	}
+	if len(commands) == 0 {
+		return nil, fmt.Errorf("启动命令未配置")
+	}
+	return commands, nil
+}
+
+func restartFileLogRoute(ctx context.Context, project system.TbLogProject, route system.TbLogProjectRoute, logCh chan string) error {
+	logFilePath := resolveLogFilePath(project, route)
+	if strings.TrimSpace(logFilePath) == "" {
+		return fmt.Errorf("日志文件路径未配置")
+	}
+	serviceName := strings.TrimSpace(route.RouteKey)
+	if serviceName == "" {
+		serviceName = strings.TrimSuffix(filepath.Base(logFilePath), filepath.Ext(logFilePath))
+	}
+	if serviceName == "" {
+		return fmt.Errorf("服务名为空，无法重启单个服务")
+	}
+
+	runtimeDir := serviceRuntimeDir(logFilePath)
+	if runtimeDir == "" {
+		return fmt.Errorf("日志文件不在 .service-runtime/logs 下，无法定位单服务运行时")
+	}
+	plistPath := filepath.Join(runtimeDir, "launchd", serviceName+".plist")
+	info, err := parseLaunchdPlist(plistPath)
+	if err != nil {
+		return fmt.Errorf("读取服务启动配置失败: %w", err)
+	}
+	if strings.TrimSpace(info.WorkingDirectory) == "" {
+		info.WorkingDirectory = resolveLogRouteWorkDir(project, route)
+	}
+	if strings.TrimSpace(info.StandardOutPath) == "" {
+		info.StandardOutPath = logFilePath
+	}
+	if len(info.ProgramArguments) == 0 {
+		return fmt.Errorf("服务启动参数未配置")
+	}
+
+	pidPath := serviceRuntimePidPath(logFilePath, serviceName)
+	sendLog(logCh, fmt.Sprintf("📋 服务名: %s", serviceName))
+	sendLog(logCh, fmt.Sprintf("📄 日志文件: %s", logFilePath))
+	sendLog(logCh, fmt.Sprintf("🏠 工作目录: %s", info.WorkingDirectory))
+
+	stopRuntimeService(ctx, serviceName, info, plistPath, pidPath, logCh)
+	if err := startRuntimeService(ctx, serviceName, info, plistPath, logFilePath, pidPath, logCh); err != nil {
+		return err
+	}
+	sendLog(logCh, fmt.Sprintf("✅ %s 重启完成", serviceName))
+	return nil
+}
+
+func stopRuntimeService(ctx context.Context, serviceName string, info launchdPlistInfo, plistPath string, pidPath string, logCh chan string) {
+	if canUseLaunchctl() && strings.TrimSpace(info.Label) != "" {
+		domain := launchctlDomain()
+		sendLog(logCh, fmt.Sprintf("⏹️ 关闭 launchd 服务: %s", serviceName))
+		if err := runCommandArgsWithLog(ctx, "", "launchctl", []string{"bootout", domain + "/" + info.Label}, logCh); err != nil {
+			_ = runCommandArgsWithLog(ctx, "", "launchctl", []string{"bootout", domain, plistPath}, logCh)
+			_ = runCommandArgsWithLog(ctx, "", "launchctl", []string{"remove", info.Label}, logCh)
+		}
+	}
+	stopPidFile(pidPath, logCh)
+}
+
+func startRuntimeService(ctx context.Context, serviceName string, info launchdPlistInfo, plistPath string, logFilePath string, pidPath string, logCh chan string) error {
+	if canUseLaunchctl() && strings.TrimSpace(info.Label) != "" {
+		domain := launchctlDomain()
+		sendLog(logCh, fmt.Sprintf("🚀 启动 launchd 服务: %s", serviceName))
+		if err := runCommandArgsWithLog(ctx, "", "launchctl", []string{"bootstrap", domain, plistPath}, logCh); err != nil {
+			return fmt.Errorf("启动 launchd 服务失败: %w", err)
+		}
+		_ = runCommandArgsWithLog(ctx, "", "launchctl", []string{"kickstart", "-k", domain + "/" + info.Label}, logCh)
+		time.Sleep(time.Second)
+		if pid := launchctlServicePID(ctx, info.Label); pid > 0 && strings.TrimSpace(pidPath) != "" {
+			_ = os.MkdirAll(filepath.Dir(pidPath), 0o755)
+			_ = os.WriteFile(pidPath, []byte(strconv.Itoa(pid)), 0o644)
+			sendLog(logCh, fmt.Sprintf("✅ %s 已启动，pid=%d", serviceName, pid))
+		}
+		return nil
+	}
+
+	sendLog(logCh, fmt.Sprintf("🚀 直接启动服务: %s", serviceName))
+	return startDetachedRuntimeProcess(info.WorkingDirectory, info.ProgramArguments, logFilePath, pidPath, logCh)
+}
+
+func canUseLaunchctl() bool {
+	if runtime.GOOS != "darwin" {
+		return false
+	}
+	if strings.TrimSpace(os.Getenv("USE_LAUNCHCTL")) == "0" {
+		return false
+	}
+	_, err := exec.LookPath("launchctl")
+	return err == nil
+}
+
+func launchctlDomain() string {
+	return fmt.Sprintf("gui/%d", os.Getuid())
+}
+
+func launchctlServicePID(ctx context.Context, label string) int {
+	if strings.TrimSpace(label) == "" {
+		return 0
+	}
+	cmd := exec.CommandContext(ctx, "launchctl", "print", launchctlDomain()+"/"+label)
+	output, err := cmd.Output()
+	if err != nil {
+		return 0
+	}
+	for _, line := range strings.Split(string(output), "\n") {
+		parts := strings.SplitN(strings.TrimSpace(line), "= ", 2)
+		if len(parts) != 2 || strings.TrimSpace(parts[0]) != "pid" {
+			continue
+		}
+		pid, err := strconv.Atoi(strings.TrimSpace(parts[1]))
+		if err == nil && pid > 0 {
+			return pid
+		}
+	}
+	return 0
+}
+
+func stopPidFile(pidPath string, logCh chan string) {
+	if strings.TrimSpace(pidPath) == "" {
+		return
+	}
+	data, err := os.ReadFile(pidPath)
+	if err != nil {
+		return
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil || pid <= 0 {
+		_ = os.Remove(pidPath)
+		return
+	}
+	if syscall.Kill(pid, 0) == nil {
+		sendLog(logCh, fmt.Sprintf("⏹️ 停止 pid: %d", pid))
+		_ = syscall.Kill(pid, syscall.SIGTERM)
+		time.Sleep(2 * time.Second)
+		if syscall.Kill(pid, 0) == nil {
+			sendLog(logCh, fmt.Sprintf("⏹️ 强制停止 pid: %d", pid))
+			_ = syscall.Kill(pid, syscall.SIGKILL)
+		}
+	}
+	_ = os.Remove(pidPath)
+}
+
+func startDetachedRuntimeProcess(workDir string, args []string, logFilePath string, pidPath string, logCh chan string) error {
+	if strings.TrimSpace(workDir) == "" {
+		return fmt.Errorf("服务工作目录为空")
+	}
+	if len(args) == 0 || strings.TrimSpace(args[0]) == "" {
+		return fmt.Errorf("服务启动参数为空")
+	}
+	if strings.TrimSpace(logFilePath) == "" {
+		return fmt.Errorf("服务日志路径为空")
+	}
+	if err := os.MkdirAll(filepath.Dir(logFilePath), 0o755); err != nil {
+		return fmt.Errorf("创建日志目录失败: %w", err)
+	}
+	logFile, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return fmt.Errorf("打开日志文件失败: %w", err)
+	}
+	defer logFile.Close()
+
+	cmd := exec.Command(args[0], args[1:]...)
+	cmd.Dir = workDir
+	cmd.Env = enrichedCommandEnv()
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("启动服务失败: %w", err)
+	}
+	if strings.TrimSpace(pidPath) != "" {
+		_ = os.MkdirAll(filepath.Dir(pidPath), 0o755)
+		_ = os.WriteFile(pidPath, []byte(strconv.Itoa(cmd.Process.Pid)), 0o644)
+	}
+	sendLog(logCh, fmt.Sprintf("✅ 服务已启动，pid=%d", cmd.Process.Pid))
+	return nil
+}
+
+func runCommandArgsWithLog(ctx context.Context, workDir string, command string, args []string, logCh chan string) error {
+	cmd := exec.CommandContext(ctx, command, args...)
+	cmd.Dir = workDir
+	cmd.Env = enrichedCommandEnv()
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("创建 stdout 管道失败: %w", err)
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return fmt.Errorf("创建 stderr 管道失败: %w", err)
+	}
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+
+	scanDone := make(chan struct{}, 2)
+	scan := func(scanner *bufio.Scanner) {
+		defer func() { scanDone <- struct{}{} }()
+		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+		for scanner.Scan() {
+			select {
+			case logCh <- scanner.Text():
+			case <-ctx.Done():
+				return
+			}
+		}
+	}
+	go scan(bufio.NewScanner(stdout))
+	go scan(bufio.NewScanner(stderr))
+
+	err = cmd.Wait()
+	<-scanDone
+	<-scanDone
+	if ctx.Err() != nil {
+		return nil
+	}
+	if err != nil {
+		return err
 	}
 	return nil
 }
@@ -775,16 +1174,18 @@ func buildLogDockerLogCommand(project system.TbLogProject, route system.TbLogPro
 
 func isLogDockerComposeRoute(route system.TbLogProjectRoute, localProjectPath string) bool {
 	executeCommand := strings.ToLower(route.LocalExecuteCommand + " " + route.LocalStopCommand + " " + route.BuildType)
-	composeFilePath := filepath.Join(localProjectPath, "docker-compose.yml")
-	composeYamlPath := filepath.Join(localProjectPath, "docker-compose.yaml")
-	_, composeFileErr := os.Stat(composeFilePath)
-	_, composeYamlErr := os.Stat(composeYamlPath)
+	hasComposeFile := false
+	for _, composeFilePath := range composeFilePaths(localProjectPath) {
+		if _, err := os.Stat(composeFilePath); err == nil {
+			hasComposeFile = true
+			break
+		}
+	}
 	return strings.Contains(executeCommand, "docker compose") ||
 		strings.Contains(executeCommand, "docker-compose") ||
 		route.DockerComposeDeploy ||
 		route.BuildType == "docker_compose_deploy" ||
-		composeFileErr == nil ||
-		composeYamlErr == nil
+		hasComposeFile
 }
 
 func composeServices(workDir string) []string {
@@ -799,7 +1200,7 @@ func composeServices(workDir string) []string {
 	cmd.Env = enrichedCommandEnv()
 	output, err := cmd.Output()
 	if err != nil {
-		return nil
+		return composeServicesFromFiles(workDir)
 	}
 
 	lines := strings.Split(string(output), "\n")
@@ -812,7 +1213,50 @@ func composeServices(workDir string) []string {
 		services = append(services, name)
 	}
 	sort.Strings(services)
+	if len(services) == 0 {
+		return composeServicesFromFiles(workDir)
+	}
 	return services
+}
+
+func composeServicesFromFiles(workDir string) []string {
+	for _, composeFilePath := range composeFilePaths(workDir) {
+		data, err := os.ReadFile(composeFilePath)
+		if err != nil {
+			continue
+		}
+		var compose struct {
+			Services map[string]interface{} `yaml:"services"`
+		}
+		if err := yaml.Unmarshal(data, &compose); err != nil {
+			continue
+		}
+		services := make([]string, 0, len(compose.Services))
+		for serviceName := range compose.Services {
+			serviceName = strings.TrimSpace(serviceName)
+			if serviceName != "" {
+				services = append(services, serviceName)
+			}
+		}
+		sort.Strings(services)
+		if len(services) > 0 {
+			return services
+		}
+	}
+	return nil
+}
+
+func composeFilePaths(workDir string) []string {
+	workDir = strings.TrimSpace(workDir)
+	if workDir == "" {
+		return nil
+	}
+	return []string{
+		filepath.Join(workDir, "docker-compose.yml"),
+		filepath.Join(workDir, "docker-compose.yaml"),
+		filepath.Join(workDir, "compose.yml"),
+		filepath.Join(workDir, "compose.yaml"),
+	}
 }
 
 func normalizeLogAction(action string) (string, error) {
@@ -820,13 +1264,16 @@ func normalizeLogAction(action string) (string, error) {
 	if normalizedAction == "" {
 		normalizedAction = "start"
 	}
-	if normalizedAction != "start" && normalizedAction != "stop" {
+	if normalizedAction != "start" && normalizedAction != "stop" && normalizedAction != "restart" {
 		return "", fmt.Errorf("不支持的服务动作: %s", action)
 	}
 	return normalizedAction, nil
 }
 
 func groupActionLabel(action string) string {
+	if action == "restart" {
+		return "重启"
+	}
 	if action == "stop" {
 		return "关闭"
 	}
@@ -953,6 +1400,7 @@ func parseLaunchdPlist(plistPath string) (launchdPlistInfo, error) {
 	decoder := xml.NewDecoder(file)
 	var info launchdPlistInfo
 	currentKey := ""
+	inProgramArguments := false
 	for {
 		token, err := decoder.Token()
 		if err != nil {
@@ -962,31 +1410,43 @@ func parseLaunchdPlist(plistPath string) (launchdPlistInfo, error) {
 			return launchdPlistInfo{}, err
 		}
 
-		start, ok := token.(xml.StartElement)
-		if !ok {
-			continue
-		}
-		switch start.Name.Local {
-		case "key":
-			var key string
-			if err := decoder.DecodeElement(&key, &start); err != nil {
-				return launchdPlistInfo{}, err
+		switch element := token.(type) {
+		case xml.StartElement:
+			switch element.Name.Local {
+			case "key":
+				var key string
+				if err := decoder.DecodeElement(&key, &element); err != nil {
+					return launchdPlistInfo{}, err
+				}
+				currentKey = key
+			case "array":
+				if currentKey == "ProgramArguments" {
+					inProgramArguments = true
+				}
+			case "string":
+				var value string
+				if err := decoder.DecodeElement(&value, &element); err != nil {
+					return launchdPlistInfo{}, err
+				}
+				if inProgramArguments {
+					info.ProgramArguments = append(info.ProgramArguments, value)
+					continue
+				}
+				switch currentKey {
+				case "Label":
+					info.Label = value
+				case "WorkingDirectory":
+					info.WorkingDirectory = value
+				case "StandardOutPath":
+					info.StandardOutPath = value
+				case "StandardErrorPath":
+					info.StandardErrorPath = value
+				}
 			}
-			currentKey = key
-		case "string":
-			var value string
-			if err := decoder.DecodeElement(&value, &start); err != nil {
-				return launchdPlistInfo{}, err
-			}
-			switch currentKey {
-			case "Label":
-				info.Label = value
-			case "WorkingDirectory":
-				info.WorkingDirectory = value
-			case "StandardOutPath":
-				info.StandardOutPath = value
-			case "StandardErrorPath":
-				info.StandardErrorPath = value
+		case xml.EndElement:
+			if element.Name.Local == "array" && inProgramArguments {
+				inProgramArguments = false
+				currentKey = ""
 			}
 		}
 	}
@@ -1374,12 +1834,8 @@ func isPathInside(parent string, child string) bool {
 }
 
 func serviceRuntimePidPath(logFilePath string, routeKey string) string {
-	logDir := filepath.Dir(logFilePath)
-	if filepath.Base(logDir) != "logs" {
-		return ""
-	}
-	runtimeDir := filepath.Dir(logDir)
-	if filepath.Base(runtimeDir) != ".service-runtime" {
+	runtimeDir := serviceRuntimeDir(logFilePath)
+	if runtimeDir == "" {
 		return ""
 	}
 	pidName := strings.TrimSpace(routeKey)
@@ -1390,6 +1846,22 @@ func serviceRuntimePidPath(logFilePath string, routeKey string) string {
 		return ""
 	}
 	return filepath.Join(runtimeDir, "pids", pidName+".pid")
+}
+
+func serviceRuntimeDir(logFilePath string) string {
+	logFilePath = strings.TrimSpace(logFilePath)
+	if logFilePath == "" {
+		return ""
+	}
+	logDir := filepath.Dir(logFilePath)
+	if filepath.Base(logDir) != "logs" {
+		return ""
+	}
+	runtimeDir := filepath.Dir(logDir)
+	if filepath.Base(runtimeDir) != ".service-runtime" {
+		return ""
+	}
+	return runtimeDir
 }
 
 func enrichedCommandEnv() []string {

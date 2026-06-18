@@ -2,6 +2,8 @@
 
 English | [Simplified Chinese](./README.md)
 
+For local startup, see [`START.md`](./START.md). The shortest command is `./scripts/restart-dev.sh restart`.
+
 VibeDeploy is a local workbench for multi-project development, database analysis, code generation, deployment operations, and API debugging. It uses a Go + Gin backend and a React frontend. The repository keeps part of the easy-deploy foundation, but the current product experience is centered on project cards, deployment routes, script workflows, database browsing, table lineage, and AI-assisted generation.
 
 This is not just an admin-template repository. It is a practical console for keeping project metadata, deployment commands, database structure, API documentation, script workflows, and generation settings in one place.
@@ -117,73 +119,7 @@ In short, the Project Pool is the operational entry point for project management
 
 ## Local Development
 
-### Requirements
-
-- Go 1.24+
-- Node.js 18+
-- npm 9+
-- A usable system database configuration. The default template is `server/config.template.yaml`.
-
-### Start Both Services
-
-Run from the repository root:
-
-```bash
-./scripts/restart-dev.sh restart
-```
-
-The script will:
-
-- Generate a temporary backend config from `server/config.template.yaml`.
-- Start the backend and frontend on fixed default ports: backend `23638`, frontend `29527`.
-- Start the backend with `go run ./cmd/http`.
-- Start the frontend with Vite and set `VITE_BASE_API` to the backend URL.
-- Run `npm ci` first if `web-react/node_modules` does not exist.
-
-The terminal prints the fixed URLs:
-
-```text
-Backend:  http://localhost:23638
-Frontend: http://localhost:29527
-```
-
-Stop recorded development services:
-
-```bash
-./scripts/restart-dev.sh stop
-```
-
-Temporarily override ports:
-
-```bash
-BACKEND_PORT=8008 FRONTEND_PORT=5175 ./scripts/restart-dev.sh restart
-```
-
-The development login page is prefilled with:
-
-```text
-username: admin
-password: 123456
-```
-
-Whether this account works depends on your local database initialization.
-
-### Manual Startup
-
-Backend:
-
-```bash
-cd server
-go run ./cmd/http -c /path/to/config.yaml
-```
-
-Frontend:
-
-```bash
-cd web-react
-npm install
-VITE_BASE_API=http://localhost:8008 npm run dev
-```
+Startup instructions are maintained only in [`START.md`](./START.md). The default command is `./scripts/restart-dev.sh restart`, so recorded old processes are stopped before the frontend and backend start again.
 
 ## Build
 
@@ -215,7 +151,7 @@ docs/desktop-build.md
 
 ## Useful Docs
 
-- `docs/start-dev.md`: local development startup notes.
+- `START.md`: local development startup notes.
 - `docs/desktop-build.md`: Wails desktop packaging.
 - `docs/ai-table-relations-import.md`: AI table-relation import API.
 - `docs/pipeline-env-injection.md`: pipeline server environment variable injection.

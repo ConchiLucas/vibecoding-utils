@@ -13,7 +13,6 @@ import {
   ScrollText,
   Search,
   Server,
-  Square,
   Terminal,
   TerminalSquare,
   Trash2,
@@ -44,7 +43,7 @@ interface LogPanelState {
   projectName: string;
   envKey: string;
   routeName: string;
-  mode: 'deploy' | 'stop' | 'logs';
+  mode: 'deploy' | 'stop' | 'restart' | 'logs';
   streamPath?: string;
   panelTitle?: string;
   introText?: string;
@@ -252,6 +251,11 @@ export default function LogManager() {
 
   const activeRoutes = activeTab === 'docker' ? dockerComposeRoutes : (serviceLogRoutes.length > 0 ? serviceLogRoutes : serviceRoutes);
   const activeExecutableRoutes = activeTab === 'docker' ? dockerComposeRoutes : executableServiceRoutes;
+  const dockerDisplayCount = dockerServices.length > 0 ? dockerServices.length : dockerComposeRoutes.length;
+  const activeDisplayCount = activeTab === 'docker' ? dockerDisplayCount : activeRoutes.length;
+  const activeDisplayLabel = activeTab === 'docker'
+    ? (dockerServices.length > 0 ? 'Compose 服务' : 'Compose 路线')
+    : '服务路线';
 
   const selectedGroupName = selectedGroupId === null
     ? '全部项目'
@@ -309,25 +313,28 @@ export default function LogManager() {
     };
   }, [activeTab, selectedProjectId, token]);
 
-  const openGroupStream = (action: 'start' | 'stop') => {
+  const openGroupStream = (action: 'start' | 'stop' | 'restart') => {
     if (!selectedProject) return;
     if (activeExecutableRoutes.length === 0) {
       toast.error(activeTab === 'docker' ? '当前项目没有可执行的 docker-compose 路线' : '当前项目没有可执行的服务启动路线');
       return;
     }
     const isStop = action === 'stop';
+    const isRestart = action === 'restart';
     const scope = activeTab === 'docker' ? 'docker' : 'service';
     const scopeLabel = activeTab === 'docker' ? 'Docker Compose 服务' : '服务';
+    const actionLabel = isRestart ? '重启' : isStop ? '关闭' : '启动';
+    const targetCount = activeTab === 'docker' && dockerServices.length > 0 ? dockerServices.length : activeExecutableRoutes.length;
     setLogPanel({
       open: true,
       projectId: selectedProject.ID,
       projectName: selectedProject.projectName,
       envKey: `${scope}-group`,
-      routeName: `${activeExecutableRoutes.length} 个${scopeLabel}`,
-      mode: isStop ? 'stop' : 'deploy',
+      routeName: `${targetCount} 个${scopeLabel}`,
+      mode: isRestart ? 'restart' : isStop ? 'stop' : 'deploy',
       streamPath: `/logManager/serviceGroupStream/${selectedProject.ID}?action=${action}&scope=${scope}`,
-      panelTitle: isStop ? `${scopeLabel}关闭日志` : `${scopeLabel}启动日志`,
-      introText: `🚀 已连接，开始${isStop ? '关闭' : '启动'} [${selectedProject.projectName}] 的 ${activeExecutableRoutes.length} 个${scopeLabel}...`,
+      panelTitle: `${scopeLabel}${actionLabel}日志`,
+      introText: `🚀 已连接，开始${actionLabel} [${selectedProject.projectName}] 的 ${targetCount} 个${scopeLabel}...`,
     });
   };
 
@@ -346,6 +353,39 @@ export default function LogManager() {
       streamPath: `/logManager/dockerLogStream/${selectedProject.ID}?env=${item.routeId}${servicePart}`,
       panelTitle: isDockerTab ? 'Docker 实时日志' : '服务实时日志',
       introText: `🚀 已连接，开始读取 [${selectedProject.projectName}] - ${displayName} 的${isDockerTab ? ' Docker 日志' : '服务日志'}...`,
+    });
+  };
+
+  const openServiceRestart = (item: DockerServiceSummary) => {
+    if (!selectedProject) return;
+    const displayName = item.serviceName ? `${item.routeName} / ${item.serviceName}` : item.routeName;
+    setLogPanel({
+      open: true,
+      projectId: selectedProject.ID,
+      projectName: selectedProject.projectName,
+      envKey: String(item.routeId),
+      routeName: displayName,
+      mode: 'restart',
+      streamPath: `/logManager/restartStream/${selectedProject.ID}?env=${item.routeId}`,
+      panelTitle: '服务重启日志',
+      introText: `🚀 已连接，开始重启 [${selectedProject.projectName}] - ${displayName}...`,
+    });
+  };
+
+  const openDockerRestart = (item: DockerServiceSummary) => {
+    if (!selectedProject) return;
+    const servicePart = item.serviceName ? `&service=${encodeURIComponent(item.serviceName)}` : '';
+    const displayName = item.serviceName ? `${item.routeName} / ${item.serviceName}` : item.routeName;
+    setLogPanel({
+      open: true,
+      projectId: selectedProject.ID,
+      projectName: selectedProject.projectName,
+      envKey: String(item.routeId),
+      routeName: displayName,
+      mode: 'restart',
+      streamPath: `/logManager/restartStream/${selectedProject.ID}?env=${item.routeId}${servicePart}`,
+      panelTitle: item.serviceName ? 'Docker 服务重启日志' : 'Docker 路线重启日志',
+      introText: `🚀 已连接，开始重启 [${selectedProject.projectName}] - ${displayName}...`,
     });
   };
 
@@ -607,8 +647,8 @@ export default function LogManager() {
               {selectedProject && (
                 <div className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-500">
                   <Database size={14} />
-                  <span className="font-semibold text-gray-700">{activeRoutes.length}</span>
-                  <span>{activeTab === 'docker' ? 'Compose 路线' : '服务路线'}</span>
+                  <span className="font-semibold text-gray-700">{activeDisplayCount}</span>
+                  <span>{activeDisplayLabel}</span>
                 </div>
               )}
             </div>
@@ -657,18 +697,11 @@ export default function LogManager() {
 
                 <div className="mt-5 grid grid-cols-2 gap-3">
                   <button
-                    onClick={() => openGroupStream('start')}
+                    onClick={() => openGroupStream('restart')}
                     disabled={executableServiceRoutes.length === 0}
-                    className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 text-sm font-bold text-white shadow-sm shadow-emerald-500/20 transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-400 disabled:shadow-none"
+                    className="col-span-2 inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-amber-500 px-4 text-sm font-bold text-white shadow-sm shadow-amber-500/20 transition-colors hover:bg-amber-600 disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-400 disabled:shadow-none"
                   >
-                    <Play size={15} fill="currentColor" /> 启动全部
-                  </button>
-                  <button
-                    onClick={() => openGroupStream('stop')}
-                    disabled={executableServiceRoutes.length === 0}
-                    className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-red-500 px-4 text-sm font-bold text-white shadow-sm shadow-red-500/20 transition-colors hover:bg-red-600 disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-400 disabled:shadow-none"
-                  >
-                    <Square size={13} fill="currentColor" /> 关闭全部
+                    <RefreshCw size={15} /> 重启全部
                   </button>
                   <button
                     onClick={loadDockerServices}
@@ -735,12 +768,20 @@ export default function LogManager() {
                       </div>
                     </div>
 
-                    <button
-                      onClick={() => openDockerLog(item)}
-                      className="mt-5 inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg bg-blue-600 px-3 text-sm font-bold text-white transition-colors hover:bg-blue-700"
-                    >
-                      <ScrollText size={14} /> 查看服务日志
-                    </button>
+                    <div className="mt-5 grid grid-cols-2 gap-3">
+                      <button
+                        onClick={() => openServiceRestart(item)}
+                        className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-amber-500 px-3 text-sm font-bold text-white transition-colors hover:bg-amber-600"
+                      >
+                        <RefreshCw size={14} /> 重启服务
+                      </button>
+                      <button
+                        onClick={() => openDockerLog(item)}
+                        className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-blue-600 px-3 text-sm font-bold text-white transition-colors hover:bg-blue-700"
+                      >
+                        <ScrollText size={14} /> 查看服务日志
+                      </button>
+                    </div>
                   </div>
                 ))
               )}
@@ -777,25 +818,18 @@ export default function LogManager() {
                       </div>
                     </div>
                     <div>
-                      <div className="font-bold text-gray-400">Compose 启动</div>
-                      <div className="mt-1 font-mono text-gray-700">{dockerComposeRoutes.length} 个</div>
+                      <div className="font-bold text-gray-400">Compose 服务</div>
+                      <div className="mt-1 font-mono text-gray-700">{dockerDisplayCount} 个</div>
                     </div>
                   </div>
                 </div>
                 <div className="mt-5 grid grid-cols-2 gap-3">
                   <button
-                    onClick={() => openGroupStream('start')}
+                    onClick={() => openGroupStream('restart')}
                     disabled={dockerComposeRoutes.length === 0}
-                    className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 text-sm font-bold text-white shadow-sm shadow-emerald-500/20 transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-400 disabled:shadow-none"
+                    className="col-span-2 inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-amber-500 px-4 text-sm font-bold text-white shadow-sm shadow-amber-500/20 transition-colors hover:bg-amber-600 disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-400 disabled:shadow-none"
                   >
-                    <Play size={15} fill="currentColor" /> 启动全部
-                  </button>
-                  <button
-                    onClick={() => openGroupStream('stop')}
-                    disabled={dockerComposeRoutes.length === 0}
-                    className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-red-500 px-4 text-sm font-bold text-white shadow-sm shadow-red-500/20 transition-colors hover:bg-red-600 disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-400 disabled:shadow-none"
-                  >
-                    <Square size={13} fill="currentColor" /> 关闭全部
+                    <RefreshCw size={15} /> 重启全部
                   </button>
                   <button
                     onClick={loadDockerServices}
@@ -856,12 +890,20 @@ export default function LogManager() {
                       </div>
                     </div>
 
-                    <button
-                      onClick={() => openDockerLog(item)}
-                      className="mt-5 inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg bg-emerald-600 px-3 text-sm font-bold text-white transition-colors hover:bg-emerald-700"
-                    >
-                      <ScrollText size={14} /> 查看实时日志
-                    </button>
+                    <div className="mt-5 grid grid-cols-2 gap-3">
+                      <button
+                        onClick={() => openDockerRestart(item)}
+                        className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-amber-500 px-3 text-sm font-bold text-white transition-colors hover:bg-amber-600"
+                      >
+                        <RefreshCw size={14} /> {item.serviceName ? '重启服务' : '重启路线'}
+                      </button>
+                      <button
+                        onClick={() => openDockerLog(item)}
+                        className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-emerald-600 px-3 text-sm font-bold text-white transition-colors hover:bg-emerald-700"
+                      >
+                        <ScrollText size={14} /> 查看实时日志
+                      </button>
+                    </div>
                   </div>
                 ))
               )}

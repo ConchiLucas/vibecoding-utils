@@ -3,6 +3,7 @@ package system
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -99,6 +100,57 @@ func TestBuildFileLogCommandUsesProjectRelativePath(t *testing.T) {
 	wantLastArg := "/work/app/.devserver/frontend.log"
 	if got := args[len(args)-1]; got != wantLastArg {
 		t.Fatalf("last arg = %q, want %q", got, wantLastArg)
+	}
+}
+
+func TestLogRouteRestartCommandsRunStopThenStart(t *testing.T) {
+	route := modelSystem.TbLogProjectRoute{
+		LocalExecuteCommand: "./start.sh",
+		LocalStartCommand:   "npm run dev",
+		LocalStopCommand:    "./stop.sh",
+	}
+
+	commands, err := logRouteActionCommands(route, "restart", "/work/app")
+	if err != nil {
+		t.Fatalf("build restart commands: %v", err)
+	}
+	want := []string{"./stop.sh", "./start.sh", "npm run dev"}
+	if !reflect.DeepEqual(commands, want) {
+		t.Fatalf("commands = %#v, want %#v", commands, want)
+	}
+}
+
+func TestParseLaunchdPlistReadsProgramArguments(t *testing.T) {
+	plistPath := filepath.Join(t.TempDir(), "service.plist")
+	plist := `<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>local.example.service</string>
+  <key>WorkingDirectory</key><string>/work/service</string>
+  <key>StandardOutPath</key><string>/work/.service-runtime/logs/service.log</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/env</string>
+    <string>npm</string>
+    <string>run</string>
+    <string>dev</string>
+  </array>
+</dict>
+</plist>`
+	if err := os.WriteFile(plistPath, []byte(plist), 0o644); err != nil {
+		t.Fatalf("write plist: %v", err)
+	}
+
+	info, err := parseLaunchdPlist(plistPath)
+	if err != nil {
+		t.Fatalf("parse plist: %v", err)
+	}
+	if info.Label != "local.example.service" || info.WorkingDirectory != "/work/service" {
+		t.Fatalf("basic plist fields = %#v", info)
+	}
+	wantArgs := []string{"/usr/bin/env", "npm", "run", "dev"}
+	if !reflect.DeepEqual(info.ProgramArguments, wantArgs) {
+		t.Fatalf("program arguments = %#v, want %#v", info.ProgramArguments, wantArgs)
 	}
 }
 
@@ -472,6 +524,91 @@ func TestDockerScopeExcludesScriptAndFileLogRoutes(t *testing.T) {
 	}
 	if len(entries) != 0 {
 		t.Fatalf("docker entry count = %d, want 0: %#v", len(entries), entries)
+	}
+}
+
+func TestListDockerServicesIncludesComposeServicesWithoutRoutes(t *testing.T) {
+	db := setupLogManagerTestDB(t)
+	workDir := t.TempDir()
+	compose := `services:
+  backend:
+    image: busybox
+  worker:
+    image: busybox
+  web:
+    image: busybox
+`
+	if err := os.WriteFile(filepath.Join(workDir, "docker-compose.yml"), []byte(compose), 0o644); err != nil {
+		t.Fatalf("write compose file: %v", err)
+	}
+	project := modelSystem.TbLogProject{
+		ProjectName:      "dashboard",
+		LocalProjectPath: workDir,
+	}
+	if err := db.Create(&project).Error; err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	routes := []modelSystem.TbLogProjectRoute{
+		{
+			ProjectId:           int(project.ID),
+			RouteKey:            "backend",
+			RouteName:           "backend",
+			LocalProjectPath:    workDir,
+			LocalExecuteCommand: "docker compose up -d backend",
+			BuildType:           "docker_compose_deploy",
+			Sort:                1,
+		},
+		{
+			ProjectId:           int(project.ID),
+			RouteKey:            "worker",
+			RouteName:           "worker",
+			LocalProjectPath:    workDir,
+			LocalExecuteCommand: "docker compose up -d worker",
+			BuildType:           "docker_compose_deploy",
+			Sort:                2,
+		},
+	}
+	if err := db.Create(&routes).Error; err != nil {
+		t.Fatalf("create routes: %v", err)
+	}
+
+	entries, err := (&LogManagerService{}).ListDockerServices(project.ID, "docker")
+	if err != nil {
+		t.Fatalf("list docker services: %v", err)
+	}
+	names := map[string]DockerServiceSummary{}
+	for _, entry := range entries {
+		names[entry.ServiceName] = entry
+	}
+	for _, name := range []string{"backend", "worker", "web"} {
+		if _, ok := names[name]; !ok {
+			t.Fatalf("missing compose service %q in entries: %#v", name, entries)
+		}
+	}
+	if len(entries) != 3 {
+		t.Fatalf("entry count = %d, want 3: %#v", len(entries), entries)
+	}
+	if names["web"].RouteName != "Docker Compose 自动发现" {
+		t.Fatalf("auto discovered route name = %q, want Docker Compose 自动发现", names["web"].RouteName)
+	}
+}
+
+func TestComposeServicesFromFilesSupportsComposeYml(t *testing.T) {
+	workDir := t.TempDir()
+	compose := `services:
+  api:
+    image: busybox
+  ui:
+    image: busybox
+`
+	if err := os.WriteFile(filepath.Join(workDir, "compose.yml"), []byte(compose), 0o644); err != nil {
+		t.Fatalf("write compose file: %v", err)
+	}
+
+	got := composeServicesFromFiles(workDir)
+	want := []string{"api", "ui"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("compose services = %#v, want %#v", got, want)
 	}
 }
 
