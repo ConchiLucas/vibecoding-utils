@@ -83,7 +83,13 @@ function isDockerComposeLaunchRoute(route: LogProjectRoute) {
   const commandText = `${route.localExecuteCommand || ''} ${route.localStartCommand || ''}`.toLowerCase();
   const directComposeCommand = /\b(docker\s+compose|docker-compose)\b/.test(commandText);
   const composeMarked = Boolean(route.dockerComposeDeploy) || route.buildType === 'docker_compose_deploy';
-  return !isScriptLaunchCommand(launchCommand) && (directComposeCommand || composeMarked);
+  if (composeMarked) return true;
+  return !isScriptLaunchCommand(launchCommand) && directComposeCommand;
+}
+
+function isDockerDeployScriptRoute(route: LogProjectRoute) {
+  const launchCommand = route.localExecuteCommand || route.localStartCommand;
+  return isDockerComposeLaunchRoute(route) && isScriptLaunchCommand(launchCommand);
 }
 
 function isFileLogRoute(route: LogProjectRoute) {
@@ -164,6 +170,8 @@ export default function LogManager() {
   const [logPanel, setLogPanel] = useState<LogPanelState>(emptyLogPanel);
   const [editingProjectId, setEditingProjectId] = useState<number | null>(null);
   const [editingProjectName, setEditingProjectName] = useState('');
+  const [editingProjectPathId, setEditingProjectPathId] = useState<number | null>(null);
+  const [editingProjectPath, setEditingProjectPath] = useState('');
   const [projectActionLoadingId, setProjectActionLoadingId] = useState<number | null>(null);
   const { confirm, dialogProps } = useConfirm();
 
@@ -249,6 +257,11 @@ export default function LogManager() {
     [localRoutes]
   );
 
+  const hasDockerDeployScript = useMemo(
+    () => dockerComposeRoutes.some(isDockerDeployScriptRoute),
+    [dockerComposeRoutes]
+  );
+
   const activeRoutes = activeTab === 'docker' ? dockerComposeRoutes : (serviceLogRoutes.length > 0 ? serviceLogRoutes : serviceRoutes);
   const activeExecutableRoutes = activeTab === 'docker' ? dockerComposeRoutes : executableServiceRoutes;
   const dockerDisplayCount = dockerServices.length > 0 ? dockerServices.length : dockerComposeRoutes.length;
@@ -286,7 +299,7 @@ export default function LogManager() {
 
   useEffect(() => {
     loadDockerServices();
-  }, [activeTab, selectedProjectId]);
+  }, [activeTab, selectedProjectId, selectedProject?.localProjectPath]);
 
   useEffect(() => {
     if (!selectedProjectId) return;
@@ -323,7 +336,8 @@ export default function LogManager() {
     const isRestart = action === 'restart';
     const scope = activeTab === 'docker' ? 'docker' : 'service';
     const scopeLabel = activeTab === 'docker' ? 'Docker Compose 服务' : '服务';
-    const actionLabel = isRestart ? '重启' : isStop ? '关闭' : '启动';
+    const isDockerDeploy = activeTab === 'docker' && action === 'start' && hasDockerDeployScript;
+    const actionLabel = isDockerDeploy ? '部署' : isRestart ? '重启' : isStop ? '关闭' : '启动';
     const targetCount = activeTab === 'docker' && dockerServices.length > 0 ? dockerServices.length : activeExecutableRoutes.length;
     setLogPanel({
       open: true,
@@ -431,6 +445,50 @@ export default function LogManager() {
       void fetchData();
     } catch {
       toast.error('修改项目名称失败');
+    } finally {
+      setProjectActionLoadingId(null);
+    }
+  };
+
+  const startEditProjectPath = (project: LogProject) => {
+    setEditingProjectPathId(project.ID);
+    setEditingProjectPath(project.localProjectPath || '');
+  };
+
+  const cancelEditProjectPath = () => {
+    setEditingProjectPathId(null);
+    setEditingProjectPath('');
+  };
+
+  const saveProjectPath = async (project: LogProject) => {
+    const nextPath = editingProjectPath.trim();
+    if (!nextPath) {
+      toast.error('项目目录不能为空');
+      return;
+    }
+    if (nextPath === String(project.localProjectPath || '').trim()) {
+      cancelEditProjectPath();
+      return;
+    }
+
+    setProjectActionLoadingId(project.ID);
+    try {
+      const { routes: _routes, ...payload } = project;
+      const res: any = await saveOrUpdateLogProject({
+        ...payload,
+        localProjectPath: nextPath,
+      });
+      if (res.code !== 0) {
+        toast.error(res.msg || '修改项目目录失败');
+        return;
+      }
+      setProjects(previous => previous.map(item => item.ID === project.ID ? { ...item, localProjectPath: nextPath } : item));
+      setDockerServices([]);
+      cancelEditProjectPath();
+      toast.success('项目目录及旧目录下的路线路径已更新');
+      await fetchData();
+    } catch {
+      toast.error('修改项目目录失败');
     } finally {
       setProjectActionLoadingId(null);
     }
@@ -645,14 +703,64 @@ export default function LogManager() {
                 <span className="font-semibold text-blue-700">{activeProjectLabel}</span>
               </div>
               {selectedProject && (
-                <div className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-500">
-                  <Database size={14} />
-                  <span className="font-semibold text-gray-700">{activeDisplayCount}</span>
-                  <span>{activeDisplayLabel}</span>
-                </div>
+                <>
+                  <button
+                    type="button"
+                    onClick={() => startEditProjectPath(selectedProject)}
+                    className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-semibold text-gray-600 transition-colors hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
+                    title="修改项目目录"
+                  >
+                    <Pencil size={13} />
+                    修改目录
+                  </button>
+                  <div className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-500">
+                    <Database size={14} />
+                    <span className="font-semibold text-gray-700">{activeDisplayCount}</span>
+                    <span>{activeDisplayLabel}</span>
+                  </div>
+                </>
               )}
             </div>
           </div>
+          {selectedProject && editingProjectPathId === selectedProject.ID && (
+            <div className="mt-4 flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 p-3">
+              <Folder size={16} className="shrink-0 text-blue-600" />
+              <input
+                value={editingProjectPath}
+                disabled={projectActionLoadingId === selectedProject.ID}
+                autoFocus
+                spellCheck={false}
+                onChange={event => setEditingProjectPath(event.target.value)}
+                onKeyDown={event => {
+                  if (event.key === 'Enter') {
+                    void saveProjectPath(selectedProject);
+                  } else if (event.key === 'Escape') {
+                    cancelEditProjectPath();
+                  }
+                }}
+                placeholder="输入新的项目绝对路径"
+                className="h-9 min-w-0 flex-1 rounded-lg border border-blue-200 bg-white px-3 font-mono text-xs text-gray-800 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-200"
+              />
+              <span className="hidden xl:inline text-xs text-blue-600">旧目录下的路线和日志路径会同步迁移</span>
+              <button
+                type="button"
+                disabled={projectActionLoadingId === selectedProject.ID}
+                onClick={() => void saveProjectPath(selectedProject)}
+                className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-blue-600 px-3 text-xs font-bold text-white hover:bg-blue-700 disabled:cursor-wait disabled:bg-blue-300"
+              >
+                <Check size={14} /> 保存
+              </button>
+              <button
+                type="button"
+                disabled={projectActionLoadingId === selectedProject.ID}
+                onClick={cancelEditProjectPath}
+                className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-blue-200 bg-white text-gray-500 hover:bg-gray-50 disabled:cursor-wait disabled:opacity-50"
+                title="取消修改"
+              >
+                <X size={14} />
+              </button>
+            </div>
+          )}
         </div>
 
         <div className="p-8">
@@ -825,11 +933,12 @@ export default function LogManager() {
                 </div>
                 <div className="mt-5 grid grid-cols-2 gap-3">
                   <button
-                    onClick={() => openGroupStream('restart')}
+                    onClick={() => openGroupStream(hasDockerDeployScript ? 'start' : 'restart')}
                     disabled={dockerComposeRoutes.length === 0}
                     className="col-span-2 inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-amber-500 px-4 text-sm font-bold text-white shadow-sm shadow-amber-500/20 transition-colors hover:bg-amber-600 disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-400 disabled:shadow-none"
                   >
-                    <RefreshCw size={15} /> 重启全部
+                    {hasDockerDeployScript ? <Play size={15} /> : <RefreshCw size={15} />}
+                    {hasDockerDeployScript ? '执行部署脚本' : '重启全部'}
                   </button>
                   <button
                     onClick={loadDockerServices}

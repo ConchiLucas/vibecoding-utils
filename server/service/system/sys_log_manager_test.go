@@ -53,6 +53,24 @@ func TestFileLogRouteAppearsAsServiceLogEntry(t *testing.T) {
 	}
 }
 
+func TestExplicitDockerComposeRouteCanUseWrapperScript(t *testing.T) {
+	route := modelSystem.TbLogProjectRoute{
+		RouteName:           "UAT 一键部署",
+		LocalExecuteCommand: "./deploy_uat_backend.sh",
+		BuildType:           "docker_compose_deploy",
+		DockerComposeDeploy: true,
+	}
+	if !isDirectDockerComposeLogRoute(route) {
+		t.Fatalf("explicit docker compose route should allow a wrapper script")
+	}
+
+	route.BuildType = "script"
+	route.DockerComposeDeploy = false
+	if isDirectDockerComposeLogRoute(route) {
+		t.Fatalf("an unmarked wrapper script must stay in the service scope")
+	}
+}
+
 func TestFileLogRoutesAreExcludedFromExecutableServiceGroup(t *testing.T) {
 	routes := []modelSystem.TbLogProjectRoute{
 		{
@@ -100,6 +118,79 @@ func TestBuildFileLogCommandUsesProjectRelativePath(t *testing.T) {
 	wantLastArg := "/work/app/.devserver/frontend.log"
 	if got := args[len(args)-1]; got != wantLastArg {
 		t.Fatalf("last arg = %q, want %q", got, wantLastArg)
+	}
+}
+
+func TestSaveOrUpdateLogProjectMigratesRoutePathsUnderOldRoot(t *testing.T) {
+	db := setupLogManagerTestDB(t)
+	oldRoot := "/work/company/panzhihua_dsly_workforce"
+	newRoot := "/work/company/panzhihua_workforce/panzhihua_dsly_workforce/c12-common/pzh_uat_install"
+	project := modelSystem.TbLogProject{
+		ProjectName:      "攀枝花公共依赖",
+		LocalProjectPath: oldRoot,
+	}
+	if err := db.Create(&project).Error; err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	routes := []modelSystem.TbLogProjectRoute{
+		{
+			ProjectId:        int(project.ID),
+			RouteName:        "Compose",
+			LocalProjectPath: filepath.Join(oldRoot, "c12-common"),
+		},
+		{
+			ProjectId:        int(project.ID),
+			RouteName:        "服务日志",
+			LocalProjectPath: oldRoot,
+			LogFilePath:      filepath.Join(oldRoot, ".service-runtime", "logs", "c12-auth.log"),
+		},
+		{
+			ProjectId:        int(project.ID),
+			RouteName:        "相对路径日志",
+			LocalProjectPath: "",
+			LogFilePath:      ".service-runtime/logs/frontend.log",
+		},
+		{
+			ProjectId:        int(project.ID),
+			RouteName:        "其他项目",
+			LocalProjectPath: "/work/another-project",
+			LogFilePath:      "/work/another-project/app.log",
+		},
+	}
+	if err := db.Create(&routes).Error; err != nil {
+		t.Fatalf("create routes: %v", err)
+	}
+
+	project.LocalProjectPath = newRoot
+	if err := (&LogManagerService{}).SaveOrUpdateLogProject(project); err != nil {
+		t.Fatalf("update project: %v", err)
+	}
+
+	var gotProject modelSystem.TbLogProject
+	if err := db.First(&gotProject, project.ID).Error; err != nil {
+		t.Fatalf("get project: %v", err)
+	}
+	if gotProject.LocalProjectPath != newRoot {
+		t.Fatalf("project path = %q, want %q", gotProject.LocalProjectPath, newRoot)
+	}
+	var gotRoutes []modelSystem.TbLogProjectRoute
+	if err := db.Where("project_id = ?", project.ID).Order("id asc").Find(&gotRoutes).Error; err != nil {
+		t.Fatalf("get routes: %v", err)
+	}
+	if gotRoutes[0].LocalProjectPath != filepath.Join(newRoot, "c12-common") {
+		t.Fatalf("nested route path = %q", gotRoutes[0].LocalProjectPath)
+	}
+	if gotRoutes[1].LocalProjectPath != newRoot {
+		t.Fatalf("root route path = %q", gotRoutes[1].LocalProjectPath)
+	}
+	if gotRoutes[1].LogFilePath != filepath.Join(newRoot, ".service-runtime", "logs", "c12-auth.log") {
+		t.Fatalf("absolute log path = %q", gotRoutes[1].LogFilePath)
+	}
+	if gotRoutes[2].LogFilePath != ".service-runtime/logs/frontend.log" {
+		t.Fatalf("relative log path should stay unchanged: %q", gotRoutes[2].LogFilePath)
+	}
+	if gotRoutes[3].LocalProjectPath != "/work/another-project" || gotRoutes[3].LogFilePath != "/work/another-project/app.log" {
+		t.Fatalf("unrelated route paths changed: %#v", gotRoutes[3])
 	}
 }
 

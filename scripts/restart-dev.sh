@@ -10,9 +10,10 @@ PID_FILE="${PID_FILE:-/private/tmp/vibecoding-utils-dev.pids}"
 LOG_DIR="${LOG_DIR:-/private/tmp/vibecoding-utils-dev-logs}"
 CONFIG_PATH="${CONFIG_PATH:-/private/tmp/vibecoding-utils-dev-config.yaml}"
 GOCACHE_DIR="${GOCACHE:-/private/tmp/easy-deploy-go-build-cache}"
+LAUNCH_LABEL_PREFIX="${LAUNCH_LABEL_PREFIX:-com.vibecoding-utils.dev}"
 
 usage() {
-  echo "Usage: $0 [restart|start|stop]"
+  echo "Usage: $0 [restart|start|stop|watch|foreground]"
   echo
   echo "Environment:"
   echo "  DEFAULT_BACKEND_PORT=23638"
@@ -173,6 +174,14 @@ stop_recorded_processes() {
     if [ -z "${pid:-}" ]; then
       continue
     fi
+    case "$pid" in
+      launchctl:*)
+        launch_label="${pid#launchctl:}"
+        echo "Stopping ${label} launchctl job ${launch_label}"
+        launchctl remove "$launch_label" >/dev/null 2>&1 || true
+        continue
+        ;;
+    esac
     if kill -0 "$pid" >/dev/null 2>&1; then
       echo "Stopping ${label} pid ${pid}"
       kill "$pid" >/dev/null 2>&1 || true
@@ -239,7 +248,104 @@ wait_for_http() {
   return 1
 }
 
+print_recent_logs() {
+  echo "Recent backend log:"
+  tail -n 40 "${LOG_DIR}/backend.log" || true
+  echo "Recent frontend log:"
+  tail -n 40 "${LOG_DIR}/frontend.log" || true
+}
+
+use_launchctl() {
+  [ "${USE_LAUNCHCTL:-1}" != "0" ] &&
+    [ "$(uname -s)" = "Darwin" ] &&
+    command -v launchctl >/dev/null 2>&1
+}
+
+start_backend_process() {
+  local mode="$1"
+
+  if [ "$mode" = "background" ] && use_launchctl; then
+    local launch_label="${LAUNCH_LABEL_PREFIX}.backend"
+    local go_bin="${GO_BIN:-}"
+    if [ -z "$go_bin" ]; then
+      go_bin="$(command -v go || true)"
+    fi
+    if [ -z "$go_bin" ]; then
+      echo "go binary not found in PATH" >&2
+      return 1
+    fi
+    launchctl remove "$launch_label" >/dev/null 2>&1 || true
+    launchctl submit -l "$launch_label" \
+      -o "${LOG_DIR}/backend.log" \
+      -e "${LOG_DIR}/backend.log" \
+      -- /bin/bash -c 'cd "$1" && exec env GOCACHE="$2" PATH="$3" "$4" run ./cmd/http -c "$5"' \
+      _ "$ROOT_DIR/server" "$GOCACHE_DIR" "$PATH" "$go_bin" "$CONFIG_PATH"
+    echo "launchctl:${launch_label}"
+    return 0
+  fi
+
+  (
+    cd "$ROOT_DIR/server"
+    env GOCACHE="$GOCACHE_DIR" go run ./cmd/http -c "$CONFIG_PATH"
+  ) >"${LOG_DIR}/backend.log" 2>&1 &
+  echo "$!"
+}
+
+start_frontend_process() {
+  local mode="$1"
+
+  if [ "$mode" = "background" ] && use_launchctl; then
+    local launch_label="${LAUNCH_LABEL_PREFIX}.frontend"
+    local npm_bin="${NPM_BIN:-}"
+    if [ -z "$npm_bin" ]; then
+      npm_bin="$(command -v npm || true)"
+    fi
+    if [ -z "$npm_bin" ]; then
+      echo "npm binary not found in PATH" >&2
+      return 1
+    fi
+    launchctl remove "$launch_label" >/dev/null 2>&1 || true
+    launchctl submit -l "$launch_label" \
+      -o "${LOG_DIR}/frontend.log" \
+      -e "${LOG_DIR}/frontend.log" \
+      -- /bin/bash -c 'cd "$1" && exec env VITE_BASE_API="$2" PATH="$3" "$4" run dev -- --host 0.0.0.0 --port "$5" --strictPort' \
+      _ "$ROOT_DIR/web-react" "http://localhost:${BACKEND_PORT}" "$PATH" "$npm_bin" "$FRONTEND_PORT"
+    echo "launchctl:${launch_label}"
+    return 0
+  fi
+
+  (
+    cd "$ROOT_DIR/web-react"
+    env VITE_BASE_API="http://localhost:${BACKEND_PORT}" npm run dev -- --host 0.0.0.0 --port "$FRONTEND_PORT" --strictPort
+  ) >"${LOG_DIR}/frontend.log" 2>&1 &
+  echo "$!"
+}
+
+monitor_services() {
+  local backend_pid="$1"
+  local frontend_pid="$2"
+
+  cleanup() {
+    stop_recorded_processes >/dev/null 2>&1 || true
+  }
+  trap cleanup EXIT INT TERM
+
+  while true; do
+    for pid in "$backend_pid" "$frontend_pid"; do
+      if ! kill -0 "$pid" >/dev/null 2>&1; then
+        echo "A dev process exited."
+        print_recent_logs
+        wait "$pid"
+        exit $?
+      fi
+    done
+    sleep 1
+  done
+}
+
 start_services() {
+  local mode="${1:-background}"
+
   validate_port_range
 
   BACKEND_PORT="${BACKEND_PORT:-$DEFAULT_BACKEND_PORT}"
@@ -283,30 +389,30 @@ start_services() {
   echo "Config:   ${CONFIG_PATH}"
   echo "Logs:     ${LOG_DIR}"
 
-  (
-    cd "$ROOT_DIR/server"
-    env GOCACHE="$GOCACHE_DIR" go run ./cmd/http -c "$CONFIG_PATH"
-  ) >"${LOG_DIR}/backend.log" 2>&1 &
-  BACKEND_PID=$!
+  : > "${LOG_DIR}/backend.log"
+  : > "${LOG_DIR}/frontend.log"
 
-  (
-    cd "$ROOT_DIR/web-react"
-    env VITE_BASE_API="http://localhost:${BACKEND_PORT}" npm run dev -- --host 0.0.0.0 --port "$FRONTEND_PORT" --strictPort
-  ) >"${LOG_DIR}/frontend.log" 2>&1 &
-  FRONTEND_PID=$!
+  BACKEND_PID="$(start_backend_process "$mode")"
+  FRONTEND_PID="$(start_frontend_process "$mode")"
 
   {
     echo "backend ${BACKEND_PID}"
     echo "frontend ${FRONTEND_PID}"
   } > "$PID_FILE"
 
-  cleanup() {
+  startup_cleanup() {
     stop_recorded_processes >/dev/null 2>&1 || true
   }
-  trap cleanup EXIT INT TERM
+  trap startup_cleanup INT TERM
 
-  wait_for_http "http://127.0.0.1:${BACKEND_PORT}/health" "Backend" || true
-  wait_for_http "http://127.0.0.1:${FRONTEND_PORT}/" "Frontend" || true
+  if ! wait_for_http "http://127.0.0.1:${BACKEND_PORT}/health" "Backend" ||
+     ! wait_for_http "http://127.0.0.1:${FRONTEND_PORT}/" "Frontend"; then
+    print_recent_logs
+    startup_cleanup
+    exit 1
+  fi
+
+  trap - INT TERM
 
   echo
   echo "Dev services are running."
@@ -316,19 +422,9 @@ start_services() {
   echo "  tail -f ${LOG_DIR}/frontend.log"
   echo
 
-  while true; do
-    for pid in "$BACKEND_PID" "$FRONTEND_PID"; do
-      if ! kill -0 "$pid" >/dev/null 2>&1; then
-        echo "A dev process exited. Recent backend log:"
-        tail -n 40 "${LOG_DIR}/backend.log" || true
-        echo "Recent frontend log:"
-        tail -n 40 "${LOG_DIR}/frontend.log" || true
-        wait "$pid"
-        exit $?
-      fi
-    done
-    sleep 1
-  done
+  if [ "$mode" = "foreground" ]; then
+    monitor_services "$BACKEND_PID" "$FRONTEND_PID"
+  fi
 }
 
 ACTION="${1:-restart}"
@@ -339,6 +435,10 @@ case "$ACTION" in
     ;;
   start)
     start_services
+    ;;
+  watch|foreground)
+    stop_recorded_processes
+    start_services foreground
     ;;
   stop)
     stop_recorded_processes

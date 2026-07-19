@@ -129,18 +129,74 @@ func (s *LogManagerService) SaveOrUpdateLogProject(project system.TbLogProject) 
 		return fmt.Errorf("项目名称不能为空")
 	}
 	if project.ID != 0 {
-		return global.GVA_DB.Model(&system.TbLogProject{}).Where("id = ?", project.ID).Updates(map[string]interface{}{
-			"group_id":            project.GroupId,
-			"project_config_id":   project.ProjectConfigId,
-			"project_config_name": project.ProjectConfigName,
-			"computer_language":   project.ComputerLanguage,
-			"project_name":        project.ProjectName,
-			"description":         project.Description,
-			"local_project_path":  project.LocalProjectPath,
-			"user_id":             project.UserId,
-		}).Error
+		return global.GVA_DB.Transaction(func(tx *gorm.DB) error {
+			var existing system.TbLogProject
+			if err := tx.Where("id = ?", project.ID).First(&existing).Error; err != nil {
+				return err
+			}
+			if err := tx.Model(&system.TbLogProject{}).Where("id = ?", project.ID).Updates(map[string]interface{}{
+				"group_id":            project.GroupId,
+				"project_config_id":   project.ProjectConfigId,
+				"project_config_name": project.ProjectConfigName,
+				"computer_language":   project.ComputerLanguage,
+				"project_name":        project.ProjectName,
+				"description":         project.Description,
+				"local_project_path":  strings.TrimSpace(project.LocalProjectPath),
+				"user_id":             project.UserId,
+			}).Error; err != nil {
+				return err
+			}
+			return migrateLogProjectRoutePaths(tx, project.ID, existing.LocalProjectPath, project.LocalProjectPath)
+		})
 	}
+	project.LocalProjectPath = strings.TrimSpace(project.LocalProjectPath)
 	return global.GVA_DB.Create(&project).Error
+}
+
+func migrateLogProjectRoutePaths(tx *gorm.DB, projectID uint, oldRoot string, newRoot string) error {
+	oldRoot = strings.TrimSpace(oldRoot)
+	newRoot = strings.TrimSpace(newRoot)
+	if oldRoot == "" || newRoot == "" || filepath.Clean(oldRoot) == filepath.Clean(newRoot) {
+		return nil
+	}
+
+	var routes []system.TbLogProjectRoute
+	if err := tx.Where("project_id = ?", projectID).Find(&routes).Error; err != nil {
+		return err
+	}
+	for _, route := range routes {
+		updates := map[string]interface{}{}
+		if migrated, ok := rebaseLogProjectPath(route.LocalProjectPath, oldRoot, newRoot); ok {
+			updates["local_project_path"] = migrated
+		}
+		if migrated, ok := rebaseLogProjectPath(route.LogFilePath, oldRoot, newRoot); ok {
+			updates["log_file_path"] = migrated
+		}
+		if len(updates) == 0 {
+			continue
+		}
+		if err := tx.Model(&system.TbLogProjectRoute{}).Where("id = ?", route.ID).Updates(updates).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func rebaseLogProjectPath(path string, oldRoot string, newRoot string) (string, bool) {
+	path = strings.TrimSpace(path)
+	if path == "" || !filepath.IsAbs(path) {
+		return path, false
+	}
+	oldRoot = filepath.Clean(oldRoot)
+	path = filepath.Clean(path)
+	if !isPathInside(oldRoot, path) {
+		return path, false
+	}
+	rel, err := filepath.Rel(oldRoot, path)
+	if err != nil {
+		return path, false
+	}
+	return filepath.Join(filepath.Clean(newRoot), rel), true
 }
 
 func (s *LogManagerService) DeleteLogProject(ids []int) error {
@@ -1018,7 +1074,10 @@ func isDirectDockerComposeLogRoute(route system.TbLogProjectRoute) bool {
 	commandText := strings.ToLower(route.LocalExecuteCommand + " " + route.LocalStartCommand)
 	directComposeCommand := strings.Contains(commandText, "docker compose") || strings.Contains(commandText, "docker-compose")
 	composeMarked := route.DockerComposeDeploy || route.BuildType == "docker_compose_deploy"
-	return !isScriptLaunchCommand(routeLaunchCommand(route)) && (directComposeCommand || composeMarked)
+	if composeMarked {
+		return true
+	}
+	return !isScriptLaunchCommand(routeLaunchCommand(route)) && directComposeCommand
 }
 
 func findLogRoute(routes []system.TbLogProjectRoute, targetEnv string) (system.TbLogProjectRoute, error) {

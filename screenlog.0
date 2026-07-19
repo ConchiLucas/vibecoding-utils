@@ -1,0 +1,53 @@
+A dev process exited. Recent backend log:
+github.com/flipped-aurora/easy-deploy/server/api/v1/system.(*TbConnectionApi).GetRemoteDatabases
+        /Users/conchi/workforce/go_workforce/vibecoding-utils/server/api/v1/system/tb_connection.go:195
+github.com/gin-gonic/gin.(*Context).Next
+        /Users/conchi/go/pkg/mod/github.com/gin-gonic/gin@v1.10.0/context.go:185
+github.com/flipped-aurora/easy-deploy/server/initialize.Routers.JWTAuth.func4
+        /Users/conchi/workforce/go_workforce/vibecoding-utils/server/middleware/jwt.go:49
+github.com/gin-gonic/gin.(*Context).Next
+        /Users/conchi/go/pkg/mod/github.com/gin-gonic/gin@v1.10.0/context.go:185
+github.com/flipped-aurora/easy-deploy/server/initialize.Routers.CorsByRules.Cors.func5
+        /Users/conchi/workforce/go_workforce/vibecoding-utils/server/middleware/cors.go:26
+github.com/gin-gonic/gin.(*Context).Next
+        /Users/conchi/go/pkg/mod/github.com/gin-gonic/gin@v1.10.0/context.go:185
+github.com/gin-gonic/gin.LoggerWithConfig.func1
+        /Users/conchi/go/pkg/mod/github.com/gin-gonic/gin@v1.10.0/logger.go:249
+github.com/gin-gonic/gin.(*Context).Next
+        /Users/conchi/go/pkg/mod/github.com/gin-gonic/gin@v1.10.0/context.go:185
+github.com/flipped-aurora/easy-deploy/server/initialize.Routers.GinRecovery.func2
+        /Users/conchi/workforce/go_workforce/vibecoding-utils/server/middleware/error.go:55
+github.com/gin-gonic/gin.(*Context).Next
+        /Users/conchi/go/pkg/mod/github.com/gin-gonic/gin@v1.10.0/context.go:185
+github.com/gin-gonic/gin.(*Engine).handleHTTPRequest
+        /Users/conchi/go/pkg/mod/github.com/gin-gonic/gin@v1.10.0/gin.go:633
+github.com/gin-gonic/gin.(*Engine).ServeHTTP
+        /Users/conchi/go/pkg/mod/github.com/gin-gonic/gin@v1.10.0/gin.go:589
+net/http.serverHandler.ServeHTTP
+        /opt/homebrew/Cellar/go/1.26.3/libexec/src/net/http/server.go:3311
+net/http.(*conn).serve
+        /opt/homebrew/Cellar/go/1.26.3/libexec/src/net/http/server.go:2073
+[GIN] 2026/06/26 - 15:15:14 | 200 |   49.608375ms |             ::1 | GET      "/connection/getRemoteDatabases?ID=10"
+[GIN] 2026/06/26 - 15:15:15 | 204 |       6.042µs |             ::1 | OPTIONS  "/tablePrefer/getHistoryTableNames?projectConfigId=17&connectionId=10"
+[GIN] 2026/06/26 - 15:15:15 | 200 |    1.880292ms |             ::1 | GET      "/tablePrefer/getHistoryTableNames?projectConfigId=17&connectionId=10"
+[GIN] 2026/06/26 - 15:15:15 | 200 |    3.518542ms |             ::1 | GET      "/connection/getTbConnectionList?page=1&pageSize=999&connectionGroup=17"
+[GIN] 2026/06/26 - 15:37:02 | 204 |      50.833µs |             ::1 | OPTIONS  "/developmentPrepare/saveOrUpdate"
+[GIN] 2026/06/26 - 15:37:02 | 200 |   40.885667ms |             ::1 | POST     "/developmentPrepare/saveOrUpdate"
+[GIN] 2026/06/26 - 15:37:02 | 204 |       7.334µs |             ::1 | OPTIONS  "/developmentPrepare/page"
+[GIN] 2026/06/26 - 15:37:02 | 200 |   22.352834ms |             ::1 | POST     "/developmentPrepare/page"
+[GIN] 2026/06/26 - 15:40:59 | 204 |      12.417µs |             ::1 | OPTIONS  "/developmentPrepare/saveOrUpdate"
+[GIN] 2026/06/26 - 15:40:59 | 200 |   50.031459ms |             ::1 | POST     "/developmentPrepare/saveOrUpdate"
+[GIN] 2026/06/26 - 15:40:59 | 204 |       7.417µs |             ::1 | OPTIONS  "/developmentPrepare/page"
+[GIN] 2026/06/26 - 15:40:59 | 200 |      24.513ms |             ::1 | POST     "/developmentPrepare/page"
+Recent frontend log:
+
+> easy-deploy-react@0.0.0 dev
+> vite --host 0.0.0.0 --port 29527 --strictPort
+
+
+  VITE v5.4.21  ready in 114 ms
+
+  ➜  Local:   http://localhost:29527/
+  ➜  Network: http://10.33.33.1:29527/
+  ➜  Network: http://192.168.5.35:29527/
+  ➜  Network: http://100.108.192.93:29527/
