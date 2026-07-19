@@ -149,3 +149,44 @@ func TestSharedDockerNetworkRejectsWrongDriver(t *testing.T) {
 	}
 	runner.assertDone(t)
 }
+
+func TestSharedDockerNetworkStartupWaitsForDockerBeforeEnsure(t *testing.T) {
+	order := make([]string, 0, 2)
+
+	err := reconcileSharedDockerNetworkOnStartup(
+		func() error {
+			order = append(order, "wait")
+			return nil
+		},
+		func(context.Context) (SharedDockerNetworkResult, error) {
+			order = append(order, "ensure")
+			return SharedDockerNetworkResult{}, nil
+		},
+	)
+
+	if err != nil {
+		t.Fatalf("reconcileSharedDockerNetworkOnStartup() error = %v", err)
+	}
+	if strings.Join(order, ",") != "wait,ensure" {
+		t.Fatalf("call order = %v, want Docker readiness before network ensure", order)
+	}
+}
+
+func TestSharedDockerNetworkStartupStopsWhenDockerNeverBecomesReady(t *testing.T) {
+	ensureCalled := false
+
+	err := reconcileSharedDockerNetworkOnStartup(
+		func() error { return errors.New("Docker not ready") },
+		func(context.Context) (SharedDockerNetworkResult, error) {
+			ensureCalled = true
+			return SharedDockerNetworkResult{}, nil
+		},
+	)
+
+	if err == nil || !strings.Contains(err.Error(), "Docker not ready") {
+		t.Fatalf("error = %v, want Docker readiness diagnostic", err)
+	}
+	if ensureCalled {
+		t.Fatal("network ensure ran even though Docker never became ready")
+	}
+}

@@ -18,6 +18,7 @@ func main() {
 	global.GVA_DB = initialize.Gorm()
 	initialize.DBList()
 	initialize.SetupHandlers()
+	systemService.SharedDockerNetworkServiceApp.EnsureOnStartup()
 	if global.GVA_DB != nil {
 		initialize.RegisterTables()
 		systemService.ProjectGroupServiceApp.StartEnabledGroupsOnStartup()

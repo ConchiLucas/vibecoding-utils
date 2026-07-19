@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
+
+	"go.uber.org/zap"
 )
 
 const (
@@ -80,6 +83,33 @@ func (s *SharedDockerNetworkService) inspectDriver(ctx context.Context) (string,
 func validateSharedDockerNetworkDriver(driver string) error {
 	if driver != "bridge" {
 		return fmt.Errorf("Docker 网络 %s 的驱动为 %q，期望 bridge", SharedDockerNetworkName, driver)
+	}
+	return nil
+}
+
+func (s *SharedDockerNetworkService) EnsureOnStartup() {
+	go func() {
+		err := reconcileSharedDockerNetworkOnStartup(waitForDockerReady, s.Ensure)
+		if err != nil {
+			zap.L().Warn("共享 Docker 网络启动自愈失败", zap.String("network", SharedDockerNetworkName), zap.Error(err))
+			return
+		}
+		zap.L().Info("共享 Docker 网络启动检查完成", zap.String("network", SharedDockerNetworkName))
+	}()
+}
+
+func reconcileSharedDockerNetworkOnStartup(
+	waitForDocker func() error,
+	ensure func(context.Context) (SharedDockerNetworkResult, error),
+) error {
+	if err := waitForDocker(); err != nil {
+		return fmt.Errorf("等待 Docker 就绪失败: %w", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	_, err := ensure(ctx)
+	if err != nil {
+		return fmt.Errorf("确保网络 %s 失败: %w", SharedDockerNetworkName, err)
 	}
 	return nil
 }

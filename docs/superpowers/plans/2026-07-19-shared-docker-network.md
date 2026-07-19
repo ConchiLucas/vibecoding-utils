@@ -36,7 +36,7 @@ type SharedDockerNetworkService struct {
 ```
 
 - [x] Implement `Ensure(ctx)` by inspecting `{{.Driver}}`, accepting only `bridge`, creating with `network create --driver bridge --label ...`, and re-inspecting after a failed create to tolerate races.
-- [ ] Add `EnsureOnStartup()` that waits for Docker in a goroutine, calls `Ensure`, and logs without blocking application startup.
+- [x] Add `EnsureOnStartup()` that waits for Docker in a goroutine, calls `Ensure`, and logs without blocking application startup.
 - [x] Run the focused tests and confirm they pass.
 - [ ] Commit: `git commit -m "feat: manage shared Docker network"`
 
@@ -72,10 +72,10 @@ func runLocalDeployWithSharedNetwork(logCh chan string, ensure func(context.Cont
 - Modify: `server/cmd/http/main.go`
 - Modify: `server/service/system/docker_shared_network_test.go`
 
-- [ ] Add a test for startup reconciliation delegating to the bounded Docker readiness check and swallowing/logging failures.
-- [ ] Call `SharedDockerNetworkServiceApp.EnsureOnStartup()` immediately after backend initialization in both entry points, independently of whether any project group has auto-start enabled.
-- [ ] Retain project-group auto-start behavior and let the synchronous deployment guard handle its deployments.
-- [ ] Run `cd server && go test ./service/system -run 'TestSharedDockerNetwork|TestResolveAutoStart' -count=1`.
+- [x] Add a test for startup reconciliation delegating to the bounded Docker readiness check and swallowing/logging failures.
+- [x] Call `SharedDockerNetworkServiceApp.EnsureOnStartup()` immediately after backend initialization in both entry points, independently of whether any project group has auto-start enabled.
+- [x] Retain project-group auto-start behavior and let the synchronous deployment guard handle its deployments.
+- [x] Run `cd server && go test ./service/system -run 'TestSharedDockerNetwork|TestResolveAutoStart' -count=1`.
 - [ ] Commit: `git commit -m "feat: reconcile shared network on startup"`
 
 ## Task 4: Normalize stored Compose scripts

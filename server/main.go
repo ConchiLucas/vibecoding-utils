@@ -77,6 +77,7 @@ const WailsSSEPort = 48009
 func main() {
 	// 初始化系统底层组件
 	initializeSystem()
+	systemService.SharedDockerNetworkServiceApp.EnsureOnStartup()
 	if global.GVA_DB != nil {
 		systemService.ProjectGroupServiceApp.StartEnabledGroupsOnStartup()
 	}
