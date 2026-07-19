@@ -46,9 +46,9 @@ type SharedDockerNetworkService struct {
 - Modify: `server/service/system/sys_deploy.go`
 - Create: `server/service/system/sys_deploy_network_test.go`
 
-- [ ] Write a failing test around a small deployment-guard helper proving a network error is returned and logged before the local deployment callback runs.
-- [ ] Run `cd server && go test ./service/system -run 'TestRunLocalDeployWithSharedNetwork' -count=1` and confirm failure.
-- [ ] Extract a helper with injectable `ensure` and `deploy` callbacks, then call it in `ProcessDeployWithLog` before `prepareAggregateChildDeployScripts`:
+- [x] Write a failing test around a small deployment-guard helper proving a network error is returned and logged before the local deployment callback runs.
+- [x] Run `cd server && go test ./service/system -run 'TestRunLocalDeployWithSharedNetwork' -count=1` and confirm failure.
+- [x] Extract a helper with injectable `ensure` and `deploy` callbacks, then call it in `ProcessDeployWithLog` before `prepareAggregateChildDeployScripts`:
 
 ```go
 func runLocalDeployWithSharedNetwork(logCh chan string, ensure func(context.Context) error, deploy func() error) error {
@@ -61,8 +61,8 @@ func runLocalDeployWithSharedNetwork(logCh chan string, ensure func(context.Cont
 }
 ```
 
-- [ ] Keep remote deployments unchanged.
-- [ ] Run focused and full `service/system` tests.
+- [x] Keep remote deployments unchanged.
+- [x] Run focused and full `service/system` tests.
 - [ ] Commit: `git commit -m "feat: guard local deploys with shared network"`
 
 ## Task 3: Reconcile the network at both backend startup paths

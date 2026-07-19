@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/flipped-aurora/easy-deploy/server/global"
 	"github.com/flipped-aurora/easy-deploy/server/model/system"
@@ -109,10 +110,12 @@ func (s *DeployService) ProcessDeployWithLog(projectId uint, targetEnv string, l
 	}
 	if currentRoute.RouteKey == "local" || currentRoute.ServerId == 0 {
 		sendLog("🏠 执行本地部署模式...")
-		if err := s.prepareAggregateChildDeployScripts(project, currentRoute); err != nil {
-			return err
-		}
-		return s.processLocalDeploy(cmdUtil, projectId, currentRoute.ID, localProjectPath, localScriptPath, localExecuteCommand, currentRoute.LocalStartCommand)
+		return runLocalDeployWithSharedNetwork(logCh, SharedDockerNetworkServiceApp.Ensure, func() error {
+			if err := s.prepareAggregateChildDeployScripts(project, currentRoute); err != nil {
+				return err
+			}
+			return s.processLocalDeploy(cmdUtil, projectId, currentRoute.ID, localProjectPath, localScriptPath, localExecuteCommand, currentRoute.LocalStartCommand)
+		})
 	}
 
 	sftpUtil := &utils.SftpUtil{}
@@ -143,6 +146,38 @@ func (s *DeployService) ProcessDeployWithLog(projectId uint, targetEnv string, l
 		return s.deployPythonRemoteIncremental(cmdUtil, sftpUtil, projectId, currentRoute.ID, localProjectPath, fileName, localExecuteCommand, serverIp, serverPort, serverLoginName, serverLoginPassword, serverProjectPath, serverExecuteCommand)
 	default:
 		return fmt.Errorf("不支持该语言类型: %s", deployLang)
+	}
+}
+
+func runLocalDeployWithSharedNetwork(
+	logCh chan string,
+	ensure func(context.Context) (SharedDockerNetworkResult, error),
+	deploy func() error,
+) error {
+	sendDeployNetworkLog(logCh, "🌐 检查共享 Docker 网络...")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	result, err := ensure(ctx)
+	if err != nil {
+		guardErr := fmt.Errorf("共享 Docker 网络 %s 不可用: %w", SharedDockerNetworkName, err)
+		sendDeployNetworkLog(logCh, "❌ "+guardErr.Error())
+		return guardErr
+	}
+	if result.Created {
+		sendDeployNetworkLog(logCh, "✅ 共享 Docker 网络已创建")
+	} else {
+		sendDeployNetworkLog(logCh, "✅ 共享 Docker 网络已存在")
+	}
+	return deploy()
+}
+
+func sendDeployNetworkLog(logCh chan string, message string) {
+	if logCh == nil {
+		return
+	}
+	select {
+	case logCh <- message:
+	default:
 	}
 }
 
