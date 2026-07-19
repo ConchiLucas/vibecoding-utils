@@ -64,6 +64,7 @@ server_test
 .codex/
 .trae/
 .cursor/
+.worktrees/
 
 # OS generated files
 .DS_Store?
