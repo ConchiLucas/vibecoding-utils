@@ -2,11 +2,15 @@ package system
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/flipped-aurora/easy-deploy/server/global"
 	modelSystem "github.com/flipped-aurora/easy-deploy/server/model/system"
 	"github.com/glebarez/sqlite"
+	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
@@ -64,6 +68,22 @@ networks:
 networks:
   backend: {}
   metrics: {}
+`,
+			wantChanged: true,
+		},
+		{
+			name: "network inherited through merge anchor",
+			content: `x-common: &common
+  restart: always
+  networks: [legacy]
+services:
+  api:
+    <<: *common
+    image: example/api:1
+networks:
+  default:
+    name: vibedeploy-shared
+    external: true
 `,
 			wantChanged: true,
 		},
@@ -178,5 +198,115 @@ func TestReconcileStoredComposeScriptsRollsBackOnMalformedYAML(t *testing.T) {
 	}
 	if first.Content != implicit {
 		t.Fatal("transaction did not roll back an earlier Compose update")
+	}
+}
+
+func TestUpdateStoredComposeScriptRejectsStaleContent(t *testing.T) {
+	db := setupComposeNetworkTestDB(t)
+	original := "services:\n  api:\n    image: example/api:1\n"
+	script := modelSystem.TbProjectScript{ProjectId: 9, RouteId: 2, ScriptType: 1, FileName: "docker-compose.yml", Content: original}
+	if err := db.Create(&script).Error; err != nil {
+		t.Fatal(err)
+	}
+	stale := script
+	newer := "services:\n  api:\n    image: example/api:2\n"
+	if err := db.Model(&modelSystem.TbProjectScript{}).Where("id = ?", script.ID).Update("content", newer).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	err := updateStoredComposeScriptContent(db, stale, correctSharedCompose)
+
+	if err == nil || !strings.Contains(err.Error(), "并发修改") {
+		t.Fatalf("error = %v, want stale-content conflict", err)
+	}
+	var reloaded modelSystem.TbProjectScript
+	if err := db.First(&reloaded, script.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.Content != newer {
+		t.Fatal("stale reconciliation overwrote newer script content")
+	}
+}
+
+func TestRunManagedComposeStartupReconcilesBeforeAutoStart(t *testing.T) {
+	order := make([]string, 0, 2)
+
+	err := runManagedComposeStartup(
+		func() (int, error) {
+			order = append(order, "reconcile")
+			return 2, nil
+		},
+		func() { order = append(order, "auto-start") },
+	)
+
+	if err != nil {
+		t.Fatalf("runManagedComposeStartup() error = %v", err)
+	}
+	if strings.Join(order, ",") != "reconcile,auto-start" {
+		t.Fatalf("order = %v, want reconciliation before auto-start", order)
+	}
+}
+
+func TestRunManagedComposeStartupStopsAutoStartAfterReconcileFailure(t *testing.T) {
+	autoStartCalled := false
+
+	err := runManagedComposeStartup(
+		func() (int, error) { return 0, fmt.Errorf("malformed Compose") },
+		func() { autoStartCalled = true },
+	)
+
+	if err == nil || !strings.Contains(err.Error(), "malformed Compose") {
+		t.Fatalf("error = %v, want reconciliation diagnostic", err)
+	}
+	if autoStartCalled {
+		t.Fatal("auto-start ran after Compose reconciliation failed")
+	}
+}
+
+func TestDownloadScriptsPrevalidatesAllComposeBeforeDatabaseOrFileWrites(t *testing.T) {
+	db := setupComposeNetworkTestDB(t)
+	if err := db.AutoMigrate(&modelSystem.TbProject{}); err != nil {
+		t.Fatal(err)
+	}
+	oldDB := global.GVA_DB
+	oldLog := global.GVA_LOG
+	global.GVA_DB = db
+	global.GVA_LOG = zap.NewNop()
+	t.Cleanup(func() {
+		global.GVA_DB = oldDB
+		global.GVA_LOG = oldLog
+	})
+
+	project := modelSystem.TbProject{ProjectName: "atomic-compose", ComputerLanguage: "go", LocalProjectPath: t.TempDir()}
+	if err := db.Create(&project).Error; err != nil {
+		t.Fatal(err)
+	}
+	valid := "services:\n  api:\n    image: example/api:1\n"
+	scripts := []modelSystem.TbProjectScript{
+		{ProjectId: int(project.ID), RouteId: 0, ScriptType: 1, FileName: "docker-compose.yml", Content: valid},
+		{ProjectId: int(project.ID), RouteId: 0, ScriptType: 1, FileName: "nested/compose.yml", Content: "services:\n  broken: [\n"},
+	}
+	if err := db.Create(&scripts).Error; err != nil {
+		t.Fatal(err)
+	}
+	outputDir := t.TempDir()
+
+	err := DeployServiceApp.downloadScriptsToLocalFromDB(project.ID, 0, outputDir)
+
+	if err == nil {
+		t.Fatal("downloadScriptsToLocalFromDB() unexpectedly succeeded")
+	}
+	if !strings.Contains(err.Error(), fmt.Sprintf("project=%d", project.ID)) || !strings.Contains(err.Error(), fmt.Sprintf("script=%d", scripts[1].ID)) {
+		t.Fatalf("error = %q, want project and malformed script IDs", err)
+	}
+	var first modelSystem.TbProjectScript
+	if err := db.First(&first, scripts[0].ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if first.Content != valid {
+		t.Fatal("an earlier Compose database row changed before all scripts were validated")
+	}
+	if _, err := os.Stat(filepath.Join(outputDir, "docker-compose.yml")); !os.IsNotExist(err) {
+		t.Fatalf("an earlier Compose file was written before all scripts were validated: %v", err)
 	}
 }

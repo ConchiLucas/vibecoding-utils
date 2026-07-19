@@ -79,8 +79,7 @@ func main() {
 	initializeSystem()
 	systemService.SharedDockerNetworkServiceApp.EnsureOnStartup()
 	if global.GVA_DB != nil {
-		systemService.ReconcileStoredComposeScriptsOnStartup()
-		systemService.ProjectGroupServiceApp.StartEnabledGroupsOnStartup()
+		systemService.StartManagedComposeProjectsOnStartup()
 	}
 
 	// 获取嵌入的前端资源（提取 dist 子目录）

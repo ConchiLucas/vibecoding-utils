@@ -16,6 +16,7 @@ import (
 	"github.com/flipped-aurora/easy-deploy/server/model/system"
 	"github.com/flipped-aurora/easy-deploy/server/utils"
 	"go.uber.org/zap"
+	"gorm.io/gorm"
 )
 
 type DeployService struct{}
@@ -556,6 +557,14 @@ func (s *DeployService) downloadScriptsToLocalFromDB(projectId uint, routeId uin
 	if err != nil {
 		return fmt.Errorf("获取项目脚本列表失败: %w", err)
 	}
+
+	type preparedScript struct {
+		script   system.TbProjectScript
+		content  string
+		filePath string
+		tempPath string
+	}
+	prepared := make([]preparedScript, 0, len(scriptList))
 	for _, script := range scriptList {
 		if script.Content == "" {
 			continue
@@ -568,52 +577,84 @@ func (s *DeployService) downloadScriptsToLocalFromDB(projectId uint, routeId uin
 		if err != nil {
 			return fmt.Errorf("脚本路径无效(%s): %w", script.FileName, err)
 		}
-		if err := os.MkdirAll(filepath.Dir(localFilePath), 0755); err != nil {
-			return fmt.Errorf("创建目录失败: %w", err)
-		}
 		content := script.Content
 		if hasProject && isFrontendDeployProject(project) && script.FileName == "nginx.conf" {
 			backendPort := inferBackendPortForFrontendDeploy(project, content)
 			content = normalizeFrontendNginxScriptForDeploy(content, backendPort, project.LocalProjectPath)
-			if content != script.Content {
-				if err := global.GVA_DB.Model(&system.TbProjectScript{}).Where("id = ?", script.ID).Update("content", content).Error; err != nil {
-					return fmt.Errorf("更新兼容后的前端 nginx 脚本失败(%s): %w", script.FileName, err)
-				}
-			}
 		}
 		if hasProject && isPythonDeployProject(project) && isPythonDependencyDockerfile(script.FileName) {
 			content = normalizePythonDependencyDockerfileForDeploy(content)
-			if content != script.Content {
-				if err := global.GVA_DB.Model(&system.TbProjectScript{}).Where("id = ?", script.ID).Update("content", content).Error; err != nil {
-					return fmt.Errorf("更新兼容后的 Python 依赖镜像脚本失败(%s): %w", script.FileName, err)
-				}
-			}
 		}
 		if hasProject && isPythonDeployProject(project) && script.FileName == "docker-compose.yml" {
 			appPort := inferPythonAppPortForDeploy(project, content)
 			content = normalizePythonComposeForDeploy(content, appPort, project.LocalProjectPath)
-			if content != script.Content {
-				if err := global.GVA_DB.Model(&system.TbProjectScript{}).Where("id = ?", script.ID).Update("content", content).Error; err != nil {
-					return fmt.Errorf("更新兼容后的 Python Compose 脚本失败(%s): %w", script.FileName, err)
-				}
-			}
 		}
 		if isComposeFileName(script.FileName) {
-			normalized, changed, err := normalizeComposeSharedNetwork(content)
+			normalized, _, err := normalizeComposeSharedNetwork(content)
 			if err != nil {
-				return fmt.Errorf("规范化 Compose 共享网络失败(%s): %w", script.FileName, err)
+				return fmt.Errorf(
+					"规范化 Compose 共享网络失败(project=%d route=%d script=%d file=%s): %w",
+					projectId,
+					routeId,
+					script.ID,
+					script.FileName,
+					err,
+				)
 			}
 			content = normalized
-			if changed {
-				if err := global.GVA_DB.Model(&system.TbProjectScript{}).Where("id = ?", script.ID).Update("content", content).Error; err != nil {
-					return fmt.Errorf("更新共享网络 Compose 脚本失败(%s): %w", script.FileName, err)
-				}
+		}
+		prepared = append(prepared, preparedScript{script: script, content: content, filePath: localFilePath})
+	}
+
+	for index := range prepared {
+		if err := os.MkdirAll(filepath.Dir(prepared[index].filePath), 0755); err != nil {
+			return fmt.Errorf("创建脚本目录失败(project=%d script=%d file=%s): %w", projectId, prepared[index].script.ID, prepared[index].script.FileName, err)
+		}
+		temporary, err := os.CreateTemp(filepath.Dir(prepared[index].filePath), ".vibedeploy-script-*")
+		if err != nil {
+			return fmt.Errorf("创建脚本临时文件失败(project=%d script=%d file=%s): %w", projectId, prepared[index].script.ID, prepared[index].script.FileName, err)
+		}
+		prepared[index].tempPath = temporary.Name()
+		if _, err := temporary.WriteString(prepared[index].content); err != nil {
+			_ = temporary.Close()
+			return fmt.Errorf("写入脚本临时文件失败(project=%d script=%d file=%s): %w", projectId, prepared[index].script.ID, prepared[index].script.FileName, err)
+		}
+		if err := temporary.Chmod(0644); err != nil {
+			_ = temporary.Close()
+			return fmt.Errorf("设置脚本文件权限失败(project=%d script=%d file=%s): %w", projectId, prepared[index].script.ID, prepared[index].script.FileName, err)
+		}
+		if err := temporary.Close(); err != nil {
+			return fmt.Errorf("关闭脚本临时文件失败(project=%d script=%d file=%s): %w", projectId, prepared[index].script.ID, prepared[index].script.FileName, err)
+		}
+	}
+	defer func() {
+		for _, item := range prepared {
+			if item.tempPath != "" {
+				_ = os.Remove(item.tempPath)
 			}
 		}
-		if err := os.WriteFile(localFilePath, []byte(content), 0644); err != nil {
-			return fmt.Errorf("写入文件失败(%s): %w", script.FileName, err)
+	}()
+
+	if err := global.GVA_DB.Transaction(func(tx *gorm.DB) error {
+		for _, item := range prepared {
+			if item.content == item.script.Content {
+				continue
+			}
+			if err := updateStoredComposeScriptContent(tx, item.script, item.content); err != nil {
+				return err
+			}
 		}
-		global.GVA_LOG.Info(fmt.Sprintf("文件 %s 已从数据库加载到 %s", script.FileName, localFilePath))
+		return nil
+	}); err != nil {
+		return err
+	}
+
+	for index := range prepared {
+		if err := os.Rename(prepared[index].tempPath, prepared[index].filePath); err != nil {
+			return fmt.Errorf("发布脚本文件失败(project=%d route=%d script=%d file=%s): %w", projectId, routeId, prepared[index].script.ID, prepared[index].script.FileName, err)
+		}
+		prepared[index].tempPath = ""
+		global.GVA_LOG.Info(fmt.Sprintf("文件 %s 已从数据库加载到 %s", prepared[index].script.FileName, prepared[index].filePath))
 	}
 	return nil
 }

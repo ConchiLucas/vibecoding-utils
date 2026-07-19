@@ -25,3 +25,9 @@ Codex 看到任何“启动项目 / 启动前后端 / 读取启动脚本启动�
 ```bash
 ./scripts/restart-dev.sh stop
 ```
+
+容器化启动请使用共享网络包装器，避免新机器上外部网络尚未创建：
+
+```bash
+./scripts/docker-compose-up.sh -f docker-compose.yml up -d
+```

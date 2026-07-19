@@ -125,12 +125,11 @@ The migration is ordered to avoid service interruption:
 
 1. Capture the current Docker network and container membership inventory.
 2. Create `vibedeploy-shared`.
-3. Connect each running middleware container to the new network.
-4. Verify all five containers appear in `docker network inspect vibedeploy-shared`.
-5. Disconnect each middleware container from its old project network.
-6. Verify each middleware container is still running and connected only to `vibedeploy-shared` among user-defined networks.
-7. Validate all edited Compose files with `docker compose config`.
-8. Remove every old user-defined project network that has no remaining endpoints.
+3. Validate all edited Compose files with `docker compose config`.
+4. Recreate each middleware container one at a time from its updated Compose file. This is required because `docker network connect` changes only live attachments; it does not replace the container's persisted `HostConfig.NetworkMode`.
+5. After each recreation, verify the container is running, its health/port is available, and both `HostConfig.NetworkMode` and its sole user-defined attachment are `vibedeploy-shared`.
+6. Verify all five containers appear in `docker network inspect vibedeploy-shared`.
+7. Remove every old user-defined project network that has no remaining endpoints.
 
 Cleanup explicitly preserves:
 
@@ -139,7 +138,7 @@ Cleanup explicitly preserves:
 - `none`
 - `vibedeploy-shared`
 
-No container, image, volume, bind-mounted file, or database data is deleted.
+Compose replaces the five middleware container objects so their persisted network mode is correct. No image, volume, bind-mounted file, or database data is deleted.
 
 If an old network still has an endpoint after the known containers are migrated, cleanup stops for that network and reports the endpoint instead of forcefully disconnecting an unidentified container.
 
@@ -162,7 +161,7 @@ Business Compose service/container names must remain globally unique. This is al
 - **Docker unavailable:** startup reconciliation logs a warning; deployment guard fails before executing project scripts.
 - **Network create race:** re-inspect after a failed create and accept success if the network now exists.
 - **Wrong existing network driver:** fail with a clear diagnostic rather than silently reusing an incompatible network.
-- **Container already connected:** treat as idempotent success.
+- **Container recreation:** recreate one middleware at a time and verify service readiness before continuing.
 - **Old network still in use:** retain it and report its remaining endpoints.
 - **Compose validation failure:** do not recreate middleware containers; fix the file before continuing cleanup.
 
@@ -186,16 +185,16 @@ Validate all 32 database-backed Compose scripts structurally after materializati
 
 - `docker network inspect vibedeploy-shared` succeeds.
 - The shared network contains all five middleware containers.
-- Each middleware container has no old user-defined network attachment.
+- Each middleware container has `HostConfig.NetworkMode=vibedeploy-shared` and no old user-defined network attachment.
 - Docker network inventory contains only the three built-in networks plus `vibedeploy-shared` among project/runtime networks.
 - Re-run the AI database aggregate deployment and confirm the previous external-network error is gone.
 - Verify newly created business containers join `vibedeploy-shared` and no `<project>_default` network is created.
 
 ## Rollback
 
-Before removing old networks, record their names and attached containers. If shared-network validation fails before cleanup, reconnect affected middleware containers to their original networks and leave those networks in place.
+Before removing old networks, record their names, Compose declarations, attached containers, and persisted `HostConfig.NetworkMode` values. If validation fails after any middleware container has been recreated, restore that stack's prior Compose network declaration and recreate each already-migrated container one at a time in reverse migration order. After every rollback recreation, verify the original persisted network mode and service readiness before continuing.
 
-Once persistent Compose files are migrated and validated, rollback consists of restoring those files and recreating their original Compose networks. Volumes and application data are unaffected by either migration or rollback.
+Once persistent Compose files are migrated and validated, rollback uses the same procedure: restore the prior files and old Compose networks, then recreate affected containers individually. Volumes and application data are unaffected by either migration or rollback.
 
 ## Out of Scope
 

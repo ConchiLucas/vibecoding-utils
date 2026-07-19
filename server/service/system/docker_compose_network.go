@@ -31,7 +31,7 @@ func normalizeComposeSharedNetwork(content string) (string, bool, error) {
 		if service.Kind != yaml.MappingNode {
 			return "", false, fmt.Errorf("Compose service %q 必须是映射", services.Content[index-1].Value)
 		}
-		removeMappingKey(service, "networks")
+		removeServiceNetworks(service, map[*yaml.Node]bool{})
 	}
 
 	setMappingValue(root, "networks", sharedDefaultNetworkNode())
@@ -81,7 +81,7 @@ func validateComposeSharedNetworkNode(root *yaml.Node) error {
 		if service.Kind != yaml.MappingNode {
 			return fmt.Errorf("Compose service %q 必须是映射", serviceName)
 		}
-		if mappingValue(service, "networks") != nil {
+		if mappingValueIncludingMerges(service, "networks", map[*yaml.Node]bool{}) != nil {
 			return fmt.Errorf("Compose service %q 仍声明了独立 networks", serviceName)
 		}
 	}
@@ -101,6 +101,57 @@ func validateComposeSharedNetworkNode(root *yaml.Node) error {
 	}
 	if external == nil || external.Tag != "!!bool" || external.Value != "true" {
 		return fmt.Errorf("Compose default 网络必须声明 external: true")
+	}
+	return nil
+}
+
+func mappingValueIncludingMerges(mapping *yaml.Node, key string, visited map[*yaml.Node]bool) *yaml.Node {
+	if mapping == nil || mapping.Kind != yaml.MappingNode || visited[mapping] {
+		return nil
+	}
+	visited[mapping] = true
+	defer delete(visited, mapping)
+	if value := mappingValue(mapping, key); value != nil {
+		return value
+	}
+	merge := mappingValue(mapping, "<<")
+	for _, merged := range mergedMappings(merge) {
+		if value := mappingValueIncludingMerges(merged, key, visited); value != nil {
+			return value
+		}
+	}
+	return nil
+}
+
+func removeServiceNetworks(mapping *yaml.Node, visited map[*yaml.Node]bool) {
+	if mapping == nil || mapping.Kind != yaml.MappingNode || visited[mapping] {
+		return
+	}
+	visited[mapping] = true
+	removeMappingKey(mapping, "networks")
+	merge := mappingValue(mapping, "<<")
+	for _, merged := range mergedMappings(merge) {
+		removeServiceNetworks(merged, visited)
+	}
+}
+
+func mergedMappings(node *yaml.Node) []*yaml.Node {
+	if node == nil {
+		return nil
+	}
+	switch node.Kind {
+	case yaml.AliasNode:
+		if node.Alias != nil {
+			return mergedMappings(node.Alias)
+		}
+	case yaml.MappingNode:
+		return []*yaml.Node{node}
+	case yaml.SequenceNode:
+		var mappings []*yaml.Node
+		for _, child := range node.Content {
+			mappings = append(mappings, mergedMappings(child)...)
+		}
+		return mappings
 	}
 	return nil
 }
@@ -186,8 +237,8 @@ func reconcileStoredComposeScripts(db *gorm.DB) (int, error) {
 			if !contentChanged {
 				continue
 			}
-			if err := tx.Model(&modelSystem.TbProjectScript{}).Where("id = ?", script.ID).Update("content", normalized).Error; err != nil {
-				return fmt.Errorf("更新 Compose 脚本失败(project=%d script=%d): %w", script.ProjectId, script.ID, err)
+			if err := updateStoredComposeScriptContent(tx, script, normalized); err != nil {
+				return err
 			}
 			changed++
 		}
@@ -199,16 +250,40 @@ func reconcileStoredComposeScripts(db *gorm.DB) (int, error) {
 	return changed, nil
 }
 
-func ReconcileStoredComposeScriptsOnStartup() {
+func updateStoredComposeScriptContent(db *gorm.DB, script modelSystem.TbProjectScript, content string) error {
+	result := db.Model(&modelSystem.TbProjectScript{}).
+		Where("id = ? AND content = ?", script.ID, script.Content).
+		Update("content", content)
+	if result.Error != nil {
+		return fmt.Errorf("更新 Compose 脚本失败(project=%d route=%d script=%d file=%s): %w", script.ProjectId, script.RouteId, script.ID, script.FileName, result.Error)
+	}
+	if result.RowsAffected != 1 {
+		return fmt.Errorf("Compose 脚本已被并发修改(project=%d route=%d script=%d file=%s)", script.ProjectId, script.RouteId, script.ID, script.FileName)
+	}
+	return nil
+}
+
+func StartManagedComposeProjectsOnStartup() {
 	go func() {
 		if global.GVA_DB == nil {
 			return
 		}
-		changed, err := reconcileStoredComposeScripts(global.GVA_DB)
+		err := runManagedComposeStartup(
+			func() (int, error) { return reconcileStoredComposeScripts(global.GVA_DB) },
+			ProjectGroupServiceApp.startEnabledGroupsOnStartup,
+		)
 		if err != nil {
-			zap.L().Warn("启动时规范化 Compose 共享网络失败", zap.Error(err))
-			return
+			zap.L().Warn("启动时 Compose 共享网络规范化失败，已跳过项目组自动启动", zap.Error(err))
 		}
-		zap.L().Info("启动时 Compose 共享网络检查完成", zap.Int("updated_scripts", changed))
 	}()
+}
+
+func runManagedComposeStartup(reconcile func() (int, error), autoStart func()) error {
+	changed, err := reconcile()
+	if err != nil {
+		return err
+	}
+	zap.L().Info("启动时 Compose 共享网络检查完成", zap.Int("updated_scripts", changed))
+	autoStart()
+	return nil
 }

@@ -38,7 +38,7 @@ type SharedDockerNetworkService struct {
 - [x] Implement `Ensure(ctx)` by inspecting `{{.Driver}}`, accepting only `bridge`, creating with `network create --driver bridge --label ...`, and re-inspecting after a failed create to tolerate races.
 - [x] Add `EnsureOnStartup()` that waits for Docker in a goroutine, calls `Ensure`, and logs without blocking application startup.
 - [x] Run the focused tests and confirm they pass.
-- [ ] Commit: `git commit -m "feat: manage shared Docker network"`
+- [x] Commit: `git commit -m "feat: manage shared Docker network"`
 
 ## Task 2: Enforce the network before local deployment
 
@@ -63,7 +63,7 @@ func runLocalDeployWithSharedNetwork(logCh chan string, ensure func(context.Cont
 
 - [x] Keep remote deployments unchanged.
 - [x] Run focused and full `service/system` tests.
-- [ ] Commit: `git commit -m "feat: guard local deploys with shared network"`
+- [x] Commit: `git commit -m "feat: guard local deploys with shared network"`
 
 ## Task 3: Reconcile the network at both backend startup paths
 
@@ -76,7 +76,7 @@ func runLocalDeployWithSharedNetwork(logCh chan string, ensure func(context.Cont
 - [x] Call `SharedDockerNetworkServiceApp.EnsureOnStartup()` immediately after backend initialization in both entry points, independently of whether any project group has auto-start enabled.
 - [x] Retain project-group auto-start behavior and let the synchronous deployment guard handle its deployments.
 - [x] Run `cd server && go test ./service/system -run 'TestSharedDockerNetwork|TestResolveAutoStart' -count=1`.
-- [ ] Commit: `git commit -m "feat: reconcile shared network on startup"`
+- [x] Commit: `git commit -m "feat: reconcile shared network on startup"`
 
 ## Task 4: Normalize stored Compose scripts
 
@@ -106,7 +106,7 @@ networks:
 - [x] Add asynchronous startup reconciliation over all non-remote stored Compose scripts so the existing 32 scripts are normalized even before their next deployment.
 - [x] Return malformed Compose errors with project/script IDs and do not write partial changes.
 - [x] Run `cd server && go test ./service/system -run 'TestNormalizeComposeSharedNetwork|TestReconcileStoredCompose' -count=1` and then the full package suite.
-- [ ] Commit: `git commit -m "feat: normalize managed Compose networks"`
+- [x] Commit: `git commit -m "feat: normalize managed Compose networks"`
 
 ## Task 5: Add host bootstrap and migrate repository Compose files
 
@@ -123,7 +123,7 @@ networks:
 - [x] Replace repository custom IPAM/static IPs and per-service `network` attachments with external `default`.
 - [x] Run `bash scripts/ensure-docker-network_test.sh`.
 - [x] Run `docker compose -f docker-compose.yml config` and `docker compose -f deploy/docker-compose/docker-compose.yaml config` after the shared network exists.
-- [ ] Commit: `git commit -m "feat: bootstrap shared Docker network"`
+- [x] Commit: `git commit -m "feat: bootstrap shared Docker network"`
 
 ## Task 6: Migrate middleware Compose declarations
 
@@ -134,24 +134,24 @@ networks:
 - Modify: `/Users/conchi/database/postgresql/docker-compose.yml`
 - Modify: `/Users/conchi/middleware/redis/docker-compose.yml`
 
-- [ ] Append the external-default block to each file without changing images, ports, volumes, commands, environment, health checks, or restart policies.
-- [ ] Validate each file from its own directory with `docker compose config`.
-- [ ] Confirm config output resolves every service's default network to `vibedeploy-shared`.
-- [ ] Do not recreate the containers yet.
+- [x] Append the external-default block to each file without changing images, ports, volumes, commands, environment, health checks, or restart policies.
+- [x] Validate each file from its own directory with `docker compose config`.
+- [x] Confirm config output resolves every service's default network to `vibedeploy-shared`.
+- [x] Do not recreate the containers yet.
 
 ## Task 7: Migrate the live Docker network topology
 
 **Files:**
 - Runtime state only; no file edits.
 
-- [ ] Record exact network IDs, names, labels, drivers, and endpoint container names.
-- [ ] Create `vibedeploy-shared` with bridge driver and ownership label if absent.
-- [ ] Connect `minio`, `snail-job-server`, `local-nginx`, `postgres16`, and `redis-7.2` to it, treating existing attachments as success.
-- [ ] Verify all five appear in `docker network inspect vibedeploy-shared`.
-- [ ] Disconnect those containers from their old project networks.
-- [ ] Verify all five containers are running and have only `vibedeploy-shared` among user-defined networks.
-- [ ] Remove each old user-defined network only when its endpoint list is empty; preserve `bridge`, `host`, `none`, and `vibedeploy-shared`.
-- [ ] If any legacy network retains an unidentified endpoint, leave it in place and report it.
+- [x] Record exact network IDs, names, labels, drivers, and endpoint container names.
+- [x] Create `vibedeploy-shared` with bridge driver and ownership label if absent.
+- [x] Validate the five middleware Compose files before changing live containers.
+- [x] Recreate `minio`, `snail-job-server`, `local-nginx`, `postgres16`, and `redis-7.2` one at a time from their updated Compose files so persisted `HostConfig.NetworkMode` becomes `vibedeploy-shared`.
+- [x] Verify all five appear in `docker network inspect vibedeploy-shared`.
+- [x] Verify all five containers are running, healthy where health checks exist, and have only `vibedeploy-shared` as both network mode and user-defined attachment.
+- [x] Remove each old user-defined network only when its endpoint list is empty; preserve `bridge`, `host`, `none`, and `vibedeploy-shared`.
+- [x] If any legacy network retains an unidentified endpoint, leave it in place and report it.
 
 ## Task 8: End-to-end verification
 
@@ -159,13 +159,13 @@ networks:
 - Modify: `task_plan.md`
 - Modify: `progress.md`
 
-- [ ] Run `cd server && go test ./service/system -count=1`.
-- [ ] Run `cd server && go test ./... -count=1`.
-- [ ] Run the shell bootstrap tests and `bash -n` on both scripts.
-- [ ] Validate all seven edited Compose files.
-- [ ] Query `tb_project_script` and confirm all 32 business Compose scripts structurally resolve to external-default only.
-- [ ] Re-run the AI aggregate deployment and confirm the missing external-network error is gone.
-- [ ] Verify newly created business containers join `vibedeploy-shared` and no project default network is created.
-- [ ] Inspect final Docker state: only built-ins plus `vibedeploy-shared` remain, unless a legacy network was deliberately retained because it still had an unidentified endpoint.
-- [ ] Review `git diff`, `git status`, recent commits, and scan changed files for placeholders (`TODO`, `FIXME`, temporary stubs).
+- [x] Run `cd server && go test ./service/system -count=1`.
+- [x] Run `cd server && go test ./... -count=1` (the target package passes; the repository-wide command retains the pre-existing missing embedded frontend and upload-config build failures recorded in the verification log).
+- [x] Run the shell bootstrap tests and `bash -n` on all three scripts.
+- [x] Validate all seven edited Compose files.
+- [x] Query `tb_project_script` and confirm all 32 active business Compose scripts structurally resolve to external-default only.
+- [x] Re-run the AI aggregate deployment and confirm the missing external-network error is gone.
+- [x] Verify newly created business containers join `vibedeploy-shared` and no project default network is created.
+- [x] Inspect final Docker state: only built-ins plus `vibedeploy-shared` remain, unless a legacy network was deliberately retained because it still had an unidentified endpoint.
+- [x] Review `git diff`, `git status`, recent commits, and scan changed files for placeholders (`TODO`, `FIXME`, temporary stubs).
 - [ ] Update planning logs with exact test results and any retained network exceptions.
