@@ -1,12 +1,9 @@
 version: "3"
 
-# 声明一个名为network的networks,subnet为network的子网地址,默认网关是177.7.0.1
 networks:
-  network:
-    ipam:
-      driver: default
-      config:
-        - subnet: '177.7.0.0/16'
+  default:
+    name: vibedeploy-shared
+    external: true
         
 # 设置mysql，redis持久化保存
 volumes:
@@ -25,9 +22,6 @@ services:
     depends_on:
       - server
     command: [ 'nginx-debug', '-g', 'daemon off;' ]
-    networks:
-      network:
-        ipv4_address: 177.7.0.11
 
   server:
     build:
@@ -45,9 +39,6 @@ services:
     links:
       - mysql
       - redis
-    networks:
-      network:
-        ipv4_address: 177.7.0.12
 
   mysql:
     image: mysql:8.0.21       # 如果您是 arm64 架构：如 MacOS 的 M1，请修改镜像为 image: mysql/mysql-server:8.0.21
@@ -68,9 +59,6 @@ services:
       retries: 3
     volumes:
       - mysql:/var/lib/mysql
-    networks:
-      network:
-        ipv4_address: 177.7.0.13
 
   redis:
     image: redis:6.0.6
@@ -85,6 +73,3 @@ services:
       retries: 3
     volumes:
       - redis:/data
-    networks:
-      network:
-        ipv4_address: 177.7.0.14

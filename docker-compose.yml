@@ -1,11 +1,9 @@
 version: "3"
 
 networks:
-  network:
-    ipam:
-      driver: default
-      config:
-        - subnet: '177.7.0.0/16'
+  default:
+    name: vibedeploy-shared
+    external: true
 
 services:
   web:
@@ -18,9 +16,6 @@ services:
       - '5999:80'
     depends_on:
       - server
-    networks:
-      network:
-        ipv4_address: 177.7.0.11
 
   server:
     build:
@@ -32,6 +27,3 @@ services:
       - '9999:8008'
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    networks:
-      network:
-        ipv4_address: 177.7.0.12

@@ -359,6 +359,9 @@ start_services() {
     echo "BACKEND_PORT and FRONTEND_PORT must be different: ${BACKEND_PORT}" >&2
     exit 1
   fi
+  if ! "$ROOT_DIR/scripts/ensure-docker-network.sh"; then
+    echo "Warning: shared Docker network bootstrap failed; the backend will retry before local deployment." >&2
+  fi
   if adopt_running_services_if_ready; then
     return 0
   fi

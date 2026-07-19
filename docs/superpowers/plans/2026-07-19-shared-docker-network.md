@@ -117,12 +117,12 @@ networks:
 - Modify: `docker-compose.yml`
 - Modify: `deploy/docker-compose/docker-compose.yaml`
 
-- [ ] Write a fake-`docker` shell test proving the script reuses an existing network and creates a missing network with the required driver and label.
-- [ ] Implement an idempotent bootstrap script using exact `docker network inspect` and `docker network create` commands.
-- [ ] Invoke it from `scripts/restart-dev.sh` before backend startup so native development also repairs the network early.
-- [ ] Replace repository custom IPAM/static IPs and per-service `network` attachments with external `default`.
-- [ ] Run `bash scripts/ensure-docker-network_test.sh`.
-- [ ] Run `docker compose -f docker-compose.yml config` and `docker compose -f deploy/docker-compose/docker-compose.yaml config` after the shared network exists.
+- [x] Write a fake-`docker` shell test proving the script reuses an existing network and creates a missing network with the required driver and label.
+- [x] Implement an idempotent bootstrap script using exact `docker network inspect` and `docker network create` commands.
+- [x] Invoke it from `scripts/restart-dev.sh` before backend startup so native development also repairs the network early.
+- [x] Replace repository custom IPAM/static IPs and per-service `network` attachments with external `default`.
+- [x] Run `bash scripts/ensure-docker-network_test.sh`.
+- [x] Run `docker compose -f docker-compose.yml config` and `docker compose -f deploy/docker-compose/docker-compose.yaml config` after the shared network exists.
 - [ ] Commit: `git commit -m "feat: bootstrap shared Docker network"`
 
 ## Task 6: Migrate middleware Compose declarations
