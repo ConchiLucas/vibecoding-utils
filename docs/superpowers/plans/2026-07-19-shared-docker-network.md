@@ -16,9 +16,9 @@
 - Create: `server/service/system/docker_shared_network.go`
 - Create: `server/service/system/docker_shared_network_test.go`
 
-- [ ] Write failing tests for an existing bridge network, a missing network, a create race, an inspect failure, and a wrong driver.
-- [ ] Run `cd server && go test ./service/system -run 'TestSharedDockerNetwork' -count=1` and confirm the tests fail because the service does not exist.
-- [ ] Add constants and an injectable runner:
+- [x] Write failing tests for an existing bridge network, a missing network, a create race, an inspect failure, and a wrong driver.
+- [x] Run `cd server && go test ./service/system -run 'TestSharedDockerNetwork' -count=1` and confirm the tests fail because the service does not exist.
+- [x] Add constants and an injectable runner:
 
 ```go
 const (
@@ -35,9 +35,9 @@ type SharedDockerNetworkService struct {
 }
 ```
 
-- [ ] Implement `Ensure(ctx)` by inspecting `{{.Driver}}`, accepting only `bridge`, creating with `network create --driver bridge --label ...`, and re-inspecting after a failed create to tolerate races.
+- [x] Implement `Ensure(ctx)` by inspecting `{{.Driver}}`, accepting only `bridge`, creating with `network create --driver bridge --label ...`, and re-inspecting after a failed create to tolerate races.
 - [ ] Add `EnsureOnStartup()` that waits for Docker in a goroutine, calls `Ensure`, and logs without blocking application startup.
-- [ ] Run the focused tests and confirm they pass.
+- [x] Run the focused tests and confirm they pass.
 - [ ] Commit: `git commit -m "feat: manage shared Docker network"`
 
 ## Task 2: Enforce the network before local deployment
