@@ -4,6 +4,7 @@ import (
 	"github.com/flipped-aurora/easy-deploy/server/core"
 	"github.com/flipped-aurora/easy-deploy/server/global"
 	"github.com/flipped-aurora/easy-deploy/server/initialize"
+	systemService "github.com/flipped-aurora/easy-deploy/server/service/system"
 	"go.uber.org/zap"
 )
 
@@ -19,6 +20,7 @@ func main() {
 	initialize.SetupHandlers()
 	if global.GVA_DB != nil {
 		initialize.RegisterTables()
+		systemService.ProjectGroupServiceApp.StartEnabledGroupsOnStartup()
 	}
 	core.RunServer()
 }

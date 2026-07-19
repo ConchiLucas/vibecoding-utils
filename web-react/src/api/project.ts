@@ -26,6 +26,20 @@ export const getProjectById = (id: number | string) => {
   });
 };
 
+export interface ProjectRuntimeStatus {
+  projectId: number;
+  running: boolean;
+}
+
+// 批量获取项目运行状态
+export const getProjectRuntimeStatuses = () => {
+  return service({
+    url: '/project/runtimeStatus',
+    method: 'get',
+    donNotShowLoading: true,
+  });
+};
+
 // 获取下一次部署建议端口
 export const getNextDeployPort = (type: 'frontend' | 'backend') => {
   return service({

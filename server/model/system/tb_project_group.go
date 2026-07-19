@@ -8,6 +8,7 @@ type TbProjectGroup struct {
 	GroupName   string `json:"groupName" form:"groupName" gorm:"column:group_name;comment:项目组名称"`
 	Description string `json:"description" form:"description" gorm:"column:description;comment:项目组描述"`
 	UserId      uint   `json:"userId" form:"userId" gorm:"column:user_id;comment:创建用户ID"`
+	AutoStart   bool   `json:"autoStart" form:"autoStart" gorm:"column:auto_start;default:false;comment:是否随 VibeDeploy 启动项目组"`
 }
 
 func (TbProjectGroup) TableName() string {

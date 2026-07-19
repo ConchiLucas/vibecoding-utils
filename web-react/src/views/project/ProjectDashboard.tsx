@@ -1,10 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { getProjectPage, deleteProject, saveOrUpdateProject } from '../../api/project';
+import { getProjectPage, deleteProject, saveOrUpdateProject, getProjectRuntimeStatuses } from '../../api/project';
 import { saveOrUpdateRoute, deleteRoute } from '../../api/project_route';
-import { getGroupList, saveOrUpdateGroup, deleteGroup } from '../../api/project_group';
+import { getGroupList, saveOrUpdateGroup, deleteGroup, updateGroupAutoStart } from '../../api/project_group';
 import { getServerList } from '../../api/server';
 import toast from 'react-hot-toast';
-import { Play, Settings2, Plus, Search, TerminalSquare, Github, Box, X, Trash2, MonitorPlay, Server, Terminal, Code, Pencil, Check, Folder, Square, ScrollText } from 'lucide-react';
+import { Play, Settings2, Plus, Power, TerminalSquare, Github, Box, X, Trash2, MonitorPlay, Server, Terminal, Code, Pencil, Check, Folder, Square, ScrollText } from 'lucide-react';
 import DeployLogPanel from '../../components/DeployLogPanel';
 import ProjectScripts from './ProjectScripts';
 import {
@@ -23,10 +23,12 @@ export default function ProjectDashboard() {
   const [groups, setGroups] = useState<any[]>([]);
   const [serverOptions, setServerOptions] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+  const [projectRunningStatuses, setProjectRunningStatuses] = useState<Record<number, boolean>>({});
 
   // ── Filters ───────────────────────────────────────────────────────────────
   const [selectedGroupId, setSelectedGroupId] = useState<number | null>(null); // null = 全部
-  const [searchQuery, setSearchQuery] = useState('');
+  const [startupManagerOpen, setStartupManagerOpen] = useState(false);
+  const [startupUpdatingIds, setStartupUpdatingIds] = useState<number[]>([]);
 
   // ── Sidebar inline CRUD state ─────────────────────────────────────────────
   const [editingGroupId, setEditingGroupId] = useState<number | null>(null);
@@ -57,7 +59,7 @@ export default function ProjectDashboard() {
 
   const [routeFormData, setRouteFormData] = useState({
     ID: 0, projectId: 0, routeKey: '', routeName: '', serverId: '',
-    localProjectPath: '', serverProjectPath: '', localExecuteCommand: '',
+    localProjectPath: '', localScriptPath: '', serverProjectPath: '', localExecuteCommand: '',
     localStopCommand: '', localStartCommand: '', serverExecuteCommand: '', color: '', icon: '',
     buildType: '', fileName: ''
   });
@@ -81,11 +83,28 @@ export default function ProjectDashboard() {
     }
   };
 
+  const fetchProjectRunningStatuses = async () => {
+    try {
+      const result: any = await getProjectRuntimeStatuses();
+      if (result.code !== 0 || !Array.isArray(result.data)) return;
+      const nextStatuses: Record<number, boolean> = {};
+      result.data.forEach((status: any) => {
+        nextStatuses[Number(status.projectId)] = Boolean(status.running);
+      });
+      setProjectRunningStatuses(nextStatuses);
+    } catch {
+      // 状态刷新失败时保留上一次结果，避免周期性提示打扰用户。
+    }
+  };
+
   useEffect(() => {
     fetchData();
+    fetchProjectRunningStatuses();
+    const statusTimer = window.setInterval(fetchProjectRunningStatuses, 3000);
     const handleGlobalTrigger = () => openDrawer();
     window.addEventListener('OPEN_PROJECT_DRAWER', handleGlobalTrigger);
     return () => {
+      window.clearInterval(statusTimer);
       window.removeEventListener('OPEN_PROJECT_DRAWER', handleGlobalTrigger);
     };
   }, []);
@@ -127,12 +146,48 @@ export default function ProjectDashboard() {
   };
 
   // ── Filtered projects ─────────────────────────────────────────────────────
-  const filteredProjects = projects.filter(p => {
-    const groupOk = selectedGroupId === null || p.groupId === selectedGroupId;
-    const searchLow = searchQuery.toLowerCase();
-    const searchOk = !searchQuery || (p.projectName?.toLowerCase() || '').includes(searchLow) || (p.description?.toLowerCase() || '').includes(searchLow);
-    return groupOk && searchOk;
-  });
+  const isComposeProject = (project: any) => {
+    const language = String(project.computerLanguage || '').toLowerCase();
+    const name = String(project.projectName || '').toLowerCase();
+    return language.includes('docker-compose') || language.includes('docker compose') || name.includes('compose');
+  };
+
+  const filteredProjects = projects
+    .filter(p => selectedGroupId === null || p.groupId === selectedGroupId)
+    .sort((left, right) => Number(isComposeProject(right)) - Number(isComposeProject(left)));
+
+  const getGroupStartupTarget = (groupId: number) => {
+    const groupProjects = projects.filter(project => project.groupId === groupId);
+    const aggregateProject = groupProjects.find(isComposeProject);
+    if (!aggregateProject) return null;
+
+    const fullRoute = (aggregateProject.routes || []).find((route: any) => {
+      const key = String(route.routeKey || '').toLowerCase();
+      const name = String(route.routeName || '');
+      return !key.includes('incremental') && !name.includes('增量') &&
+        (key.includes('frontend_backend_full') || key.includes('full') || name.includes('全量'));
+    });
+    if (!fullRoute) return null;
+    return { project: aggregateProject, route: fullRoute };
+  };
+
+  const handleGroupAutoStartToggle = async (group: any, enabled: boolean) => {
+    if (startupUpdatingIds.includes(group.ID)) return;
+    setStartupUpdatingIds(ids => [...ids, group.ID]);
+    try {
+      const res: any = await updateGroupAutoStart(group.ID, enabled);
+      if (res.code !== 0) {
+        toast.error(res.msg || '启动联动设置失败');
+        return;
+      }
+      setGroups(items => items.map(item => item.ID === group.ID ? { ...item, autoStart: enabled } : item));
+      toast.success(enabled ? `「${group.groupName}」将在下次启动 VibeDeploy 时自动部署` : `「${group.groupName}」已取消启动联动`);
+    } catch {
+      toast.error('启动联动设置异常');
+    } finally {
+      setStartupUpdatingIds(ids => ids.filter(id => id !== group.ID));
+    }
+  };
 
   // ── Drawer helpers ────────────────────────────────────────────────────────
   const openDrawer = (project?: any) => {
@@ -177,6 +232,7 @@ export default function ProjectDashboard() {
         routeName: route.routeName || '',
         serverId: route.serverId ? String(route.serverId) : '',
         localProjectPath: route.localProjectPath || '',
+        localScriptPath: route.localScriptPath || '',
         serverProjectPath: route.serverProjectPath || '',
         localExecuteCommand: route.localExecuteCommand || '',
         localStopCommand: getDisplayStopCommand(route),
@@ -190,7 +246,7 @@ export default function ProjectDashboard() {
       const isPythonProject = project.computerLanguage?.toLowerCase() === 'python';
       setRouteFormData({
         ID: 0, projectId: project.ID, routeKey: 'local', routeName: isPythonProject ? '构建项目镜像' : '本地部署',
-        serverId: '', localProjectPath: '', serverProjectPath: '',
+        serverId: '', localProjectPath: '', localScriptPath: '', serverProjectPath: '',
         localExecuteCommand: isPythonProject ? 'make build-project' : 'docker compose up --build -d',
         localStopCommand: '',
         localStartCommand: '', serverExecuteCommand: '',
@@ -318,9 +374,14 @@ export default function ProjectDashboard() {
     setDeployLog({ open: true, projectId, projectName, envKey, routeName: routeDisplayName, mode: 'stop' });
   };
 
-  const handleDockerLogClick = (project: any, e: React.MouseEvent, envKey: string, routeName: string) => {
+  const handleProjectDockerLogClick = (project: any, e: React.MouseEvent) => {
     e.stopPropagation();
-    setDeployLog({ open: true, projectId: project.ID, projectName: project.projectName, envKey, routeName, mode: 'logs' });
+    const route = (project.routes || []).find((item: any) => !item.serverId) || project.routes?.[0];
+    if (!route) {
+      toast.error('请先添加部署路线后再查看日志');
+      return;
+    }
+    setDeployLog({ open: true, projectId: project.ID, projectName: project.projectName, envKey: String(route.ID), routeName: route.routeName, mode: 'logs' });
   };
 
   // ── Project CRUD ──────────────────────────────────────────────────────────
@@ -433,10 +494,6 @@ export default function ProjectDashboard() {
     return <Github size={20} className="text-gray-800" />;
   };
 
-  const currentGroupName = selectedGroupId === null
-    ? '全部项目'
-    : groups.find(g => g.ID === selectedGroupId)?.groupName || '未知组';
-
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div className="w-full flex gap-0 relative">
@@ -445,16 +502,19 @@ export default function ProjectDashboard() {
       <aside className="w-56 shrink-0 bg-white border-r border-gray-100 min-h-[calc(100vh-64px)] flex flex-col">
         {/* 侧边栏顶部 */}
         <div className="px-3 pt-4 pb-2">
-          <div className="relative mb-3">
-            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
-            <input
-              type="text"
-              placeholder="搜索项目..."
-              value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
-              className="w-full bg-gray-50 border border-gray-200 rounded-md py-1.5 pl-8 pr-2 text-xs focus:outline-none focus:ring-2 focus:ring-black/5 focus:border-gray-300"
-            />
-          </div>
+          <button
+            type="button"
+            onClick={() => setStartupManagerOpen(true)}
+            className="mb-3 flex w-full items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-left text-xs font-semibold text-gray-700 transition-colors hover:border-gray-300 hover:bg-white hover:text-gray-950"
+          >
+            <span className="flex h-6 w-6 items-center justify-center rounded-md bg-gray-900 text-white">
+              <Power size={13} />
+            </span>
+            <span className="flex-1">启动联动管理</span>
+            <span className="rounded-full bg-gray-200 px-1.5 py-0.5 font-mono text-[10px] text-gray-600">
+              {groups.filter(group => group.autoStart).length}
+            </span>
+          </button>
           <div className="flex items-center justify-between mb-2 px-1">
             <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">项目组</span>
             <button
@@ -552,15 +612,34 @@ export default function ProjectDashboard() {
             {filteredProjects.map((project) => (
               <div key={project.ID} className="group bg-white rounded-xl shadow-sm border border-gray-200 hover:border-gray-300 hover:shadow-md transition-all duration-200 overflow-hidden flex flex-col">
                 <div className="p-5 cursor-pointer" onClick={() => openDrawer(project)}>
-                  <div className="flex justify-between items-start mb-3">
+                  <div className="flex justify-between items-start mb-3 gap-3">
                     <div className="w-9 h-9 rounded-full bg-gray-100 flex items-center justify-center border border-gray-200">
                       {getLanguageIcon(project.computerLanguage)}
                     </div>
-                    <div className="flex items-center gap-1.5 text-xs font-mono bg-gray-100 text-gray-600 px-2 py-1 rounded-md">
-                      <Code size={11} /> {project.computerLanguage}
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={(e) => handleProjectDockerLogClick(project, e)}
+                        disabled={!project.routes?.length}
+                        className="inline-flex items-center gap-1.5 rounded-md border border-gray-200 bg-white px-2.5 py-1 text-xs font-medium text-gray-600 transition-colors hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700 disabled:cursor-not-allowed disabled:opacity-40"
+                        title="查看 Docker 实时日志"
+                      >
+                        <ScrollText size={13} /> 日志
+                      </button>
+                      <div className="flex items-center gap-1.5 text-xs font-mono bg-gray-100 text-gray-600 px-2 py-1 rounded-md">
+                        <Code size={11} /> {project.computerLanguage}
+                      </div>
                     </div>
                   </div>
-                  <h3 className="text-base font-bold text-gray-900 truncate mb-1">{project.projectName}</h3>
+                  <div className="mb-1 flex min-w-0 items-center gap-2">
+                    <span
+                      className={`inline-flex h-2.5 w-2.5 shrink-0 rounded-full ring-2 ring-white ${projectRunningStatuses[project.ID]
+                        ? 'bg-emerald-500 shadow-[0_0_0_4px_rgba(16,185,129,0.14)]'
+                        : 'bg-red-500 shadow-[0_0_0_4px_rgba(239,68,68,0.12)]'
+                        }`}
+                      title={projectRunningStatuses[project.ID] ? '运行中' : '已停止'}
+                    />
+                    <h3 className="min-w-0 truncate text-base font-bold text-gray-900">{project.projectName}</h3>
+                  </div>
                   <p className="text-xs text-gray-400 line-clamp-2 min-h-[2.2rem]">
                     {project.description || <span className="italic">暂无描述</span>}
                   </p>
@@ -610,11 +689,6 @@ export default function ProjectDashboard() {
                           title="管理脚本"
                         ><Code size={13} /></button>
                         <button
-                          onClick={(e) => handleDockerLogClick(project, e, String(route.ID), route.routeName)}
-                          className="flex items-center justify-center p-1.5 rounded-md text-xs border border-emerald-100 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-colors"
-                          title="查看 Docker 实时日志"
-                        ><ScrollText size={13} /></button>
-                        <button
                           onClick={(e) => { e.stopPropagation(); openCommandDrawer(project, route); }}
                           className="flex items-center justify-center p-1.5 rounded-md text-xs border border-gray-200 bg-white text-gray-700 hover:bg-gray-100 transition-colors"
                           title="路线配置"
@@ -635,6 +709,94 @@ export default function ProjectDashboard() {
           </div>
         )}
       </div>
+
+      {/* ── Project Group Startup Manager ── */}
+      {startupManagerOpen && (
+        <div className="fixed inset-0 z-[110] flex flex-col bg-gray-50 animate-in fade-in duration-200">
+          <header className="flex h-16 shrink-0 items-center justify-between border-b border-gray-200 bg-white px-6">
+            <div className="flex items-center gap-3">
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gray-900 text-white shadow-sm">
+                <Power size={17} />
+              </div>
+              <div>
+                <h2 className="text-base font-bold text-gray-950">启动联动管理</h2>
+                <p className="text-xs text-gray-500">按项目组控制，不影响组内单张项目卡片的配置</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setStartupManagerOpen(false)}
+              className="rounded-full p-2 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-900"
+              title="关闭"
+            >
+              <X size={19} />
+            </button>
+          </header>
+
+          <main className="flex-1 overflow-y-auto px-6 py-8">
+            <div className="mx-auto max-w-3xl">
+              <div className="mb-5 rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+                每次启动 VibeDeploy 后端后，会执行已开启项目组的聚合全量部署路线。每次后端启动只执行一次。
+              </div>
+
+              <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
+                {groups.map((group, index) => {
+                  const target = getGroupStartupTarget(group.ID);
+                  const projectCount = projects.filter(project => project.groupId === group.ID).length;
+                  const updating = startupUpdatingIds.includes(group.ID);
+                  const enabled = Boolean(group.autoStart);
+                  return (
+                    <div
+                      key={group.ID}
+                      className={`flex items-center gap-4 px-5 py-5 ${index > 0 ? 'border-t border-gray-100' : ''}`}
+                    >
+                      <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${enabled ? 'bg-emerald-50 text-emerald-600' : 'bg-gray-100 text-gray-400'}`}>
+                        <Folder size={18} />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <h3 className="truncate text-sm font-bold text-gray-950">{group.groupName}</h3>
+                          <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-medium text-gray-500">{projectCount} 个项目</span>
+                        </div>
+                        {target ? (
+                          <p className="mt-1 truncate text-xs text-gray-500">
+                            启动入口：{target.project.projectName} · {target.route.routeName}
+                          </p>
+                        ) : (
+                          <p className="mt-1 text-xs text-amber-600">缺少聚合项目的全量部署路线，暂时无法开启</p>
+                        )}
+                      </div>
+                      <div className="flex shrink-0 items-center gap-3">
+                        <span className={`hidden text-xs font-medium sm:block ${enabled ? 'text-emerald-600' : 'text-gray-400'}`}>
+                          {enabled ? '随 VibeDeploy 启动' : '不自动启动'}
+                        </span>
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={enabled}
+                          aria-label={`${group.groupName}随 VibeDeploy 启动`}
+                          disabled={!target || updating}
+                          onClick={() => handleGroupAutoStartToggle(group, !enabled)}
+                          className={`relative h-6 w-11 rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${enabled ? 'bg-emerald-500' : 'bg-gray-300'}`}
+                        >
+                          <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${enabled ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+                {groups.length === 0 && (
+                  <div className="px-6 py-16 text-center text-sm text-gray-400">暂无项目组</div>
+                )}
+              </div>
+
+              <p className="mt-4 text-xs leading-5 text-gray-400">
+                关闭开关只会取消下次 VibeDeploy 启动时的自动部署，不会立即停止当前正在运行的容器。
+              </p>
+            </div>
+          </main>
+        </div>
+      )}
 
       {/* ── Project Drawer ── */}
       {drawerOpen && (
@@ -795,6 +957,18 @@ export default function ProjectDashboard() {
                 {routeFormData.serverId === '' && (
                   <>
                     <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">部署脚本输出目录</label>
+                      <input
+                        type="text"
+                        name="localScriptPath"
+                        value={routeFormData.localScriptPath}
+                        onChange={handleRouteFormChange}
+                        className="w-full border border-gray-300 rounded-lg p-2.5 outline-none text-sm focus:ring-2 focus:ring-black/5 font-mono text-blue-700"
+                        placeholder="留空时写入项目目录，例如 /Users/workspace/app/deploy/frontend/local_full"
+                      />
+                      <p className="text-xs text-gray-400 mt-1">脚本库文件会生成到这里；项目源码目录和命令工作目录保持不变</p>
+                    </div>
+                    <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">本机执行命令</label>
                       <input
                         type="text"
@@ -882,7 +1056,10 @@ export default function ProjectDashboard() {
           envKey={deployLog.envKey}
           routeName={deployLog.routeName}
           mode={deployLog.mode}
-          onClose={() => setDeployLog(p => ({ ...p, open: false }))}
+          onClose={() => {
+            setDeployLog(p => ({ ...p, open: false }));
+            fetchProjectRunningStatuses();
+          }}
         />
       )}
 

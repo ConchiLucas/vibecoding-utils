@@ -12,6 +12,7 @@ func (r *ProjectRouter) InitProjectRouter(Router *gin.RouterGroup) {
 		projectRouter.POST("page", projectApi.GetProjectPage)
 		projectRouter.POST("list", projectApi.GetProjectList)
 		projectRouter.GET("getById/:id", projectApi.GetProjectById)
+		projectRouter.GET("runtimeStatus", projectApi.GetRuntimeStatuses)
 		projectRouter.GET("nextPort", projectApi.GetNextDeployPort)
 		projectRouter.POST("saveOrUpdate", projectApi.SaveOrUpdateProject)
 		projectRouter.DELETE("delete/:ids", projectApi.DeleteProject)

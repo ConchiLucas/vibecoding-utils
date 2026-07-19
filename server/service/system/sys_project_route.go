@@ -17,6 +17,7 @@ func (s *ProjectRouteService) SaveOrUpdateRoute(route system.TbProjectRoute) err
 			"route_key":              route.RouteKey,
 			"server_id":              route.ServerId,
 			"local_project_path":     route.LocalProjectPath,
+			"local_script_path":      route.LocalScriptPath,
 			"server_project_path":    route.ServerProjectPath,
 			"local_execute_command":  route.LocalExecuteCommand,
 			"local_stop_command":     route.LocalStopCommand,

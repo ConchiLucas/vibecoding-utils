@@ -9,6 +9,7 @@ func (r *ProjectGroupRouter) InitProjectGroupRouter(Router *gin.RouterGroup) {
 	{
 		groupRouter.POST("list", projectGroupApi.GetGroupList)
 		groupRouter.POST("saveOrUpdate", projectGroupApi.SaveOrUpdateGroup)
+		groupRouter.POST("autoStart", projectGroupApi.UpdateAutoStart)
 		groupRouter.DELETE("delete/:id", projectGroupApi.DeleteGroup)
 	}
 }

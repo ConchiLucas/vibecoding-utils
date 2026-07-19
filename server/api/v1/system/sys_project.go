@@ -64,6 +64,17 @@ func (a *ProjectApi) GetProjectById(c *gin.Context) {
 	response.OkWithDetailed(project, "获取成功", c)
 }
 
+// GetRuntimeStatuses returns the current reachability state for every project card.
+func (a *ProjectApi) GetRuntimeStatuses(c *gin.Context) {
+	statuses, err := projectService.GetRuntimeStatuses()
+	if err != nil {
+		global.GVA_LOG.Error("获取项目运行状态失败!", zap.Error(err))
+		response.FailWithMessage("获取项目运行状态失败", c)
+		return
+	}
+	response.OkWithDetailed(statuses, "获取成功", c)
+}
+
 // GetNextDeployPort 获取下一次部署建议端口。
 func (a *ProjectApi) GetNextDeployPort(c *gin.Context) {
 	portType := c.Query("type")

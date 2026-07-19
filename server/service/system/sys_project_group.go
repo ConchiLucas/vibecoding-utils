@@ -2,6 +2,7 @@ package system
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/flipped-aurora/easy-deploy/server/global"
@@ -51,4 +52,27 @@ func (s *ProjectGroupService) DeleteGroup(id int) error {
 func (s *ProjectGroupService) RenameGroup(id int, name string) error {
 	return global.GVA_DB.Model(&system.TbProjectGroup{}).Where("id = ?", id).
 		Update("group_name", strings.TrimSpace(name)).Error
+}
+
+// UpdateAutoStart 更新项目组随 VibeDeploy 启动的联动策略。
+func (s *ProjectGroupService) UpdateAutoStart(userId uint, groupId uint, enabled bool) error {
+	db := global.GVA_DB.Model(&system.TbProjectGroup{}).Where("id = ?", groupId)
+	if userId != 0 {
+		db = db.Where("user_id = ?", userId)
+	}
+
+	if enabled {
+		if _, err := s.ResolveAutoStartTarget(groupId); err != nil {
+			return err
+		}
+	}
+
+	result := db.Update("auto_start", enabled)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("项目组不存在或无权操作")
+	}
+	return nil
 }

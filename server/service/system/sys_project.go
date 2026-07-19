@@ -1,11 +1,14 @@
 package system
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/flipped-aurora/easy-deploy/server/global"
 	"github.com/flipped-aurora/easy-deploy/server/model/system"
@@ -25,6 +28,11 @@ type NextDeployPortResult struct {
 	BasePort int    `json:"basePort"`
 	MaxPort  int    `json:"maxPort"`
 	NextPort int    `json:"nextPort"`
+}
+
+type ProjectRuntimeStatus struct {
+	ProjectID uint `json:"projectId"`
+	Running   bool `json:"running"`
 }
 
 // GetProjectPage 分页获取项目列表
@@ -64,6 +72,68 @@ func (s *ProjectService) GetProjectList(project system.TbProject) (list []system
 func (s *ProjectService) GetProjectById(id uint) (project system.TbProject, err error) {
 	err = global.GVA_DB.Preload("Routes").Where("id = ?", id).First(&project).Error
 	return
+}
+
+// GetRuntimeStatuses concurrently checks whether each project's access port is reachable.
+func (s *ProjectService) GetRuntimeStatuses() ([]ProjectRuntimeStatus, error) {
+	var projects []system.TbProject
+	if err := global.GVA_DB.Select("id", "access_url").Order("id desc").Find(&projects).Error; err != nil {
+		return nil, err
+	}
+
+	statuses := make([]ProjectRuntimeStatus, len(projects))
+	semaphore := make(chan struct{}, 12)
+	var waitGroup sync.WaitGroup
+	for index, project := range projects {
+		index, project := index, project
+		waitGroup.Add(1)
+		go func() {
+			defer waitGroup.Done()
+			semaphore <- struct{}{}
+			defer func() { <-semaphore }()
+			statuses[index] = ProjectRuntimeStatus{
+				ProjectID: project.ID,
+				Running:   projectAccessURLRunning(project.AccessUrl),
+			}
+		}()
+	}
+	waitGroup.Wait()
+	return statuses, nil
+}
+
+func projectAccessURLRunning(accessURL string) bool {
+	raw := strings.TrimSpace(accessURL)
+	if raw == "" {
+		return false
+	}
+	if !strings.Contains(raw, "://") {
+		raw = "http://" + raw
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil || strings.TrimSpace(parsed.Hostname()) == "" {
+		return false
+	}
+
+	port := parsed.Port()
+	if port == "" {
+		switch strings.ToLower(parsed.Scheme) {
+		case "http":
+			port = "80"
+		case "https":
+			port = "443"
+		default:
+			return false
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	connection, err := (&net.Dialer{}).DialContext(ctx, "tcp", net.JoinHostPort(parsed.Hostname(), port))
+	if err != nil {
+		return false
+	}
+	_ = connection.Close()
+	return true
 }
 
 // GetNextDeployPort 根据项目访问地址计算下一次部署建议端口。

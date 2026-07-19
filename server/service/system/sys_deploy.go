@@ -86,6 +86,7 @@ func (s *DeployService) ProcessDeployWithLog(projectId uint, targetEnv string, l
 	if localProjectPath == "" {
 		localProjectPath = project.LocalProjectPath
 	}
+	localScriptPath := resolveLocalScriptPath(currentRoute, localProjectPath)
 	if serverProjectPath == "" && server.ID != 0 {
 		serverProjectPath = resolveServerProjectPathFromNodeConfig(server, project, currentRoute)
 	}
@@ -111,7 +112,7 @@ func (s *DeployService) ProcessDeployWithLog(projectId uint, targetEnv string, l
 		if err := s.prepareAggregateChildDeployScripts(project, currentRoute); err != nil {
 			return err
 		}
-		return s.processLocalDeploy(cmdUtil, projectId, currentRoute.ID, localProjectPath, localExecuteCommand, currentRoute.LocalStartCommand)
+		return s.processLocalDeploy(cmdUtil, projectId, currentRoute.ID, localProjectPath, localScriptPath, localExecuteCommand, currentRoute.LocalStartCommand)
 	}
 
 	sftpUtil := &utils.SftpUtil{}
@@ -195,11 +196,26 @@ func findRouteInLoadedProject(routes []system.TbProjectRoute, targetEnv string) 
 }
 
 func buildDockerLogCommand(project system.TbProject, route system.TbProjectRoute, localProjectPath string, serviceName string) (string, []string, string) {
+	// 普通项目卡片与实际容器一一对应，直接跟踪容器日志，避免依赖 Compose
+	// 项目名、配置文件路径和启动脚本工作目录。聚合 Compose 卡片没有同名容器，
+	// 仍保留 Compose 服务级日志能力。
+	if strings.TrimSpace(serviceName) == "" && !isAggregateComposeProject(project) {
+		containerName := strings.TrimSpace(project.ProjectName)
+		return "docker", []string{"logs", "--tail", dockerLogTailLines, "-f", containerName}, localProjectPath
+	}
+
 	executeCommand := strings.ToLower(route.LocalExecuteCommand + " " + route.LocalStopCommand + " " + route.BuildType)
-	composeFilePath := filepath.Join(localProjectPath, "docker-compose.yml")
-	composeYamlPath := filepath.Join(localProjectPath, "docker-compose.yaml")
+	composeRoot := resolveLocalScriptPath(route, localProjectPath)
+	composeFilePath := filepath.Join(composeRoot, "docker-compose.yml")
+	composeYamlPath := filepath.Join(composeRoot, "docker-compose.yaml")
 	_, composeFileErr := os.Stat(composeFilePath)
 	_, composeYamlErr := os.Stat(composeYamlPath)
+	composePath := ""
+	if composeFileErr == nil {
+		composePath = composeFilePath
+	} else if composeYamlErr == nil {
+		composePath = composeYamlPath
+	}
 	shouldUseCompose := strings.Contains(executeCommand, "docker compose") ||
 		strings.Contains(executeCommand, "docker-compose") ||
 		route.DockerComposeDeploy ||
@@ -208,7 +224,11 @@ func buildDockerLogCommand(project system.TbProject, route system.TbProjectRoute
 		composeYamlErr == nil
 
 	if shouldUseCompose {
-		args := []string{"compose", "logs", "--tail", dockerLogTailLines, "-f"}
+		args := []string{"compose"}
+		if composePath != "" {
+			args = append(args, "-f", composePath, "--project-directory", localProjectPath)
+		}
+		args = append(args, "logs", "--tail", dockerLogTailLines, "-f")
 		if strings.TrimSpace(serviceName) != "" {
 			args = append(args, strings.TrimSpace(serviceName))
 		}
@@ -218,6 +238,14 @@ func buildDockerLogCommand(project system.TbProject, route system.TbProjectRoute
 	containerName := strings.TrimSpace(project.ProjectName)
 	args := []string{"logs", "--tail", dockerLogTailLines, "-f", containerName}
 	return "docker", args, localProjectPath
+}
+
+func isAggregateComposeProject(project system.TbProject) bool {
+	language := strings.ToLower(strings.TrimSpace(project.ComputerLanguage))
+	projectName := strings.ToLower(strings.TrimSpace(project.ProjectName))
+	return strings.Contains(language, "docker-compose") ||
+		strings.Contains(language, "docker compose") ||
+		strings.Contains(projectName, "compose")
 }
 
 func streamCommandLines(ctx context.Context, workDir string, command string, args []string, logCh chan string) error {
@@ -480,7 +508,7 @@ func (s *DeployService) uploadScriptsFromDB(sftpUtil *utils.SftpUtil, projectId 
 }
 
 // downloadScriptsToLocalFromDB 从DB提取脚本并落盘到本地项目目录 (用于Docker构建等需要物理引用的步骤)
-func (s *DeployService) downloadScriptsToLocalFromDB(projectId uint, routeId uint, localProjectPath string) error {
+func (s *DeployService) downloadScriptsToLocalFromDB(projectId uint, routeId uint, localScriptPath string) error {
 	var project system.TbProject
 	hasProject := global.GVA_DB.First(&project, projectId).Error == nil
 
@@ -501,8 +529,11 @@ func (s *DeployService) downloadScriptsToLocalFromDB(projectId uint, routeId uin
 		if script.ScriptType == 2 {
 			continue
 		}
-		localScriptPath := filepath.Join(localProjectPath, script.FileName)
-		if err := os.MkdirAll(filepath.Dir(localScriptPath), 0755); err != nil {
+		localFilePath, err := safeLocalScriptFilePath(localScriptPath, script.FileName)
+		if err != nil {
+			return fmt.Errorf("脚本路径无效(%s): %w", script.FileName, err)
+		}
+		if err := os.MkdirAll(filepath.Dir(localFilePath), 0755); err != nil {
 			return fmt.Errorf("创建目录失败: %w", err)
 		}
 		content := script.Content
@@ -532,10 +563,10 @@ func (s *DeployService) downloadScriptsToLocalFromDB(projectId uint, routeId uin
 				}
 			}
 		}
-		if err := os.WriteFile(localScriptPath, []byte(content), 0644); err != nil {
+		if err := os.WriteFile(localFilePath, []byte(content), 0644); err != nil {
 			return fmt.Errorf("写入文件失败(%s): %w", script.FileName, err)
 		}
-		global.GVA_LOG.Info(fmt.Sprintf("文件 %s 已从数据库加载到 %s", script.FileName, localScriptPath))
+		global.GVA_LOG.Info(fmt.Sprintf("文件 %s 已从数据库加载到 %s", script.FileName, localFilePath))
 	}
 	return nil
 }
@@ -577,7 +608,31 @@ func (s *DeployService) downloadChildProjectRouteScripts(groupId uint, localProj
 	if err := global.GVA_DB.Where("project_id = ? AND route_key = ?", childProject.ID, routeKey).First(&childRoute).Error; err != nil {
 		return fmt.Errorf("未找到子项目路线(%s/%s): %w", childProject.ProjectName, routeKey, err)
 	}
-	return s.downloadScriptsToLocalFromDB(childProject.ID, childRoute.ID, childProject.LocalProjectPath)
+	return s.downloadScriptsToLocalFromDB(childProject.ID, childRoute.ID, resolveLocalScriptPath(childRoute, childProject.LocalProjectPath))
+}
+
+func resolveLocalScriptPath(route system.TbProjectRoute, localProjectPath string) string {
+	if path := strings.TrimSpace(route.LocalScriptPath); path != "" {
+		return filepath.Clean(path)
+	}
+	return filepath.Clean(strings.TrimSpace(localProjectPath))
+}
+
+func safeLocalScriptFilePath(rootPath string, fileName string) (string, error) {
+	rootPath = filepath.Clean(strings.TrimSpace(rootPath))
+	fileName = filepath.Clean(filepath.FromSlash(strings.TrimSpace(fileName)))
+	if rootPath == "" || rootPath == "." {
+		return "", fmt.Errorf("脚本输出目录为空")
+	}
+	if fileName == "" || fileName == "." || filepath.IsAbs(fileName) || fileName == ".." || strings.HasPrefix(fileName, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("文件名必须是输出目录内的相对路径")
+	}
+	targetPath := filepath.Join(rootPath, fileName)
+	relativePath, err := filepath.Rel(rootPath, targetPath)
+	if err != nil || relativePath == ".." || strings.HasPrefix(relativePath, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("文件路径越过脚本输出目录")
+	}
+	return targetPath, nil
 }
 
 func isFrontendDeployProject(project system.TbProject) bool {
@@ -848,11 +903,11 @@ func lookupExtendParamPath(groups map[string]map[string]string, groupName string
 }
 
 // processLocalDeploy 本地机器运行与部署流
-func (s *DeployService) processLocalDeploy(cmdUtil *utils.CmdUtil, projectId uint, routeId uint, localProjectPath, localExecuteCommand, localStartCommand string) error {
+func (s *DeployService) processLocalDeploy(cmdUtil *utils.CmdUtil, projectId uint, routeId uint, localProjectPath, localScriptPath, localExecuteCommand, localStartCommand string) error {
 	global.GVA_LOG.Info(fmt.Sprintf("开始执行本地部署, 项目ID: %d", projectId))
 
 	// 释放DB记录的通用和本地脚本到本地构建机器工作区
-	if err := s.downloadScriptsToLocalFromDB(projectId, routeId, localProjectPath); err != nil {
+	if err := s.downloadScriptsToLocalFromDB(projectId, routeId, localScriptPath); err != nil {
 		return err
 	}
 
@@ -907,6 +962,7 @@ func (s *DeployService) ProcessStopWithLog(projectId uint, targetEnv string, log
 	if localProjectPath == "" {
 		localProjectPath = project.LocalProjectPath
 	}
+	localScriptPath := resolveLocalScriptPath(currentRoute, localProjectPath)
 
 	stopCommand := currentRoute.LocalStopCommand
 	if stopCommand == "" {
@@ -916,13 +972,18 @@ func (s *DeployService) ProcessStopWithLog(projectId uint, targetEnv string, log
 	cmdUtil := &utils.CmdUtil{LogCh: logCh}
 	sendLog("🛑 执行本地关闭流程...")
 
-	// 1. 下载脚本到本地
-	if err := s.downloadScriptsToLocalFromDB(projectId, currentRoute.ID, localProjectPath); err != nil {
+	// 1. 聚合项目先准备子项目脚本，确保独立脚本目录被清理后仍能正常关闭。
+	if err := s.prepareAggregateChildDeployScripts(project, currentRoute); err != nil {
+		return err
+	}
+
+	// 2. 下载脚本到本地
+	if err := s.downloadScriptsToLocalFromDB(projectId, currentRoute.ID, localScriptPath); err != nil {
 		return err
 	}
 	sendLog("✅ 脚本已同步")
 
-	// 2. 执行关闭命令
+	// 3. 执行关闭命令
 	sendLog(fmt.Sprintf("⏹️ 执行关闭命令: %s", stopCommand))
 	if err := cmdUtil.PackageProject(localProjectPath, stopCommand); err != nil {
 		return fmt.Errorf("执行关闭命令失败: %w", err)

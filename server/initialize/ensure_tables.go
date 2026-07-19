@@ -46,6 +46,7 @@ func (e *ensureTables) MigrateTable(ctx context.Context) (context.Context, error
 	tables := []interface{}{
 		sysModel.TbUser{},
 		sysModel.TbServer{},
+		sysModel.TbProjectGroup{},
 		sysModel.TbProject{},
 		sysModel.TbLogProjectGroup{},
 		sysModel.TbLogProject{},
@@ -77,6 +78,7 @@ func (e *ensureTables) TableCreated(ctx context.Context) bool {
 	tables := []interface{}{
 		sysModel.TbUser{},
 		sysModel.TbServer{},
+		sysModel.TbProjectGroup{},
 		sysModel.TbProject{},
 		sysModel.TbLogProjectGroup{},
 		sysModel.TbLogProject{},

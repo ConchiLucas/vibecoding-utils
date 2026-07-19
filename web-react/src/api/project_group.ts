@@ -18,6 +18,15 @@ export const saveOrUpdateGroup = (data: any) => {
   });
 };
 
+// 更新项目组随 VibeDeploy 启动的联动开关
+export const updateGroupAutoStart = (groupId: number, enabled: boolean) => {
+  return service({
+    url: '/projectGroup/autoStart',
+    method: 'post',
+    data: { groupId, enabled },
+  });
+};
+
 // 删除项目组
 export const deleteGroup = (id: number) => {
   return service({

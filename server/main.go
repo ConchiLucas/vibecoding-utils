@@ -14,6 +14,7 @@ import (
 	"github.com/flipped-aurora/easy-deploy/server/core"
 	"github.com/flipped-aurora/easy-deploy/server/global"
 	"github.com/flipped-aurora/easy-deploy/server/initialize"
+	systemService "github.com/flipped-aurora/easy-deploy/server/service/system"
 	_ "go.uber.org/automaxprocs"
 	"go.uber.org/zap"
 
@@ -76,6 +77,9 @@ const WailsSSEPort = 48009
 func main() {
 	// 初始化系统底层组件
 	initializeSystem()
+	if global.GVA_DB != nil {
+		systemService.ProjectGroupServiceApp.StartEnabledGroupsOnStartup()
+	}
 
 	// 获取嵌入的前端资源（提取 dist 子目录）
 	distFS, _ := fs.Sub(frontendDist, "frontend/dist")
@@ -161,7 +165,7 @@ func startSSESidecar(ginRouter http.Handler) {
 }
 
 // newAPIStripHandler 创建一个 HTTP Handler 包装器，自动剥离请求路径中的 /api 前缀
-// 这与 Vite Proxy (rewrite: path => path.replace(/^\/api/, '')) 和
+// 这与 Vite Proxy (rewrite: path => path.replace(/^\/api/, ”)) 和
 // Nginx (rewrite ^/api/(.*)$ /$1 break;) 的行为完全一致
 func newAPIStripHandler(handler http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

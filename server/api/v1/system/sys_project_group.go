@@ -13,6 +13,11 @@ import (
 
 type ProjectGroupApi struct{}
 
+type updateProjectGroupAutoStartRequest struct {
+	GroupId uint `json:"groupId" binding:"required"`
+	Enabled bool `json:"enabled"`
+}
+
 // GetGroupList 获取项目组列表
 func (a *ProjectGroupApi) GetGroupList(c *gin.Context) {
 	userId := utils.GetUserID(c)
@@ -42,6 +47,21 @@ func (a *ProjectGroupApi) SaveOrUpdateGroup(c *gin.Context) {
 		return
 	}
 	response.OkWithDetailed(result, "操作成功", c)
+}
+
+// UpdateAutoStart 更新项目组随 VibeDeploy 启动的联动开关。
+func (a *ProjectGroupApi) UpdateAutoStart(c *gin.Context) {
+	var req updateProjectGroupAutoStartRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.FailWithMessage(err.Error(), c)
+		return
+	}
+	if err := projectGroupService.UpdateAutoStart(utils.GetUserID(c), req.GroupId, req.Enabled); err != nil {
+		global.GVA_LOG.Error("更新项目组启动联动失败!", zap.Error(err))
+		response.FailWithMessage("更新失败: "+err.Error(), c)
+		return
+	}
+	response.OkWithMessage("设置成功", c)
 }
 
 // DeleteGroup 删除项目组
