@@ -86,13 +86,13 @@ func runLocalDeployWithSharedNetwork(logCh chan string, ensure func(context.Cont
 - Modify: `server/service/system/sys_deploy.go`
 - Modify: `server/service/system/docker_shared_network.go`
 
-- [ ] Write table-driven failing tests for:
+- [x] Write table-driven failing tests for:
   - an already-correct external-default Compose document;
   - an implicit default network;
   - service-level project networks;
   - multiple user-defined networks;
   - malformed YAML.
-- [ ] Parse through `yaml.Node`, remove service-level `networks`, and replace the top-level `networks` mapping with:
+- [x] Parse through `yaml.Node`, remove service-level `networks`, and replace the top-level `networks` mapping with:
 
 ```yaml
 networks:
@@ -101,11 +101,11 @@ networks:
     external: true
 ```
 
-- [ ] Preserve service definitions, volumes, secrets, environment variables, and published ports.
-- [ ] In `downloadScriptsToLocalFromDB`, normalize every Compose filename (`docker-compose.yml`, `docker-compose.yaml`, `compose.yml`, `compose.yaml`) before writing, persisting changed content back to `tb_project_script`.
-- [ ] Add asynchronous startup reconciliation over all non-remote stored Compose scripts so the existing 32 scripts are normalized even before their next deployment.
-- [ ] Return malformed Compose errors with project/script IDs and do not write partial changes.
-- [ ] Run `cd server && go test ./service/system -run 'TestNormalizeComposeSharedNetwork|TestReconcileStoredCompose' -count=1` and then the full package suite.
+- [x] Preserve service definitions, volumes, secrets, environment variables, and published ports.
+- [x] In `downloadScriptsToLocalFromDB`, normalize every Compose filename (`docker-compose.yml`, `docker-compose.yaml`, `compose.yml`, `compose.yaml`) before writing, persisting changed content back to `tb_project_script`.
+- [x] Add asynchronous startup reconciliation over all non-remote stored Compose scripts so the existing 32 scripts are normalized even before their next deployment.
+- [x] Return malformed Compose errors with project/script IDs and do not write partial changes.
+- [x] Run `cd server && go test ./service/system -run 'TestNormalizeComposeSharedNetwork|TestReconcileStoredCompose' -count=1` and then the full package suite.
 - [ ] Commit: `git commit -m "feat: normalize managed Compose networks"`
 
 ## Task 5: Add host bootstrap and migrate repository Compose files

@@ -598,6 +598,18 @@ func (s *DeployService) downloadScriptsToLocalFromDB(projectId uint, routeId uin
 				}
 			}
 		}
+		if isComposeFileName(script.FileName) {
+			normalized, changed, err := normalizeComposeSharedNetwork(content)
+			if err != nil {
+				return fmt.Errorf("规范化 Compose 共享网络失败(%s): %w", script.FileName, err)
+			}
+			content = normalized
+			if changed {
+				if err := global.GVA_DB.Model(&system.TbProjectScript{}).Where("id = ?", script.ID).Update("content", content).Error; err != nil {
+					return fmt.Errorf("更新共享网络 Compose 脚本失败(%s): %w", script.FileName, err)
+				}
+			}
+		}
 		if err := os.WriteFile(localFilePath, []byte(content), 0644); err != nil {
 			return fmt.Errorf("写入文件失败(%s): %w", script.FileName, err)
 		}

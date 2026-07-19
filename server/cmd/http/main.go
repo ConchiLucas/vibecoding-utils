@@ -21,6 +21,7 @@ func main() {
 	systemService.SharedDockerNetworkServiceApp.EnsureOnStartup()
 	if global.GVA_DB != nil {
 		initialize.RegisterTables()
+		systemService.ReconcileStoredComposeScriptsOnStartup()
 		systemService.ProjectGroupServiceApp.StartEnabledGroupsOnStartup()
 	}
 	core.RunServer()
