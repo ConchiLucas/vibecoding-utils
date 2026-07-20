@@ -22,7 +22,7 @@
 - Modify: `server/service/system/aggregate_route_materializer_test.go:17`
 - Modify: `server/service/system/aggregate_route_materializer.go:17`
 
-- [ ] **Step 1: Write failing table tests for supported Compose aliases and aggregate route boundaries**
+- [x] **Step 1: Write failing table tests for supported Compose aliases and aggregate route boundaries**
 
 Insert these tests before the parser tests:
 
@@ -76,7 +76,7 @@ func TestIsAggregateDeployRouteRequiresComposeLocalFrontendBackendMetadata(t *te
 }
 ```
 
-- [ ] **Step 2: Run the new tests and verify RED**
+- [x] **Step 2: Run the new tests and verify RED**
 
 Run from `server/`:
 
@@ -86,7 +86,7 @@ go test ./service/system -run 'TestIsDockerComposeProjectType|TestIsAggregateDep
 
 Expected: build fails because `isDockerComposeProjectType` and `isAggregateDeployRoute` are undefined.
 
-- [ ] **Step 3: Implement the minimal strict predicates**
+- [x] **Step 3: Implement the minimal strict predicates**
 
 Insert after `aggregateChildRoute` in `aggregate_route_materializer.go`:
 
@@ -109,7 +109,7 @@ func isAggregateDeployRoute(project modelSystem.TbProject, route modelSystem.TbP
 }
 ```
 
-- [ ] **Step 4: Run classification tests and verify GREEN**
+- [x] **Step 4: Run classification tests and verify GREEN**
 
 Run:
 
@@ -119,7 +119,7 @@ go test ./service/system -run 'TestIsDockerComposeProjectType|TestIsAggregateDep
 
 Expected: `ok github.com/flipped-aurora/easy-deploy/server/service/system`.
 
-- [ ] **Step 5: Commit the classification contract**
+- [x] **Step 5: Commit the classification contract**
 
 ```sh
 git add server/service/system/aggregate_route_materializer.go server/service/system/aggregate_route_materializer_test.go
@@ -132,7 +132,7 @@ git commit -m "test: define aggregate route metadata contract"
 - Modify: `server/service/system/aggregate_route_materializer_test.go:210`
 - Modify: `server/service/system/aggregate_route_materializer.go:147`
 
-- [ ] **Step 1: Write a failing fresh-filesystem materialization test for the editor alias**
+- [x] **Step 1: Write a failing fresh-filesystem materialization test for the editor alias**
 
 Add this test next to the existing English-style materialization test:
 
@@ -207,7 +207,7 @@ func TestPrepareAggregateChildDeployScriptsMaterializesDockerComposeAliasDepende
 }
 ```
 
-- [ ] **Step 2: Run the task-center-shaped test and verify RED**
+- [x] **Step 2: Run the task-center-shaped test and verify RED**
 
 Run:
 
@@ -217,7 +217,7 @@ go test ./service/system -run TestPrepareAggregateChildDeployScriptsMaterializes
 
 Expected: FAIL because the current exact-language guard returns without logs or files for `docker-compose`.
 
-- [ ] **Step 3: Replace the exact-language preflight gate**
+- [x] **Step 3: Replace the exact-language preflight gate**
 
 Change the beginning of `prepareAggregateChildDeployScripts` to:
 
@@ -230,7 +230,7 @@ func (s *DeployService) prepareAggregateChildDeployScripts(project modelSystem.T
 
 Keep the remaining parser, resolver, loader, publisher, and logs unchanged.
 
-- [ ] **Step 4: Run alias and canonical materialization tests and verify GREEN**
+- [x] **Step 4: Run alias and canonical materialization tests and verify GREEN**
 
 Run:
 
@@ -240,7 +240,7 @@ go test ./service/system -run 'TestPrepareAggregateChildDeployScriptsMaterialize
 
 Expected: both tests pass; the alias test reports three dependencies and the existing canonical test reports seven.
 
-- [ ] **Step 5: Commit generic preflight activation**
+- [x] **Step 5: Commit generic preflight activation**
 
 ```sh
 git add server/service/system/aggregate_route_materializer.go server/service/system/aggregate_route_materializer_test.go
@@ -253,7 +253,7 @@ git commit -m "fix: activate aggregate preflight for compose aliases"
 - Modify: `server/service/system/aggregate_route_materializer_test.go:108`
 - Modify: `server/service/system/aggregate_route_materializer.go:115`
 
-- [ ] **Step 1: Write a failing ambiguity regression test**
+- [x] **Step 1: Write a failing ambiguity regression test**
 
 Add after `TestResolveAggregateChildRoutesPreservesReferencesAcrossLanguages`:
 
@@ -284,7 +284,7 @@ func TestResolveAggregateChildRoutesExcludesDockerComposeAliases(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run the exclusion test and verify RED**
+- [x] **Step 2: Run the exclusion test and verify RED**
 
 Run:
 
@@ -294,7 +294,7 @@ go test ./service/system -run TestResolveAggregateChildRoutesExcludesDockerCompo
 
 Expected: FAIL with `聚合子路线匹配到 2 条`; the current resolver excludes only the exact canonical value.
 
-- [ ] **Step 3: Use the shared Compose predicate when filtering candidates**
+- [x] **Step 3: Use the shared Compose predicate when filtering candidates**
 
 Replace the candidate guard in `resolveAggregateChildRoutes` with:
 
@@ -304,7 +304,7 @@ if project.ID == aggregate.ID || isDockerComposeProjectType(project.ComputerLang
 }
 ```
 
-- [ ] **Step 4: Run all aggregate materializer tests and verify GREEN**
+- [x] **Step 4: Run all aggregate materializer tests and verify GREEN**
 
 Run:
 
@@ -314,7 +314,7 @@ go test ./service/system -run Aggregate -count=1
 
 Expected: all parser, resolver, materialization, safety, preflight, and rollback tests pass.
 
-- [ ] **Step 5: Commit candidate filtering**
+- [x] **Step 5: Commit candidate filtering**
 
 ```sh
 git add server/service/system/aggregate_route_materializer.go server/service/system/aggregate_route_materializer_test.go
@@ -328,7 +328,7 @@ git commit -m "fix: exclude compose aliases from aggregate children"
 - Verify: `server/service/system/aggregate_route_materializer_test.go`
 - Verify: `/Users/conchi/workforce/python_workforce/ai-task-center/deploy/` generated runtime files only; do not commit them.
 
-- [ ] **Step 1: Format and inspect the complete change**
+- [x] **Step 1: Format and inspect the complete change**
 
 Run:
 
@@ -340,7 +340,7 @@ git diff --stat
 
 Expected: no formatting or whitespace diagnostics; only the two scoped Go files differ from the design commit.
 
-- [ ] **Step 2: Run scoped tests, race detector, and vet**
+- [x] **Step 2: Run scoped tests, race detector, and vet**
 
 Run from `server/`:
 
@@ -352,7 +352,7 @@ go vet ./service/system
 
 Expected: all three commands exit 0.
 
-- [ ] **Step 3: Reconfirm the repository-wide baseline separately**
+- [x] **Step 3: Reconfirm the repository-wide baseline separately**
 
 Run:
 
@@ -362,7 +362,7 @@ go test ./... -count=1
 
 Expected baseline: `service/system` passes while the unchanged repository-wide build still reports missing `frontend/dist/*` and missing `AwsS3`/`CloudflareR2` fields. If any new package failure appears, stop and fix or roll back the scoped change.
 
-- [ ] **Step 4: Commit formatting or verification-only adjustments if present**
+- [x] **Step 4: Commit formatting or verification-only adjustments if present**
 
 If `gofmt` changed tracked files after Task 3:
 
