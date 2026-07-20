@@ -185,6 +185,31 @@ func TestResolveAggregateChildRoutesPreservesReferencesAcrossLanguages(t *testin
 	}
 }
 
+func TestResolveAggregateChildRoutesExcludesDockerComposeAliases(t *testing.T) {
+	db := setupAggregateRouteTestDB(t)
+	root := t.TempDir()
+	aggregate := modelSystem.TbProject{GroupId: 77, ComputerLanguage: deployProjectTypeDockerCompose, ProjectName: "aggregate", LocalProjectPath: root}
+	if err := db.Create(&aggregate).Error; err != nil {
+		t.Fatal(err)
+	}
+	aggregateRoute := modelSystem.TbProjectRoute{ProjectId: int(aggregate.ID), RouteKey: "frontend_backend_full", ServerId: 0, LocalScriptPath: filepath.Join(root, "deploy", "aggregate")}
+	if err := db.Create(&aggregateRoute).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	reference := filepath.Join(root, "deploy", "backend", "worker", "local_full")
+	_, expectedRoute := createAggregateChildRoute(t, db, aggregate.GroupId, "python", "worker", filepath.Join(root, "worker"), reference, 0, true)
+	createAggregateChildRoute(t, db, aggregate.GroupId, "docker-compose", "nested-orchestration", filepath.Join(root, "nested"), reference, 0, true)
+
+	children, err := resolveAggregateChildRoutes(db, aggregate, aggregateRoute, []string{reference})
+	if err != nil {
+		t.Fatalf("resolveAggregateChildRoutes() error = %v", err)
+	}
+	if len(children) != 1 || children[0].Route.ID != expectedRoute.ID {
+		t.Fatalf("children = %#v, want only route %d", children, expectedRoute.ID)
+	}
+}
+
 func TestResolveAggregateChildRoutesRejectsMissingAmbiguousAndInvalidRoutes(t *testing.T) {
 	tests := []struct {
 		name  string

@@ -130,7 +130,7 @@ func resolveAggregateChildRoutes(db *gorm.DB, aggregate modelSystem.TbProject, a
 		reference = filepath.Clean(reference)
 		matches := make([]aggregateChildRoute, 0, 1)
 		for _, project := range projects {
-			if project.ID == aggregate.ID || strings.TrimSpace(project.ComputerLanguage) == deployProjectTypeDockerCompose {
+			if project.ID == aggregate.ID || isDockerComposeProjectType(project.ComputerLanguage) {
 				continue
 			}
 			for _, route := range project.Routes {
