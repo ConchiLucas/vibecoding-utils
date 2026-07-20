@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/flipped-aurora/easy-deploy/server/global"
 	modelSystem "github.com/flipped-aurora/easy-deploy/server/model/system"
 	"gorm.io/gorm"
 )
@@ -128,4 +129,51 @@ func resolveAggregateChildRoutes(db *gorm.DB, aggregate modelSystem.TbProject, a
 		children = append(children, matches[0])
 	}
 	return children, nil
+}
+
+func (s *DeployService) prepareAggregateChildDeployScripts(project modelSystem.TbProject, route modelSystem.TbProjectRoute, logCh chan string) error {
+	if strings.TrimSpace(project.ComputerLanguage) != deployProjectTypeDockerCompose {
+		return nil
+	}
+	sendAggregateDeployLog(logCh, "🧩 解析聚合部署依赖...")
+	aggregateStart, err := loadSingleLocalStartScript(global.GVA_DB, project.ID, route.ID)
+	if err != nil {
+		return fmt.Errorf("读取聚合路线入口失败(project=%d route=%d): %w", project.ID, route.ID, err)
+	}
+	aggregatePath := resolveLocalScriptPath(route, project.LocalProjectPath)
+	references, err := parseAggregateChildScriptPaths(project.LocalProjectPath, aggregatePath, aggregateStart.Content)
+	if err != nil {
+		return err
+	}
+	children, err := resolveAggregateChildRoutes(global.GVA_DB, project, route, references)
+	if err != nil {
+		return err
+	}
+	sendAggregateDeployLog(logCh, fmt.Sprintf("✅ 发现 %d 条子项目部署路线", len(children)))
+
+	requests := make([]localScriptMaterializationRequest, 0, len(children)+1)
+	requests = append(requests, localScriptMaterializationRequest{Project: project, RouteID: route.ID, ScriptPath: aggregatePath})
+	for index, child := range children {
+		sendAggregateDeployLog(logCh, fmt.Sprintf("📦 [%d/%d] 准备 %s / %s", index+1, len(children), child.Project.ProjectName, child.Route.RouteName))
+		requests = append(requests, localScriptMaterializationRequest{Project: child.Project, RouteID: child.Route.ID, ScriptPath: child.ScriptPath})
+	}
+	prepared, err := loadLocalScriptsForMaterialization(global.GVA_DB, requests)
+	if err != nil {
+		return err
+	}
+	if err := publishPreparedLocalScripts(global.GVA_DB, prepared, nil); err != nil {
+		return err
+	}
+	sendAggregateDeployLog(logCh, "✅ 聚合部署依赖脚本已全部落盘")
+	return nil
+}
+
+func sendAggregateDeployLog(logCh chan string, message string) {
+	if logCh == nil {
+		return
+	}
+	select {
+	case logCh <- message:
+	default:
+	}
 }

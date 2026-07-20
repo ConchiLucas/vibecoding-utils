@@ -2,13 +2,16 @@ package system
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/flipped-aurora/easy-deploy/server/global"
 	modelSystem "github.com/flipped-aurora/easy-deploy/server/model/system"
 	"github.com/glebarez/sqlite"
+	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
@@ -185,5 +188,134 @@ func TestLoadSingleLocalStartScriptRejectsDuplicateEntries(t *testing.T) {
 	_, err := loadSingleLocalStartScript(db, project.ID, route.ID)
 	if err == nil || !strings.Contains(err.Error(), "2") {
 		t.Fatalf("error = %v, want duplicate-count diagnostic", err)
+	}
+}
+
+func TestPrepareAggregateChildDeployScriptsMaterializesEnglishStyleDependencies(t *testing.T) {
+	db := setupAggregateRouteTestDB(t)
+	oldDB := global.GVA_DB
+	oldLog := global.GVA_LOG
+	global.GVA_DB = db
+	global.GVA_LOG = zap.NewNop()
+	t.Cleanup(func() {
+		global.GVA_DB = oldDB
+		global.GVA_LOG = oldLog
+	})
+
+	root := t.TempDir()
+	aggregatePath := filepath.Join(root, "deploy", "compose", "full")
+	aggregate := modelSystem.TbProject{GroupId: 31, ComputerLanguage: deployProjectTypeDockerCompose, ProjectName: "rob_english_word_workforce-compose", LocalProjectPath: root}
+	if err := db.Create(&aggregate).Error; err != nil {
+		t.Fatal(err)
+	}
+	aggregateRoute := modelSystem.TbProjectRoute{ProjectId: int(aggregate.ID), RouteKey: "frontend_backend_full", RouteName: "前后端全量部署", LocalScriptPath: aggregatePath}
+	if err := db.Create(&aggregateRoute).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	type dependency struct {
+		language string
+		name     string
+		path     string
+	}
+	dependencies := []dependency{
+		{language: "python", name: "word-agent-build", path: filepath.Join(root, "deploy", "backend", "word_agent", "build_project")},
+		{language: "python", name: "word-agent", path: filepath.Join(root, "deploy", "backend", "word_agent", "local_full")},
+		{language: "java", name: "rob-english-word", path: filepath.Join(root, "deploy", "backend", "rob_english_word", "local_full")},
+		{language: "go", name: "word-select-dashboard", path: filepath.Join(root, "deploy", "backend", "word_select_dashboard", "local_full")},
+		{language: "vue", name: "rob-english-word-front-web", path: filepath.Join(root, "deploy", "frontend", "rob_english_word_front", "local_full")},
+		{language: "react", name: "rob-english-word-cloze-web", path: filepath.Join(root, "deploy", "frontend", "rob_english_word_cloze", "local_full")},
+		{language: "react", name: "word-select-dashboard-web-react", path: filepath.Join(root, "deploy", "frontend", "word_select_dashboard", "local_full")},
+	}
+
+	var aggregateLines []string
+	for _, dependency := range dependencies {
+		project, route := createAggregateChildRoute(t, db, aggregate.GroupId, dependency.language, dependency.name, filepath.Join(root, dependency.name), dependency.path, 0, false)
+		script := modelSystem.TbProjectScript{ProjectId: int(project.ID), RouteId: int(route.ID), ScriptType: 1, FileName: "start.sh", Content: "#!/bin/sh\necho " + dependency.name + "\n"}
+		if err := db.Create(&script).Error; err != nil {
+			t.Fatal(err)
+		}
+		reference, err := filepath.Rel(root, filepath.Join(dependency.path, "start.sh"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		aggregateLines = append(aggregateLines, `sh "$ROOT_DIR/`+filepath.ToSlash(reference)+`"`)
+	}
+	unrelatedPath := filepath.Join(root, "deploy", "backend", "unrelated", "local_incremental")
+	unrelatedProject, unrelatedRoute := createAggregateChildRoute(t, db, aggregate.GroupId, "go", "unrelated", filepath.Join(root, "unrelated"), unrelatedPath, 0, false)
+	unrelatedScript := modelSystem.TbProjectScript{ProjectId: int(unrelatedProject.ID), RouteId: int(unrelatedRoute.ID), ScriptType: 1, FileName: "start.sh", Content: "unrelated"}
+	if err := db.Create(&unrelatedScript).Error; err != nil {
+		t.Fatal(err)
+	}
+	aggregateStart := modelSystem.TbProjectScript{ProjectId: int(aggregate.ID), RouteId: int(aggregateRoute.ID), ScriptType: 1, FileName: "start.sh", Content: strings.Join(aggregateLines, "\n") + "\n"}
+	if err := db.Create(&aggregateStart).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	logCh := make(chan string, 32)
+	if err := DeployServiceApp.prepareAggregateChildDeployScripts(aggregate, aggregateRoute, logCh); err != nil {
+		t.Fatalf("prepareAggregateChildDeployScripts() error = %v", err)
+	}
+	close(logCh)
+	var logs []string
+	for line := range logCh {
+		logs = append(logs, line)
+	}
+	joinedLogs := strings.Join(logs, "\n")
+	if !strings.Contains(joinedLogs, "发现 7 条") || !strings.Contains(joinedLogs, "已全部落盘") {
+		t.Fatalf("logs = %q, want dependency count and completion", joinedLogs)
+	}
+	if _, err := os.Stat(filepath.Join(aggregatePath, "start.sh")); err != nil {
+		t.Fatalf("aggregate start.sh was not materialized: %v", err)
+	}
+	for _, dependency := range dependencies {
+		if _, err := os.Stat(filepath.Join(dependency.path, "start.sh")); err != nil {
+			t.Fatalf("dependency %s was not materialized: %v", dependency.name, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(unrelatedPath, "start.sh")); !os.IsNotExist(err) {
+		t.Fatalf("unrelated route was materialized: %v", err)
+	}
+}
+
+func TestPrepareAggregateChildDeployScriptsPreflightsBeforeAnyWrite(t *testing.T) {
+	db := setupAggregateRouteTestDB(t)
+	oldDB := global.GVA_DB
+	oldLog := global.GVA_LOG
+	global.GVA_DB = db
+	global.GVA_LOG = zap.NewNop()
+	t.Cleanup(func() {
+		global.GVA_DB = oldDB
+		global.GVA_LOG = oldLog
+	})
+	root := t.TempDir()
+	aggregatePath := filepath.Join(root, "deploy", "aggregate")
+	aggregate := modelSystem.TbProject{GroupId: 44, ComputerLanguage: deployProjectTypeDockerCompose, ProjectName: "aggregate", LocalProjectPath: root}
+	if err := db.Create(&aggregate).Error; err != nil {
+		t.Fatal(err)
+	}
+	aggregateRoute := modelSystem.TbProjectRoute{ProjectId: int(aggregate.ID), RouteKey: "frontend_backend_full", LocalScriptPath: aggregatePath}
+	if err := db.Create(&aggregateRoute).Error; err != nil {
+		t.Fatal(err)
+	}
+	validPath := filepath.Join(root, "deploy", "valid")
+	validProject, validRoute := createAggregateChildRoute(t, db, aggregate.GroupId, "go", "valid", filepath.Join(root, "valid"), validPath, 0, false)
+	validStart := modelSystem.TbProjectScript{ProjectId: int(validProject.ID), RouteId: int(validRoute.ID), ScriptType: 1, FileName: "start.sh", Content: "valid"}
+	if err := db.Create(&validStart).Error; err != nil {
+		t.Fatal(err)
+	}
+	aggregateStart := modelSystem.TbProjectScript{ProjectId: int(aggregate.ID), RouteId: int(aggregateRoute.ID), ScriptType: 1, FileName: "start.sh", Content: "sh \"$ROOT_DIR/deploy/valid/start.sh\"\nsh \"$ROOT_DIR/deploy/missing/start.sh\"\n"}
+	if err := db.Create(&aggregateStart).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	err := DeployServiceApp.prepareAggregateChildDeployScripts(aggregate, aggregateRoute, nil)
+	if err == nil || !strings.Contains(err.Error(), "missing") {
+		t.Fatalf("error = %v, want missing dependency", err)
+	}
+	for _, target := range []string{filepath.Join(aggregatePath, "start.sh"), filepath.Join(validPath, "start.sh")} {
+		if _, err := os.Stat(target); !os.IsNotExist(err) {
+			t.Fatalf("preflight wrote %s: %v", target, err)
+		}
 	}
 }

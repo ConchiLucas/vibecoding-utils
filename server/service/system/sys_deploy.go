@@ -111,7 +111,7 @@ func (s *DeployService) ProcessDeployWithLog(projectId uint, targetEnv string, l
 	if currentRoute.RouteKey == "local" || currentRoute.ServerId == 0 {
 		sendLog("🏠 执行本地部署模式...")
 		return runLocalDeployWithSharedNetwork(logCh, SharedDockerNetworkServiceApp.Ensure, func() error {
-			if err := s.prepareAggregateChildDeployScripts(project, currentRoute); err != nil {
+			if err := s.prepareAggregateChildDeployScripts(project, currentRoute, logCh); err != nil {
 				return err
 			}
 			return s.processLocalDeploy(cmdUtil, projectId, currentRoute.ID, localProjectPath, localScriptPath, localExecuteCommand, currentRoute.LocalStartCommand)
@@ -559,46 +559,6 @@ func (s *DeployService) downloadScriptsToLocalFromDB(projectId uint, routeId uin
 	return publishPreparedLocalScripts(global.GVA_DB, prepared, nil)
 }
 
-func (s *DeployService) prepareAggregateChildDeployScripts(project system.TbProject, route system.TbProjectRoute) error {
-	if strings.TrimSpace(project.ComputerLanguage) != deployProjectTypeDockerCompose {
-		return nil
-	}
-	rootPath := strings.TrimSpace(project.LocalProjectPath)
-	if rootPath == "" {
-		return fmt.Errorf("前后端聚合项目本地路径为空，无法定位子项目")
-	}
-	parts, err := detectGoReactComposeParts(rootPath)
-	if err != nil {
-		return fmt.Errorf("定位前后端子项目失败: %w", err)
-	}
-
-	backendRouteKey := "local_full"
-	if strings.Contains(strings.ToLower(route.RouteKey), "incremental") || strings.Contains(route.RouteName, "增量") {
-		backendRouteKey = "local_incremental"
-	}
-	if err := s.downloadChildProjectRouteScripts(project.GroupId, parts.BackendPath, backendRouteKey); err != nil {
-		return fmt.Errorf("准备后端部署脚本失败: %w", err)
-	}
-	for _, frontend := range parts.Frontends {
-		if err := s.downloadChildProjectRouteScripts(project.GroupId, frontend.Path, "local_full"); err != nil {
-			return fmt.Errorf("准备前端部署脚本失败: %w", err)
-		}
-	}
-	return nil
-}
-
-func (s *DeployService) downloadChildProjectRouteScripts(groupId uint, localProjectPath string, routeKey string) error {
-	var childProject system.TbProject
-	if err := global.GVA_DB.Where("group_id = ? AND local_project_path = ?", groupId, localProjectPath).First(&childProject).Error; err != nil {
-		return fmt.Errorf("未找到子项目部署信息(%s): %w", localProjectPath, err)
-	}
-	var childRoute system.TbProjectRoute
-	if err := global.GVA_DB.Where("project_id = ? AND route_key = ?", childProject.ID, routeKey).First(&childRoute).Error; err != nil {
-		return fmt.Errorf("未找到子项目路线(%s/%s): %w", childProject.ProjectName, routeKey, err)
-	}
-	return s.downloadScriptsToLocalFromDB(childProject.ID, childRoute.ID, resolveLocalScriptPath(childRoute, childProject.LocalProjectPath))
-}
-
 func resolveLocalScriptPath(route system.TbProjectRoute, localProjectPath string) string {
 	if path := strings.TrimSpace(route.LocalScriptPath); path != "" {
 		return filepath.Clean(path)
@@ -961,7 +921,7 @@ func (s *DeployService) ProcessStopWithLog(projectId uint, targetEnv string, log
 	sendLog("🛑 执行本地关闭流程...")
 
 	// 1. 聚合项目先准备子项目脚本，确保独立脚本目录被清理后仍能正常关闭。
-	if err := s.prepareAggregateChildDeployScripts(project, currentRoute); err != nil {
+	if err := s.prepareAggregateChildDeployScripts(project, currentRoute, logCh); err != nil {
 		return err
 	}
 
