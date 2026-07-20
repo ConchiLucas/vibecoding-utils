@@ -15,6 +15,54 @@ import (
 	"gorm.io/gorm"
 )
 
+func TestIsDockerComposeProjectType(t *testing.T) {
+	tests := []struct {
+		name     string
+		language string
+		want     bool
+	}{
+		{name: "editor value", language: "docker-compose", want: true},
+		{name: "spaced value", language: "docker compose", want: true},
+		{name: "canonical value", language: "前后端 docker-compose", want: true},
+		{name: "canonical spaced value", language: "前后端 docker compose", want: true},
+		{name: "case and whitespace", language: "  DOCKER-COMPOSE  ", want: true},
+		{name: "collapsed whitespace", language: "前后端   docker compose", want: true},
+		{name: "malformed substring", language: "not-docker-compose", want: false},
+		{name: "ordinary language", language: "go", want: false},
+		{name: "empty", language: " ", want: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := isDockerComposeProjectType(test.language); got != test.want {
+				t.Fatalf("isDockerComposeProjectType(%q) = %v, want %v", test.language, got, test.want)
+			}
+		})
+	}
+}
+
+func TestIsAggregateDeployRouteRequiresComposeLocalFrontendBackendMetadata(t *testing.T) {
+	tests := []struct {
+		name    string
+		project modelSystem.TbProject
+		route   modelSystem.TbProjectRoute
+		want    bool
+	}{
+		{name: "editor alias full", project: modelSystem.TbProject{ComputerLanguage: "docker-compose"}, route: modelSystem.TbProjectRoute{RouteKey: "frontend_backend_full", ServerId: 0}, want: true},
+		{name: "canonical incremental", project: modelSystem.TbProject{ComputerLanguage: "前后端 docker-compose"}, route: modelSystem.TbProjectRoute{RouteKey: " FRONTEND_BACKEND_INCREMENTAL ", ServerId: 0}, want: true},
+		{name: "remote aggregate", project: modelSystem.TbProject{ComputerLanguage: "docker-compose"}, route: modelSystem.TbProjectRoute{RouteKey: "frontend_backend_full", ServerId: 7}, want: false},
+		{name: "ordinary compose route", project: modelSystem.TbProject{ComputerLanguage: "docker-compose"}, route: modelSystem.TbProjectRoute{RouteKey: "local_full", ServerId: 0}, want: false},
+		{name: "name is not metadata", project: modelSystem.TbProject{ComputerLanguage: "go", ProjectName: "misleading-compose"}, route: modelSystem.TbProjectRoute{RouteKey: "frontend_backend_full", ServerId: 0}, want: false},
+		{name: "empty route key", project: modelSystem.TbProject{ComputerLanguage: "docker-compose"}, route: modelSystem.TbProjectRoute{RouteKey: "", ServerId: 0}, want: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := isAggregateDeployRoute(test.project, test.route); got != test.want {
+				t.Fatalf("isAggregateDeployRoute(%q, %q, %d) = %v, want %v", test.project.ComputerLanguage, test.route.RouteKey, test.route.ServerId, got, test.want)
+			}
+		})
+	}
+}
+
 func TestParseAggregateChildScriptPathsPreservesOrderAndDeduplicates(t *testing.T) {
 	root := t.TempDir()
 	aggregateDir := filepath.Join(root, "deploy", "compose", "full")

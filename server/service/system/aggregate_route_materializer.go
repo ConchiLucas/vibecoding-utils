@@ -20,6 +20,23 @@ type aggregateChildRoute struct {
 	ScriptPath string
 }
 
+func isDockerComposeProjectType(language string) bool {
+	normalized := strings.ToLower(strings.Join(strings.Fields(language), " "))
+	switch normalized {
+	case "docker-compose", "docker compose", "前后端 docker-compose", "前后端 docker compose":
+		return true
+	default:
+		return false
+	}
+}
+
+func isAggregateDeployRoute(project modelSystem.TbProject, route modelSystem.TbProjectRoute) bool {
+	routeKey := strings.ToLower(strings.TrimSpace(route.RouteKey))
+	return isDockerComposeProjectType(project.ComputerLanguage) &&
+		route.ServerId == 0 &&
+		strings.HasPrefix(routeKey, "frontend_backend_")
+}
+
 func parseAggregateChildScriptPaths(rootPath, aggregateScriptPath, content string) ([]string, error) {
 	rootPath = filepath.Clean(strings.TrimSpace(rootPath))
 	aggregateScriptPath = filepath.Clean(strings.TrimSpace(aggregateScriptPath))
