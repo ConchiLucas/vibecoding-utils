@@ -162,7 +162,7 @@ func resolveAggregateChildRoutes(db *gorm.DB, aggregate modelSystem.TbProject, a
 }
 
 func (s *DeployService) prepareAggregateChildDeployScripts(project modelSystem.TbProject, route modelSystem.TbProjectRoute, logCh chan string) error {
-	if strings.TrimSpace(project.ComputerLanguage) != deployProjectTypeDockerCompose {
+	if !isAggregateDeployRoute(project, route) {
 		return nil
 	}
 	sendAggregateDeployLog(logCh, "🧩 解析聚合部署依赖...")

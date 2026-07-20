@@ -255,6 +255,75 @@ func TestLoadSingleLocalStartScriptRejectsEmptyEntry(t *testing.T) {
 	}
 }
 
+func TestPrepareAggregateChildDeployScriptsMaterializesDockerComposeAliasDependencies(t *testing.T) {
+	db := setupAggregateRouteTestDB(t)
+	oldDB := global.GVA_DB
+	oldLog := global.GVA_LOG
+	global.GVA_DB = db
+	global.GVA_LOG = zap.NewNop()
+	t.Cleanup(func() {
+		global.GVA_DB = oldDB
+		global.GVA_LOG = oldLog
+	})
+
+	root := t.TempDir()
+	aggregatePath := filepath.Join(root, "deploy", "compose", "frontend_backend_full")
+	aggregate := modelSystem.TbProject{GroupId: 42, ComputerLanguage: "docker-compose", ProjectName: "orchestration", LocalProjectPath: root}
+	if err := db.Create(&aggregate).Error; err != nil {
+		t.Fatal(err)
+	}
+	aggregateRoute := modelSystem.TbProjectRoute{ProjectId: int(aggregate.ID), RouteKey: "frontend_backend_full", RouteName: "全部项目全量部署", ServerId: 0, LocalScriptPath: aggregatePath}
+	if err := db.Create(&aggregateRoute).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	dependencies := []struct {
+		language string
+		name     string
+		path     string
+	}{
+		{language: "python", name: "worker", path: filepath.Join(root, "deploy", "backend", "python_worker", "local_full")},
+		{language: "java", name: "server", path: filepath.Join(root, "deploy", "backend", "java_server", "local_full")},
+		{language: "react", name: "web", path: filepath.Join(root, "deploy", "frontend", "web_react", "local_full")},
+	}
+
+	lines := make([]string, 0, len(dependencies))
+	for _, dependency := range dependencies {
+		project, route := createAggregateChildRoute(t, db, aggregate.GroupId, dependency.language, dependency.name, filepath.Join(root, dependency.name), dependency.path, 0, false)
+		script := modelSystem.TbProjectScript{ProjectId: int(project.ID), RouteId: int(route.ID), ScriptType: 1, FileName: "start.sh", Content: "#!/bin/sh\necho " + dependency.name + "\n"}
+		if err := db.Create(&script).Error; err != nil {
+			t.Fatal(err)
+		}
+		reference, err := filepath.Rel(root, filepath.Join(dependency.path, "start.sh"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		lines = append(lines, `sh "$ROOT_DIR/`+filepath.ToSlash(reference)+`"`)
+	}
+	aggregateStart := modelSystem.TbProjectScript{ProjectId: int(aggregate.ID), RouteId: int(aggregateRoute.ID), ScriptType: 1, FileName: "start.sh", Content: strings.Join(lines, "\n") + "\n"}
+	if err := db.Create(&aggregateStart).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	logCh := make(chan string, 16)
+	if err := DeployServiceApp.prepareAggregateChildDeployScripts(aggregate, aggregateRoute, logCh); err != nil {
+		t.Fatalf("prepareAggregateChildDeployScripts() error = %v", err)
+	}
+	close(logCh)
+	var logs []string
+	for line := range logCh {
+		logs = append(logs, line)
+	}
+	if joined := strings.Join(logs, "\n"); !strings.Contains(joined, "发现 3 条") || !strings.Contains(joined, "已全部落盘") {
+		t.Fatalf("logs = %q, want alias preflight and completion", joined)
+	}
+	for _, target := range append([]string{aggregatePath}, dependencies[0].path, dependencies[1].path, dependencies[2].path) {
+		if _, err := os.Stat(filepath.Join(target, "start.sh")); err != nil {
+			t.Fatalf("start.sh was not materialized in %s: %v", target, err)
+		}
+	}
+}
+
 func TestPrepareAggregateChildDeployScriptsMaterializesEnglishStyleDependencies(t *testing.T) {
 	db := setupAggregateRouteTestDB(t)
 	oldDB := global.GVA_DB
