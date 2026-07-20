@@ -373,7 +373,7 @@ git commit -m "test: complete aggregate alias regression coverage"
 
 If the worktree is already clean, do not create an empty commit.
 
-- [ ] **Step 5: Integrate the verified branch and restart VibeDeploy**
+- [x] **Step 5: Integrate the verified branch and restart VibeDeploy**
 
 Use the finishing-development-branch workflow to review and fast-forward the verified branch into `main`. Restart the local VibeDeploy backend from the integrated main worktree and confirm:
 
@@ -383,7 +383,7 @@ curl -fsS http://127.0.0.1:23638/health
 
 Expected: HTTP success from the restarted backend. Preserve a recoverable reference to the pre-integration commit until live acceptance finishes.
 
-- [ ] **Step 6: Prove fresh task-center child scripts are generated before execution**
+- [x] **Step 6: Prove fresh task-center child scripts are generated before execution**
 
 Before deploying, move these generated directories to a temporary backup if they exist; do not delete them irrecoverably:
 
@@ -411,7 +411,7 @@ Expected stream order:
 
 The stream must end with the deployment completion event, not status 127. On failure, restore the backup directories and return main/backend to the pre-integration reference.
 
-- [ ] **Step 7: Verify task-center runtime and shared-network invariants**
+- [x] **Step 7: Verify task-center runtime and shared-network invariants**
 
 Run:
 
@@ -427,7 +427,7 @@ docker inspect ai-task-center-server ai-task-center-web --format '{{.Name}} rest
 
 Expected: all three scripts exist; Python Worker, Java server, and React frontend health checks succeed; both containers report `restart=no` and only `vibedeploy-shared`.
 
-- [ ] **Step 8: Verify canonical and non-aggregate regressions**
+- [x] **Step 8: Verify canonical and non-aggregate regressions**
 
 Run the canonical English-style service test again and the ordinary-route classification test:
 
