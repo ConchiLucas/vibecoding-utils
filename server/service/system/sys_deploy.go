@@ -16,7 +16,6 @@ import (
 	"github.com/flipped-aurora/easy-deploy/server/model/system"
 	"github.com/flipped-aurora/easy-deploy/server/utils"
 	"go.uber.org/zap"
-	"gorm.io/gorm"
 )
 
 type DeployService struct{}
@@ -546,117 +545,18 @@ func (s *DeployService) uploadScriptsFromDB(sftpUtil *utils.SftpUtil, projectId 
 // downloadScriptsToLocalFromDB 从DB提取脚本并落盘到本地项目目录 (用于Docker构建等需要物理引用的步骤)
 func (s *DeployService) downloadScriptsToLocalFromDB(projectId uint, routeId uint, localScriptPath string) error {
 	var project system.TbProject
-	hasProject := global.GVA_DB.First(&project, projectId).Error == nil
-
-	var scriptList []system.TbProjectScript
-	db := global.GVA_DB.Where("project_id = ?", projectId)
-	if routeId != 0 {
-		db = db.Where("route_id = ?", routeId)
+	if err := global.GVA_DB.First(&project, projectId).Error; err != nil {
+		return fmt.Errorf("获取项目部署信息失败(project=%d): %w", projectId, err)
 	}
-	err := db.Find(&scriptList).Error
+	prepared, err := loadLocalScriptsForMaterialization(global.GVA_DB, []localScriptMaterializationRequest{{
+		Project:    project,
+		RouteID:    routeId,
+		ScriptPath: localScriptPath,
+	}})
 	if err != nil {
-		return fmt.Errorf("获取项目脚本列表失败: %w", err)
-	}
-
-	type preparedScript struct {
-		script   system.TbProjectScript
-		content  string
-		filePath string
-		tempPath string
-	}
-	prepared := make([]preparedScript, 0, len(scriptList))
-	for _, script := range scriptList {
-		if script.Content == "" {
-			continue
-		}
-		// ScriptType 2 = 仅 Remote, 不要在本地释放包里
-		if script.ScriptType == 2 {
-			continue
-		}
-		localFilePath, err := safeLocalScriptFilePath(localScriptPath, script.FileName)
-		if err != nil {
-			return fmt.Errorf("脚本路径无效(%s): %w", script.FileName, err)
-		}
-		content := script.Content
-		if hasProject && isFrontendDeployProject(project) && script.FileName == "nginx.conf" {
-			backendPort := inferBackendPortForFrontendDeploy(project, content)
-			content = normalizeFrontendNginxScriptForDeploy(content, backendPort, project.LocalProjectPath)
-		}
-		if hasProject && isPythonDeployProject(project) && isPythonDependencyDockerfile(script.FileName) {
-			content = normalizePythonDependencyDockerfileForDeploy(content)
-		}
-		if hasProject && isPythonDeployProject(project) && script.FileName == "docker-compose.yml" {
-			appPort := inferPythonAppPortForDeploy(project, content)
-			content = normalizePythonComposeForDeploy(content, appPort, project.LocalProjectPath)
-		}
-		if isComposeFileName(script.FileName) {
-			normalized, _, err := normalizeComposeSharedNetwork(content)
-			if err != nil {
-				return fmt.Errorf(
-					"规范化 Compose 共享网络失败(project=%d route=%d script=%d file=%s): %w",
-					projectId,
-					routeId,
-					script.ID,
-					script.FileName,
-					err,
-				)
-			}
-			content = normalized
-		}
-		prepared = append(prepared, preparedScript{script: script, content: content, filePath: localFilePath})
-	}
-
-	for index := range prepared {
-		if err := os.MkdirAll(filepath.Dir(prepared[index].filePath), 0755); err != nil {
-			return fmt.Errorf("创建脚本目录失败(project=%d script=%d file=%s): %w", projectId, prepared[index].script.ID, prepared[index].script.FileName, err)
-		}
-		temporary, err := os.CreateTemp(filepath.Dir(prepared[index].filePath), ".vibedeploy-script-*")
-		if err != nil {
-			return fmt.Errorf("创建脚本临时文件失败(project=%d script=%d file=%s): %w", projectId, prepared[index].script.ID, prepared[index].script.FileName, err)
-		}
-		prepared[index].tempPath = temporary.Name()
-		if _, err := temporary.WriteString(prepared[index].content); err != nil {
-			_ = temporary.Close()
-			return fmt.Errorf("写入脚本临时文件失败(project=%d script=%d file=%s): %w", projectId, prepared[index].script.ID, prepared[index].script.FileName, err)
-		}
-		if err := temporary.Chmod(0644); err != nil {
-			_ = temporary.Close()
-			return fmt.Errorf("设置脚本文件权限失败(project=%d script=%d file=%s): %w", projectId, prepared[index].script.ID, prepared[index].script.FileName, err)
-		}
-		if err := temporary.Close(); err != nil {
-			return fmt.Errorf("关闭脚本临时文件失败(project=%d script=%d file=%s): %w", projectId, prepared[index].script.ID, prepared[index].script.FileName, err)
-		}
-	}
-	defer func() {
-		for _, item := range prepared {
-			if item.tempPath != "" {
-				_ = os.Remove(item.tempPath)
-			}
-		}
-	}()
-
-	if err := global.GVA_DB.Transaction(func(tx *gorm.DB) error {
-		for _, item := range prepared {
-			if item.content == item.script.Content {
-				continue
-			}
-			if err := updateStoredComposeScriptContent(tx, item.script, item.content); err != nil {
-				return err
-			}
-		}
-		return nil
-	}); err != nil {
 		return err
 	}
-
-	for index := range prepared {
-		if err := os.Rename(prepared[index].tempPath, prepared[index].filePath); err != nil {
-			return fmt.Errorf("发布脚本文件失败(project=%d route=%d script=%d file=%s): %w", projectId, routeId, prepared[index].script.ID, prepared[index].script.FileName, err)
-		}
-		prepared[index].tempPath = ""
-		global.GVA_LOG.Info(fmt.Sprintf("文件 %s 已从数据库加载到 %s", prepared[index].script.FileName, prepared[index].filePath))
-	}
-	return nil
+	return publishPreparedLocalScripts(global.GVA_DB, prepared, nil)
 }
 
 func (s *DeployService) prepareAggregateChildDeployScripts(project system.TbProject, route system.TbProjectRoute) error {
