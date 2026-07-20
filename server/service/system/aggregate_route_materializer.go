@@ -5,9 +5,18 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	modelSystem "github.com/flipped-aurora/easy-deploy/server/model/system"
+	"gorm.io/gorm"
 )
 
 var aggregateChildStartPattern = regexp.MustCompile(`^\s*(?:sh|bash)\s+(?:"\$ROOT_DIR/([^"]+/start\.sh)"|'\$ROOT_DIR/([^']+/start\.sh)'|\$ROOT_DIR/([^\s;]+/start\.sh))(?:\s+.*)?\s*$`)
+
+type aggregateChildRoute struct {
+	Project    modelSystem.TbProject
+	Route      modelSystem.TbProjectRoute
+	ScriptPath string
+}
 
 func parseAggregateChildScriptPaths(rootPath, aggregateScriptPath, content string) ([]string, error) {
 	rootPath = filepath.Clean(strings.TrimSpace(rootPath))
@@ -59,4 +68,64 @@ func parseAggregateChildScriptPaths(rootPath, aggregateScriptPath, content strin
 		return nil, fmt.Errorf("聚合路线 start.sh 未引用任何子项目部署路线")
 	}
 	return paths, nil
+}
+
+func loadSingleLocalStartScript(db *gorm.DB, projectID, routeID uint) (modelSystem.TbProjectScript, error) {
+	var scripts []modelSystem.TbProjectScript
+	err := db.Where(
+		"project_id = ? AND route_id = ? AND file_name = ? AND script_type <> ?",
+		projectID,
+		routeID,
+		"start.sh",
+		2,
+	).Order("id asc").Find(&scripts).Error
+	if err != nil {
+		return modelSystem.TbProjectScript{}, fmt.Errorf("读取本地 start.sh 失败(project=%d route=%d): %w", projectID, routeID, err)
+	}
+	if len(scripts) != 1 {
+		return modelSystem.TbProjectScript{}, fmt.Errorf("本地 start.sh 数量必须为 1(project=%d route=%d actual=%d)", projectID, routeID, len(scripts))
+	}
+	return scripts[0], nil
+}
+
+func resolveAggregateChildRoutes(db *gorm.DB, aggregate modelSystem.TbProject, aggregateRoute modelSystem.TbProjectRoute, references []string) ([]aggregateChildRoute, error) {
+	var projects []modelSystem.TbProject
+	if err := db.Where("group_id = ?", aggregate.GroupId).Preload("Routes").Order("id asc").Find(&projects).Error; err != nil {
+		return nil, fmt.Errorf("读取聚合项目组子项目失败(group=%d): %w", aggregate.GroupId, err)
+	}
+
+	children := make([]aggregateChildRoute, 0, len(references))
+	for _, reference := range references {
+		reference = filepath.Clean(reference)
+		matches := make([]aggregateChildRoute, 0, 1)
+		for _, project := range projects {
+			if project.ID == aggregate.ID || strings.TrimSpace(project.ComputerLanguage) == deployProjectTypeDockerCompose {
+				continue
+			}
+			for _, route := range project.Routes {
+				if route.ServerId != 0 {
+					continue
+				}
+				scriptPath := filepath.Clean(resolveLocalScriptPath(route, project.LocalProjectPath))
+				if scriptPath == reference {
+					matches = append(matches, aggregateChildRoute{Project: project, Route: route, ScriptPath: scriptPath})
+				}
+			}
+		}
+		if len(matches) == 0 {
+			return nil, fmt.Errorf("聚合子路线未找到(project=%d route=%d path=%s)", aggregate.ID, aggregateRoute.ID, reference)
+		}
+		if len(matches) != 1 {
+			candidateIDs := make([]string, 0, len(matches))
+			for _, match := range matches {
+				candidateIDs = append(candidateIDs, fmt.Sprintf("project=%d/route=%d", match.Project.ID, match.Route.ID))
+			}
+			return nil, fmt.Errorf("聚合子路线匹配到 %d 条(project=%d route=%d path=%s candidates=%s)", len(matches), aggregate.ID, aggregateRoute.ID, reference, strings.Join(candidateIDs, ","))
+		}
+		if _, err := loadSingleLocalStartScript(db, matches[0].Project.ID, matches[0].Route.ID); err != nil {
+			return nil, fmt.Errorf("聚合子路线入口无效(path=%s): %w", reference, err)
+		}
+		children = append(children, matches[0])
+	}
+	return children, nil
 }
