@@ -146,6 +146,31 @@ func TestPublishPreparedLocalScriptsRejectsStaleDatabaseBeforeFileReplacement(t 
 	}
 }
 
+func TestPublishPreparedLocalScriptsRejectsStaleUnchangedScript(t *testing.T) {
+	db := setupAggregateRouteTestDB(t)
+	root := t.TempDir()
+	project, route := createAggregateChildRoute(t, db, 4, "go", "api", root, filepath.Join(root, "deploy"), 0, false)
+	script := modelSystem.TbProjectScript{ProjectId: int(project.ID), RouteId: int(route.ID), ScriptType: 1, FileName: "start.sh", Content: "original"}
+	if err := db.Create(&script).Error; err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := loadLocalScriptsForMaterialization(db, []localScriptMaterializationRequest{createMaterializationRequest(t, project, route, route.LocalScriptPath)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&modelSystem.TbProjectScript{}).Where("id = ?", script.ID).Update("content", "newer").Error; err != nil {
+		t.Fatal(err)
+	}
+
+	err = publishPreparedLocalScripts(db, prepared, nil)
+	if err == nil || !strings.Contains(err.Error(), "并发修改") {
+		t.Fatalf("error = %v, want optimistic conflict", err)
+	}
+	if _, err := os.Stat(filepath.Join(route.LocalScriptPath, script.FileName)); !os.IsNotExist(err) {
+		t.Fatalf("stale unchanged script was published: %v", err)
+	}
+}
+
 func TestPublishPreparedLocalScriptsNormalizesAndWritesMode(t *testing.T) {
 	db := setupAggregateRouteTestDB(t)
 	root := t.TempDir()

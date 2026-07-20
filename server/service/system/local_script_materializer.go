@@ -9,6 +9,7 @@ import (
 	"github.com/flipped-aurora/easy-deploy/server/global"
 	modelSystem "github.com/flipped-aurora/easy-deploy/server/model/system"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type localScriptMaterializationRequest struct {
@@ -149,6 +150,9 @@ func publishPreparedLocalScripts(db *gorm.DB, prepared []preparedLocalScript, be
 	err := db.Transaction(func(tx *gorm.DB) error {
 		for _, item := range prepared {
 			for _, script := range item.DatabaseScripts {
+				if err := lockStoredProjectScriptContent(tx, script); err != nil {
+					return err
+				}
 				if item.Content == script.Content {
 					continue
 				}
@@ -183,6 +187,18 @@ func publishPreparedLocalScripts(db *gorm.DB, prepared []preparedLocalScript, be
 		if global.GVA_LOG != nil {
 			global.GVA_LOG.Info(fmt.Sprintf("文件 %s 已从数据库加载到 %s", item.Script.FileName, item.FilePath))
 		}
+	}
+	return nil
+}
+
+func lockStoredProjectScriptContent(db *gorm.DB, script modelSystem.TbProjectScript) error {
+	var current modelSystem.TbProjectScript
+	result := db.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND content = ?", script.ID, script.Content).First(&current)
+	if result.Error != nil {
+		if result.Error == gorm.ErrRecordNotFound {
+			return fmt.Errorf("部署脚本已被并发修改(project=%d route=%d script=%d file=%s)", script.ProjectId, script.RouteId, script.ID, script.FileName)
+		}
+		return fmt.Errorf("锁定部署脚本失败(project=%d route=%d script=%d file=%s): %w", script.ProjectId, script.RouteId, script.ID, script.FileName, result.Error)
 	}
 	return nil
 }

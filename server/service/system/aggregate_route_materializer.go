@@ -12,6 +12,7 @@ import (
 )
 
 var aggregateChildStartPattern = regexp.MustCompile(`^\s*(?:sh|bash)\s+(?:"\$ROOT_DIR/([^"]+/start\.sh)"|'\$ROOT_DIR/([^']+/start\.sh)'|\$ROOT_DIR/([^\s;]+/start\.sh))(?:\s+.*)?\s*$`)
+var aggregateAbsoluteStartPattern = regexp.MustCompile(`^\s*(?:sh|bash)\s+["']?(/[^"'\s;]+/start\.sh)["']?(?:\s+.*)?\s*$`)
 
 type aggregateChildRoute struct {
 	Project    modelSystem.TbProject
@@ -35,6 +36,9 @@ func parseAggregateChildScriptPaths(rootPath, aggregateScriptPath, content strin
 		}
 		matches := aggregateChildStartPattern.FindStringSubmatch(line)
 		if matches == nil {
+			if aggregateAbsoluteStartPattern.MatchString(line) {
+				return nil, fmt.Errorf("聚合脚本第 %d 行不能调用绝对路径 start.sh: %s", index+1, trimmed)
+			}
 			if strings.Contains(line, "$ROOT_DIR/") && strings.Contains(line, "start.sh") {
 				return nil, fmt.Errorf("聚合脚本第 %d 行包含不支持的子路线调用: %s", index+1, trimmed)
 			}
@@ -48,7 +52,13 @@ func parseAggregateChildScriptPaths(rootPath, aggregateScriptPath, content strin
 				break
 			}
 		}
-		reference = filepath.Clean(filepath.FromSlash(reference))
+		rawReference := filepath.FromSlash(reference)
+		for _, component := range strings.Split(rawReference, string(filepath.Separator)) {
+			if component == ".." {
+				return nil, fmt.Errorf("聚合脚本第 %d 行的子路线越过项目目录", index+1)
+			}
+		}
+		reference = filepath.Clean(rawReference)
 		if reference == "." || filepath.IsAbs(reference) || reference == ".." || strings.HasPrefix(reference, ".."+string(filepath.Separator)) {
 			return nil, fmt.Errorf("聚合脚本第 %d 行的子路线越过项目目录", index+1)
 		}
@@ -85,6 +95,9 @@ func loadSingleLocalStartScript(db *gorm.DB, projectID, routeID uint) (modelSyst
 	}
 	if len(scripts) != 1 {
 		return modelSystem.TbProjectScript{}, fmt.Errorf("本地 start.sh 数量必须为 1(project=%d route=%d actual=%d)", projectID, routeID, len(scripts))
+	}
+	if strings.TrimSpace(scripts[0].Content) == "" {
+		return modelSystem.TbProjectScript{}, fmt.Errorf("本地 start.sh 内容为空(project=%d route=%d script=%d)", projectID, routeID, scripts[0].ID)
 	}
 	return scripts[0], nil
 }

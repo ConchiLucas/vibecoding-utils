@@ -51,6 +51,8 @@ func TestParseAggregateChildScriptPathsRejectsUnsafeOrUnsupportedReferences(t *t
 	}{
 		{name: "unsupported command", content: `source "$ROOT_DIR/deploy/backend/api/local_full/start.sh"`, want: "第 1 行"},
 		{name: "traversal", content: `sh "$ROOT_DIR/../outside/start.sh"`, want: "越过项目目录"},
+		{name: "internal traversal", content: `sh "$ROOT_DIR/deploy/backend/../outside/start.sh"`, want: "越过项目目录"},
+		{name: "absolute", content: "sh \"" + filepath.Join(root, "outside", "start.sh") + "\"", want: "绝对路径"},
 		{name: "self reference", content: `sh "$ROOT_DIR/deploy/compose/full/start.sh"`, want: "引用自身"},
 		{name: "empty", content: "#!/bin/sh\necho ready\n", want: "未引用任何"},
 	}
@@ -188,6 +190,20 @@ func TestLoadSingleLocalStartScriptRejectsDuplicateEntries(t *testing.T) {
 	_, err := loadSingleLocalStartScript(db, project.ID, route.ID)
 	if err == nil || !strings.Contains(err.Error(), "2") {
 		t.Fatalf("error = %v, want duplicate-count diagnostic", err)
+	}
+}
+
+func TestLoadSingleLocalStartScriptRejectsEmptyEntry(t *testing.T) {
+	db := setupAggregateRouteTestDB(t)
+	project, route := createAggregateChildRoute(t, db, 3, "python", "empty", t.TempDir(), t.TempDir(), 0, false)
+	entry := modelSystem.TbProjectScript{ProjectId: int(project.ID), RouteId: int(route.ID), ScriptType: 1, FileName: "start.sh", Content: "  \n"}
+	if err := db.Create(&entry).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := loadSingleLocalStartScript(db, project.ID, route.ID)
+	if err == nil || !strings.Contains(err.Error(), "内容为空") {
+		t.Fatalf("error = %v, want empty-entry diagnostic", err)
 	}
 }
 
