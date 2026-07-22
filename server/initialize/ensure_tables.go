@@ -2,6 +2,7 @@ package initialize
 
 import (
 	"context"
+
 	sysModel "github.com/flipped-aurora/easy-deploy/server/model/system"
 	"github.com/flipped-aurora/easy-deploy/server/service/system"
 	"gorm.io/gorm"
@@ -61,10 +62,14 @@ func (e *ensureTables) MigrateTable(ctx context.Context) (context.Context, error
 		sysModel.TbScriptExecution{},
 		sysModel.TbAgileRequestLog{},
 		sysModel.TbSQLQueryHistory{},
-		sysModel.TbAIChatHistory{},
 	}
 	for _, t := range tables {
-		_ = db.AutoMigrate(&t)
+		if err := db.AutoMigrate(&t); err != nil {
+			return ctx, err
+		}
+	}
+	if err := dropRemovedAIAssistantTables(db); err != nil {
+		return ctx, err
 	}
 	dropRemovedScriptManagerColumns(db)
 	return ctx, nil
@@ -93,7 +98,6 @@ func (e *ensureTables) TableCreated(ctx context.Context) bool {
 		sysModel.TbScriptExecution{},
 		sysModel.TbAgileRequestLog{},
 		sysModel.TbSQLQueryHistory{},
-		sysModel.TbAIChatHistory{},
 	}
 	yes := true
 	for _, t := range tables {

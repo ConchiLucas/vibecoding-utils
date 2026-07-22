@@ -88,6 +88,12 @@ func RegisterTables() {
 
 	// User requests that we physically clean up the orphaned legacy columns that are no longer in Go models.
 	if err == nil {
+		err = dropRemovedAIAssistantTables(db)
+		if err != nil {
+			global.GVA_LOG.Error("drop removed AI assistant tables failed", zap.Error(err))
+			os.Exit(0)
+		}
+
 		err = repairLegacyPostgresAutoIncrementIDs(db)
 		if err != nil {
 			global.GVA_LOG.Error("repair postgres auto-increment ids failed", zap.Error(err))
