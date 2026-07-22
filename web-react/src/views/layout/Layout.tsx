@@ -1,7 +1,6 @@
 import React from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import Header from './Header';
-import AIChatWidget from '../../components/AIChatWidget/AIChatWidget';
 import { usePersistedProjectSelection } from '../../hooks/usePersistedProjectSelection';
 
 export default function Layout() {
@@ -34,9 +33,6 @@ export default function Layout() {
           <p>由 Easy Deploy 提供运行时支持 · 极简部署自动化流水线</p>
         </footer>
       )}
-
-      {/* AI Chat Floating Widget */}
-      <AIChatWidget />
     </div>
   );
 }

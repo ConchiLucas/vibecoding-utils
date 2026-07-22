@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Bot, CheckCircle2, Hash, KeyRound, Link, Plus, Save, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { getAIConfig, saveAIConfig, saveAIActiveProvider, AIProviderConfigItem } from '../../api/aiChat';
+import { getAIConfig, saveAIConfig, saveAIActiveProvider, AIProviderConfigItem } from '../../api/aiConfig';
 import { useConfirm } from '../../hooks/useConfirm';
 import ConfirmDialog from '../../components/ConfirmDialog';
 

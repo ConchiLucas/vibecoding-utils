@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { useUserStore } from '../../stores/useUserStore';
-import { CloudLightning, LogOut, Key, ArrowLeft, User, Route, GitMerge, Settings, FileCode, Moon, Sun, Sparkles, Send, Database, ScrollText, ClipboardCheck, Terminal } from 'lucide-react';
+import { CloudLightning, LogOut, Key, ArrowLeft, User, Route, GitMerge, Settings, FileCode, Moon, Sun, Send, Database, ScrollText, ClipboardCheck, Terminal } from 'lucide-react';
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
 
@@ -118,17 +118,6 @@ export default function Header() {
             title={isDark ? "切换明亮模式" : "切换暗黑模式"}
           >
             {isDark ? <Sun size={18} /> : <Moon size={18} />}
-          </button>
-
-          {/* AI Chat Trigger */}
-          <button
-            onClick={() => window.dispatchEvent(new CustomEvent('toggle-ai-chat'))}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-white text-xs font-semibold transition-all duration-200 hover:shadow-lg hover:shadow-indigo-500/25 hover:-translate-y-0.5 active:scale-95"
-            style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}
-            title="AI 助手"
-          >
-            <Sparkles size={14} />
-            <span>AI</span>
           </button>
 
           {/* Profile Dropdown */}
