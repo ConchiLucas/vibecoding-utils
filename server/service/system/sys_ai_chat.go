@@ -696,7 +696,7 @@ func appendAIEndpoint(baseURL string, suffix string) string {
 
 // CompleteOnce calls the configured AI provider once and returns the final text.
 func (s *AIChatService) CompleteOnce(messages []ChatMessage, providerID string) (string, config.ResolvedAIProvider, error) {
-	aiConfig := s.CurrentAIConfig()
+	aiConfig := (&AIConfigService{}).CurrentAIConfig()
 	provider, err := aiConfig.ResolveProvider(providerID)
 	if err != nil {
 		return "", config.ResolvedAIProvider{}, err
@@ -714,7 +714,7 @@ func (s *AIChatService) CompleteOnce(messages []ChatMessage, providerID string) 
 // CompleteJSONOnce requests a strict JSON object from OpenAI-compatible
 // providers when supported, falling back to the normal completion path.
 func (s *AIChatService) CompleteJSONOnce(messages []ChatMessage, providerID string) (string, config.ResolvedAIProvider, error) {
-	aiConfig := s.CurrentAIConfig()
+	aiConfig := (&AIConfigService{}).CurrentAIConfig()
 	provider, err := aiConfig.ResolveProvider(providerID)
 	if err != nil {
 		return "", config.ResolvedAIProvider{}, err
@@ -870,7 +870,7 @@ func (s *AIChatService) doAIRequest(provider config.ResolvedAIProvider, body []b
 // 始终使用流式请求，实时输出内容。如果 LLM 要调用工具，则从流中收集 tool_calls，
 // 执行后把结果发回，再流式输出最终回复。
 func (s *AIChatService) ChatStreamHandler(messages []ChatMessage, providerID string, onEvent func(eventType, data string)) error {
-	aiConfig := s.CurrentAIConfig()
+	aiConfig := (&AIConfigService{}).CurrentAIConfig()
 	provider, err := aiConfig.ResolveProvider(providerID)
 	if err != nil {
 		return err

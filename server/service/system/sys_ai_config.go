@@ -13,7 +13,9 @@ import (
 
 const defaultAIConfigKey = "default"
 
-func (s *AIChatService) CurrentAIConfig() config.AI {
+type AIConfigService struct{}
+
+func (s *AIConfigService) CurrentAIConfig() config.AI {
 	if global.GVA_DB == nil {
 		return normalizePersistentAIConfig(global.GVA_CONFIG.AI)
 	}
@@ -31,7 +33,7 @@ func (s *AIChatService) CurrentAIConfig() config.AI {
 	return aiConfig
 }
 
-func (s *AIChatService) SaveAIConfig(aiConfig config.AI) error {
+func (s *AIConfigService) SaveAIConfig(aiConfig config.AI) error {
 	aiConfig = normalizePersistentAIConfig(aiConfig)
 	providerBytes, err := json.Marshal(aiConfig.Providers)
 	if err != nil {
@@ -65,7 +67,7 @@ func (s *AIChatService) SaveAIConfig(aiConfig config.AI) error {
 	return nil
 }
 
-func (s *AIChatService) SaveActiveAIConfig(active string) error {
+func (s *AIConfigService) SaveActiveAIConfig(active string) error {
 	active = strings.TrimSpace(active)
 	aiConfig := s.CurrentAIConfig()
 	if _, err := aiConfig.ResolveProvider(active); err != nil {
@@ -75,7 +77,7 @@ func (s *AIChatService) SaveActiveAIConfig(active string) error {
 	return s.SaveAIConfig(aiConfig)
 }
 
-func (s *AIChatService) loadAIConfigFromDB() (config.AI, error) {
+func (s *AIConfigService) loadAIConfigFromDB() (config.AI, error) {
 	var row systemModel.TbAIConfig
 	if err := global.GVA_DB.Where("config_key = ?", defaultAIConfigKey).First(&row).Error; err != nil {
 		return config.AI{}, err

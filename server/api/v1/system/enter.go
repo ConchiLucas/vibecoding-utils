@@ -79,6 +79,7 @@ var (
 	tbGenerateProjectPathService      = service.ServiceGroupApp.SystemServiceGroup.TbGenerateProjectPathService
 	tbGenerateProjectPathModelService = service.ServiceGroupApp.SystemServiceGroup.TbGenerateProjectPathModelService
 	tbGenerateFieldSnippetService     = service.ServiceGroupApp.SystemServiceGroup.TbGenerateFieldSnippetService
+	aiConfigService                   = service.ServiceGroupApp.SystemServiceGroup.AIConfigService
 	aiChatService                     = service.ServiceGroupApp.SystemServiceGroup.AIChatService
 	aiChatHistoryService              = service.ServiceGroupApp.SystemServiceGroup.AIChatHistoryService
 )

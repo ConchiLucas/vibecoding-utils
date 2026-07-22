@@ -37,6 +37,8 @@ type ServiceGroup struct {
 	TbGenerateProjectPathService
 	TbGenerateProjectPathModelService
 	TbGenerateFieldSnippetService
+	AIConfigService
+	AICompletionService
 	AIChatService
 	AIChatHistoryService
 }

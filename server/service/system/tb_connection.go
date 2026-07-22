@@ -805,7 +805,7 @@ func (s *TbConnectionService) GenerateRemoteTableData(connID uint, databaseName,
 	if err != nil {
 		return nil, err
 	}
-	aiService := &AIChatService{}
+	aiService := &AICompletionService{}
 	content, provider, err := aiService.CompleteJSONOnce(messages, "")
 	if err != nil {
 		return nil, err
@@ -895,7 +895,7 @@ func (s *TbConnectionService) GenerateRemoteTableData(connID uint, databaseName,
 	}, nil
 }
 
-func buildTableDataGenerationMessages(databaseName, tableName string, colDefs []utils.ClientColumnVO, primaryKey string, count int) ([]ChatMessage, error) {
+func buildTableDataGenerationMessages(databaseName, tableName string, colDefs []utils.ClientColumnVO, primaryKey string, count int) ([]AIMessage, error) {
 	fields := make([]tableDataGenerationPromptField, 0, len(colDefs))
 	for _, col := range colDefs {
 		fields = append(fields, tableDataGenerationPromptField{
@@ -946,16 +946,16 @@ func buildTableDataGenerationMessages(databaseName, tableName string, colDefs []
 合法输出示例：
 {"rows":[{"id":1,"name":"测试数据"}]}`, databaseName, tableName, count, string(fieldsJSON), count)
 
-	return []ChatMessage{
+	return []AIMessage{
 		{Role: "system", Content: systemMessage},
 		{Role: "user", Content: userMessage},
 	}, nil
 }
 
-func buildTableDataGenerationRetryMessages(messages []ChatMessage, parseErr error, count int) []ChatMessage {
-	retryMessages := make([]ChatMessage, 0, len(messages)+2)
+func buildTableDataGenerationRetryMessages(messages []AIMessage, parseErr error, count int) []AIMessage {
+	retryMessages := make([]AIMessage, 0, len(messages)+2)
 	retryMessages = append(retryMessages, messages...)
-	retryMessages = append(retryMessages, ChatMessage{
+	retryMessages = append(retryMessages, AIMessage{
 		Role: "user",
 		Content: fmt.Sprintf(`上一次回复无法解析：%v。
 
@@ -973,7 +973,7 @@ func buildTableDataGenerationRetryMessages(messages []ChatMessage, parseErr erro
 	return retryMessages
 }
 
-func buildTableDataGenerationRepairMessages(raw string, parseErr error, count int) []ChatMessage {
+func buildTableDataGenerationRepairMessages(raw string, parseErr error, count int) []AIMessage {
 	systemMessage := `你是 JSON 修复器。你只能返回严格 JSON 对象，不要解释，不要 Markdown，不要代码块。`
 	userMessage := fmt.Sprintf(`下面是一次 AI 造数返回，但不是合法 JSON。
 
@@ -991,7 +991,7 @@ func buildTableDataGenerationRepairMessages(raw string, parseErr error, count in
 待修复内容：
 %s`, parseErr, count, aiContentForRepair(raw))
 
-	return []ChatMessage{
+	return []AIMessage{
 		{Role: "system", Content: systemMessage},
 		{Role: "user", Content: userMessage},
 	}
