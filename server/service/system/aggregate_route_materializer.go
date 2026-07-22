@@ -14,6 +14,8 @@ import (
 var aggregateChildStartPattern = regexp.MustCompile(`^\s*(?:sh|bash)\s+(?:"\$ROOT_DIR/([^"]+/start\.sh)"|'\$ROOT_DIR/([^']+/start\.sh)'|\$ROOT_DIR/([^\s;]+/start\.sh))(?:\s+.*)?\s*$`)
 var aggregateAbsoluteStartPattern = regexp.MustCompile(`^\s*(?:sh|bash)\s+["']?(/[^"'\s;]+/start\.sh)["']?(?:\s+.*)?\s*$`)
 
+const deployProjectTypeDockerCompose = "前后端 docker-compose"
+
 type aggregateChildRoute struct {
 	Project    modelSystem.TbProject
 	Route      modelSystem.TbProjectRoute

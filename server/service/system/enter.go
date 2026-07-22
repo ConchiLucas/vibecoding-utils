@@ -39,6 +39,4 @@ type ServiceGroup struct {
 	TbGenerateFieldSnippetService
 	AIConfigService
 	AICompletionService
-	AIChatService
-	AIChatHistoryService
 }

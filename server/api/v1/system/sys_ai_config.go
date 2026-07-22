@@ -1,24 +1,17 @@
 package system
 
 import (
-	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
 
 	"github.com/flipped-aurora/easy-deploy/server/config"
 	"github.com/flipped-aurora/easy-deploy/server/global"
-	"github.com/flipped-aurora/easy-deploy/server/service/system"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
 
-type AIChatApi struct{}
-
-type AIChatRequest struct {
-	Messages []system.ChatMessage `json:"messages"`
-	Provider string               `json:"provider"`
-}
+type AIConfigApi struct{}
 
 type AIProviderConfigItem struct {
 	ID        string `json:"id"`
@@ -40,76 +33,7 @@ type AIActiveConfigRequest struct {
 	Active string `json:"active"`
 }
 
-// ChatStream AI 对话流式接口
-func (a *AIChatApi) ChatStream(c *gin.Context) {
-	var req AIChatRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"error": "参数错误: " + err.Error()})
-		return
-	}
-
-	if len(req.Messages) == 0 {
-		c.JSON(400, gin.H{"error": "消息不能为空"})
-		return
-	}
-
-	// 设置 SSE 响应头
-	c.Header("Content-Type", "text/event-stream")
-	c.Header("Cache-Control", "no-cache")
-	c.Header("Connection", "keep-alive")
-	c.Header("X-Accel-Buffering", "no")
-
-	// 直接写 SSE 并立即 flush，确保流式实时输出
-	c.Writer.WriteHeaderNow()
-
-	err := aiChatService.ChatStreamHandler(req.Messages, req.Provider, func(eventType, data string) {
-		c.SSEvent(eventType, data)
-		c.Writer.Flush()
-	})
-	if err != nil {
-		global.GVA_LOG.Error("AI 对话失败", zap.Error(err))
-		errMsg, _ := json.Marshal(map[string]string{"error": err.Error()})
-		c.SSEvent("error", string(errMsg))
-		c.Writer.Flush()
-	}
-}
-
-// GetModels 获取当前 AI 配置信息
-func (a *AIChatApi) GetModels(c *gin.Context) {
-	aiConfig := aiConfigService.CurrentAIConfig()
-	provider, err := aiConfig.ResolveProvider(c.Query("provider"))
-	if err != nil {
-		c.JSON(500, gin.H{"code": 7, "msg": err.Error()})
-		return
-	}
-	c.JSON(200, gin.H{
-		"code": 0,
-		"data": gin.H{
-			"provider": provider.ID,
-			"model":    provider.Model,
-			"base_url": provider.BaseURL,
-			"type":     provider.Type,
-		},
-		"msg": fmt.Sprintf("当前模型: %s", provider.Model),
-	})
-}
-
-// GetProviders 获取数据库中配置的 AI 厂商列表
-func (a *AIChatApi) GetProviders(c *gin.Context) {
-	aiConfig := aiConfigService.CurrentAIConfig()
-	providers := aiConfig.ListProviders()
-	c.JSON(200, gin.H{
-		"code": 0,
-		"data": gin.H{
-			"active":    effectiveAIProviderID(providers, aiConfig.Active),
-			"providers": providers,
-		},
-		"msg": "获取成功",
-	})
-}
-
-// GetConfig 获取完整 AI 配置，供配置管理页编辑使用。
-func (a *AIChatApi) GetConfig(c *gin.Context) {
+func (a *AIConfigApi) GetConfig(c *gin.Context) {
 	aiConfig := aiConfigService.CurrentAIConfig()
 	listProviders := aiConfig.ListProviders()
 	providers := make([]AIProviderConfigItem, 0, len(listProviders))
@@ -137,8 +61,7 @@ func (a *AIChatApi) GetConfig(c *gin.Context) {
 	})
 }
 
-// SaveConfig 保存 AI 配置到数据库，并同步刷新当前进程内存配置。
-func (a *AIChatApi) SaveConfig(c *gin.Context) {
+func (a *AIConfigApi) SaveConfig(c *gin.Context) {
 	var req AIConfigRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		responseError(c, "参数错误: "+err.Error())
@@ -160,8 +83,7 @@ func (a *AIChatApi) SaveConfig(c *gin.Context) {
 	c.JSON(200, gin.H{"code": 0, "data": aiConfig.ListProviders(), "msg": "保存成功"})
 }
 
-// SaveActiveConfig 只保存默认 AI 配置，不影响正在编辑但尚未保存的 provider 内容。
-func (a *AIChatApi) SaveActiveConfig(c *gin.Context) {
+func (a *AIConfigApi) SaveActiveConfig(c *gin.Context) {
 	var req AIActiveConfigRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		responseError(c, "参数错误: "+err.Error())
