@@ -739,9 +739,27 @@ func normalizeFrontendNginxScriptForDeploy(content string, backendPort int, loca
 }
 
 func rewriteAPIProxyPassToStripPrefix(content string, backendPort int) string {
+	const apiLocationMarker = "location /api/"
+	locationStart := strings.Index(content, apiLocationMarker)
+	if locationStart < 0 {
+		return content
+	}
+	blockStartOffset := strings.Index(content[locationStart:], "{")
+	if blockStartOffset < 0 {
+		return content
+	}
+	blockStart := locationStart + blockStartOffset
+	blockEndOffset := strings.Index(content[blockStart:], "}")
+	if blockEndOffset < 0 {
+		return content
+	}
+	blockEnd := blockStart + blockEndOffset + 1
+	apiLocation := content[locationStart:blockEnd]
+
 	oldLine := fmt.Sprintf("proxy_pass http://host.docker.internal:%d;", backendPort)
 	newLine := fmt.Sprintf("proxy_pass http://host.docker.internal:%d/;", backendPort)
-	return strings.Replace(content, oldLine, newLine, 1)
+	rewrittenLocation := strings.Replace(apiLocation, oldLine, newLine, 1)
+	return content[:locationStart] + rewrittenLocation + content[blockEnd:]
 }
 
 func insertNginxLocation(content string, locationBlock string) string {
