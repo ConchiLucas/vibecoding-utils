@@ -57,6 +57,7 @@ func TestNormalizeComposeLifecycleScriptLeavesIneligibleScriptsUnchanged(t *test
 	}{
 		{name: "non lifecycle file", fileName: "build.sh", content: explicitComposeStartScript},
 		{name: "legacy project naming", fileName: "start.sh", content: strings.Replace(explicitComposeStartScript, "  -p rob-english-word-front \\\n", "", 1)},
+		{name: "unrelated mkdir project flag", fileName: "start.sh", content: strings.Replace(strings.Replace(explicitComposeStartScript, "  -p rob-english-word-front \\\n", "", 1), "\ndocker compose", "\nmkdir -p \"$SCRIPT_DIR/logs\"\n\ndocker compose", 1)},
 		{name: "different config", fileName: "start.sh", content: strings.Replace(explicitComposeStartScript, "$SCRIPT_DIR/docker-compose.yml", "$SCRIPT_DIR/compose.yaml", 1)},
 		{name: "non compose script", fileName: "start.sh", content: "#!/bin/sh\necho ok\n"},
 	}
