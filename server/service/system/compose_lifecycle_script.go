@@ -3,6 +3,7 @@ package system
 import (
 	"path/filepath"
 	"strings"
+	"unicode"
 )
 
 const composeLifecycleMigrationMarker = "# vibedeploy: migrate directory-derived compose project"
@@ -46,7 +47,10 @@ func hasExplicitComposeLifecycleCommand(content string) bool {
 	logicalContent := strings.ReplaceAll(content, "\\\r\n", " ")
 	logicalContent = strings.ReplaceAll(logicalContent, "\\\n", " ")
 	for _, line := range strings.Split(logicalContent, "\n") {
-		fields := strings.Fields(strings.TrimSpace(line))
+		fields, valid := parseShellCommandFields(line)
+		if !valid {
+			continue
+		}
 		if len(fields) < 2 || fields[0] != "docker" || fields[1] != "compose" {
 			continue
 		}
@@ -56,22 +60,80 @@ func hasExplicitComposeLifecycleCommand(content string) bool {
 		for index := 2; index < len(fields); index++ {
 			field := fields[index]
 			switch {
+			case field == "up" || field == "down":
+				return hasProjectName && hasExpectedConfig
 			case (field == "-p" || field == "--project-name") && index+1 < len(fields):
 				hasProjectName = strings.TrimSpace(fields[index+1]) != ""
 				index++
 			case strings.HasPrefix(field, "--project-name="):
 				hasProjectName = strings.TrimSpace(strings.TrimPrefix(field, "--project-name=")) != ""
 			case (field == "-f" || field == "--file") && index+1 < len(fields):
-				hasExpectedConfig = strings.Trim(fields[index+1], `"'`) == `$SCRIPT_DIR/docker-compose.yml`
+				hasExpectedConfig = fields[index+1] == `$SCRIPT_DIR/docker-compose.yml`
 				index++
 			case strings.HasPrefix(field, "--file="):
-				config := strings.Trim(strings.TrimPrefix(field, "--file="), `"'`)
+				config := strings.TrimPrefix(field, "--file=")
 				hasExpectedConfig = config == `$SCRIPT_DIR/docker-compose.yml`
 			}
 		}
-		if hasProjectName && hasExpectedConfig {
-			return true
-		}
 	}
 	return false
+}
+
+func parseShellCommandFields(line string) ([]string, bool) {
+	fields := make([]string, 0)
+	var current strings.Builder
+	var quote rune
+	escaped := false
+	tokenStarted := false
+
+	flush := func() {
+		if !tokenStarted {
+			return
+		}
+		fields = append(fields, current.String())
+		current.Reset()
+		tokenStarted = false
+	}
+
+	for _, character := range line {
+		if escaped {
+			current.WriteRune(character)
+			tokenStarted = true
+			escaped = false
+			continue
+		}
+		if quote != 0 {
+			switch {
+			case character == quote:
+				quote = 0
+			case character == '\\' && quote == '"':
+				escaped = true
+			default:
+				current.WriteRune(character)
+			}
+			continue
+		}
+
+		switch {
+		case character == '\\':
+			escaped = true
+			tokenStarted = true
+		case character == '\'' || character == '"':
+			quote = character
+			tokenStarted = true
+		case character == '#' && !tokenStarted:
+			flush()
+			return fields, true
+		case unicode.IsSpace(character):
+			flush()
+		default:
+			current.WriteRune(character)
+			tokenStarted = true
+		}
+	}
+	if escaped || quote != 0 {
+		return nil, false
+	}
+	flush()
+	return fields, true
 }
