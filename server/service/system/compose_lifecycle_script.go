@@ -47,46 +47,56 @@ func hasExplicitComposeLifecycleCommand(content string) bool {
 	logicalContent := strings.ReplaceAll(content, "\\\r\n", " ")
 	logicalContent = strings.ReplaceAll(logicalContent, "\\\n", " ")
 	for _, line := range strings.Split(logicalContent, "\n") {
-		fields, valid := parseShellCommandFields(line)
+		commands, valid := parseShellCommandSegments(line)
 		if !valid {
 			continue
 		}
-		if len(fields) < 2 || fields[0] != "docker" || fields[1] != "compose" {
-			continue
-		}
-
-		hasProjectName := false
-		hasExpectedConfig := false
-		for index := 2; index < len(fields); index++ {
-			field := fields[index]
-			switch {
-			case field == "up" || field == "down":
-				return hasProjectName && hasExpectedConfig
-			case (field == "-p" || field == "--project-name") && index+1 < len(fields):
-				hasProjectName = strings.TrimSpace(fields[index+1]) != ""
-				index++
-			case strings.HasPrefix(field, "--project-name="):
-				hasProjectName = strings.TrimSpace(strings.TrimPrefix(field, "--project-name=")) != ""
-			case (field == "-f" || field == "--file") && index+1 < len(fields):
-				hasExpectedConfig = fields[index+1] == `$SCRIPT_DIR/docker-compose.yml`
-				index++
-			case strings.HasPrefix(field, "--file="):
-				config := strings.TrimPrefix(field, "--file=")
-				hasExpectedConfig = config == `$SCRIPT_DIR/docker-compose.yml`
+		for _, fields := range commands {
+			if isExplicitComposeLifecycleCommand(fields) {
+				return true
 			}
 		}
 	}
 	return false
 }
 
-func parseShellCommandFields(line string) ([]string, bool) {
+func isExplicitComposeLifecycleCommand(fields []string) bool {
+	if len(fields) < 2 || fields[0] != "docker" || fields[1] != "compose" {
+		return false
+	}
+
+	hasProjectName := false
+	hasExpectedConfig := false
+	for index := 2; index < len(fields); index++ {
+		field := fields[index]
+		switch {
+		case field == "up" || field == "down":
+			return hasProjectName && hasExpectedConfig
+		case (field == "-p" || field == "--project-name") && index+1 < len(fields):
+			hasProjectName = strings.TrimSpace(fields[index+1]) != ""
+			index++
+		case strings.HasPrefix(field, "--project-name="):
+			hasProjectName = strings.TrimSpace(strings.TrimPrefix(field, "--project-name=")) != ""
+		case (field == "-f" || field == "--file") && index+1 < len(fields):
+			hasExpectedConfig = fields[index+1] == `$SCRIPT_DIR/docker-compose.yml`
+			index++
+		case strings.HasPrefix(field, "--file="):
+			config := strings.TrimPrefix(field, "--file=")
+			hasExpectedConfig = config == `$SCRIPT_DIR/docker-compose.yml`
+		}
+	}
+	return false
+}
+
+func parseShellCommandSegments(line string) ([][]string, bool) {
+	commands := make([][]string, 0)
 	fields := make([]string, 0)
 	var current strings.Builder
 	var quote rune
 	escaped := false
 	tokenStarted := false
 
-	flush := func() {
+	flushToken := func() {
 		if !tokenStarted {
 			return
 		}
@@ -94,8 +104,18 @@ func parseShellCommandFields(line string) ([]string, bool) {
 		current.Reset()
 		tokenStarted = false
 	}
+	flushCommand := func() {
+		flushToken()
+		if len(fields) == 0 {
+			return
+		}
+		commands = append(commands, fields)
+		fields = make([]string, 0)
+	}
 
-	for _, character := range line {
+	characters := []rune(line)
+	for index := 0; index < len(characters); index++ {
+		character := characters[index]
 		if escaped {
 			current.WriteRune(character)
 			tokenStarted = true
@@ -122,10 +142,15 @@ func parseShellCommandFields(line string) ([]string, bool) {
 			quote = character
 			tokenStarted = true
 		case character == '#' && !tokenStarted:
-			flush()
-			return fields, true
+			flushCommand()
+			return commands, true
+		case character == ';' || character == '|' || character == '&':
+			flushCommand()
+			if index+1 < len(characters) && characters[index+1] == character && (character == '|' || character == '&') {
+				index++
+			}
 		case unicode.IsSpace(character):
-			flush()
+			flushToken()
 		default:
 			current.WriteRune(character)
 			tokenStarted = true
@@ -134,6 +159,6 @@ func parseShellCommandFields(line string) ([]string, bool) {
 	if escaped || quote != 0 {
 		return nil, false
 	}
-	flush()
-	return fields, true
+	flushCommand()
+	return commands, true
 }
