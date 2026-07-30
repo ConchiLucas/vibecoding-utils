@@ -209,3 +209,41 @@ func TestPublishPreparedLocalScriptsNormalizesAndWritesMode(t *testing.T) {
 		t.Fatalf("stored Compose network invalid: %v", err)
 	}
 }
+
+func TestPublishPreparedLocalScriptsPersistsComposeLifecycleMigration(t *testing.T) {
+	db := setupAggregateRouteTestDB(t)
+	root := t.TempDir()
+	project, route := createAggregateChildRoute(t, db, 6, "vue", "rob-english-word-front-web", root, filepath.Join(root, "deploy", "local_full"), 0, false)
+	script := modelSystem.TbProjectScript{
+		ProjectId:  int(project.ID),
+		RouteId:    int(route.ID),
+		ScriptType: 1,
+		FileName:   "start.sh",
+		Content:    explicitComposeStartScript,
+	}
+	if err := db.Create(&script).Error; err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := loadLocalScriptsForMaterialization(db, []localScriptMaterializationRequest{
+		createMaterializationRequest(t, project, route, route.LocalScriptPath),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := publishPreparedLocalScripts(db, prepared, nil); err != nil {
+		t.Fatal(err)
+	}
+	fileContent, err := os.ReadFile(filepath.Join(route.LocalScriptPath, "start.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reloaded modelSystem.TbProjectScript
+	if err := db.First(&reloaded, script.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	for source, content := range map[string]string{"file": string(fileContent), "database": reloaded.Content} {
+		if strings.Count(content, composeLifecycleMigrationMarker) != 1 {
+			t.Fatalf("%s migration marker count = %d, want 1:\n%s", source, strings.Count(content, composeLifecycleMigrationMarker), content)
+		}
+	}
+}

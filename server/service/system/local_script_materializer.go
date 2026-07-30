@@ -95,6 +95,9 @@ func normalizeLocalScriptForDeploy(project modelSystem.TbProject, script modelSy
 		appPort := inferPythonAppPortForDeploy(project, content)
 		content = normalizePythonComposeForDeploy(content, appPort, project.LocalProjectPath)
 	}
+	if normalized, changed := normalizeComposeLifecycleScript(content, script.FileName); changed {
+		content = normalized
+	}
 	if isComposeFileName(script.FileName) {
 		normalized, _, err := normalizeComposeSharedNetwork(content)
 		if err != nil {
