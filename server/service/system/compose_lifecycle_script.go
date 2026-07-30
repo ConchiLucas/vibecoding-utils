@@ -83,6 +83,10 @@ func isExplicitComposeLifecycleCommand(fields []string) bool {
 		case strings.HasPrefix(field, "--file="):
 			config := strings.TrimPrefix(field, "--file=")
 			hasExpectedConfig = config == `$SCRIPT_DIR/docker-compose.yml`
+		default:
+			if !strings.HasPrefix(field, "-") {
+				return false
+			}
 		}
 	}
 	return false

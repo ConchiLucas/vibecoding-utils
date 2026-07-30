@@ -61,6 +61,7 @@ func TestNormalizeComposeLifecycleScriptLeavesIneligibleScriptsUnchanged(t *test
 		{name: "comment project flag", fileName: "start.sh", content: strings.Replace(strings.Replace(explicitComposeStartScript, "  -p rob-english-word-front \\\n", "", 1), "up --build -d", "up --build -d # migrate later with -p stable-name", 1)},
 		{name: "subcommand project flag", fileName: "start.sh", content: strings.Replace(strings.Replace(explicitComposeStartScript, "  -p rob-english-word-front \\\n", "", 1), "up --build -d", "up --build -d -p stable-name", 1)},
 		{name: "chained compose commands", fileName: "start.sh", content: "#!/bin/sh\nSCRIPT_DIR=$(pwd)\ndocker compose -p stable -f \"$SCRIPT_DIR/docker-compose.yml\" config && docker compose up -d\n"},
+		{name: "different compose subcommand", fileName: "start.sh", content: strings.Replace(explicitComposeStartScript, "up --build -d", "config up", 1)},
 		{name: "different config", fileName: "start.sh", content: strings.Replace(explicitComposeStartScript, "$SCRIPT_DIR/docker-compose.yml", "$SCRIPT_DIR/compose.yaml", 1)},
 		{name: "non compose script", fileName: "start.sh", content: "#!/bin/sh\necho ok\n"},
 	}
