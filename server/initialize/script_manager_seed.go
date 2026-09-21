@@ -3620,15 +3620,23 @@ func shouldRefreshDefaultStepScript(stepName string, script string) bool {
 	}
 	switch stepName {
 	case legacyDefaultExportStepName, defaultExportStepName:
-		return strings.Contains(script, `:-`) || strings.Contains(script, `SOURCE_DB_KEY`) || !strings.Contains(script, `require_non_empty_env`)
+		return strings.Contains(script, `:-`) ||
+			strings.Contains(script, `SOURCE_DB_KEY`) ||
+			!strings.Contains(script, `require_non_empty_env`) ||
+			!strings.Contains(script, `--no-acl`)
 	case reverseExportStepName:
-		return !strings.Contains(script, `REMOTE_SCRIPT_LOCAL`) || !strings.Contains(script, `SOURCE_SERVER_TARGET_TAILSCALE_IP`)
+		return !strings.Contains(script, `REMOTE_SCRIPT_LOCAL`) ||
+			!strings.Contains(script, `SOURCE_SERVER_TARGET_TAILSCALE_IP`) ||
+			!strings.Contains(script, `--no-acl`)
 	case defaultTableExportStepName:
-		return !strings.Contains(script, `TABLE_NAME`) || !strings.Contains(script, `SOURCE_PG_DUMP_CMD`)
+		return !strings.Contains(script, `TABLE_NAME`) ||
+			!strings.Contains(script, `SOURCE_PG_DUMP_CMD`) ||
+			!strings.Contains(script, `--no-acl`)
 	case reverseTableExportStepName:
 		return !strings.Contains(script, `REMOTE_SCRIPT_LOCAL`) ||
 			!strings.Contains(script, `SOURCE_SERVER_TARGET_TAILSCALE_IP`) ||
-			!strings.Contains(script, `SOURCE_TABLE_REF`)
+			!strings.Contains(script, `SOURCE_TABLE_REF`) ||
+			!strings.Contains(script, `--no-acl`)
 	case defaultMySQLTableExportStepName, reverseMySQLTableExportStepName:
 		return !strings.Contains(script, `TABLE_NAME`) || !strings.Contains(script, `SOURCE_MYSQLDUMP_CMD`)
 	case "通过 Tailscale 上传导出文件":
@@ -3650,9 +3658,12 @@ func shouldRefreshDefaultStepScript(stepName string, script string) bool {
 	case "目标服务器导入数据库", "本地服务器导入 PostgreSQL 数据库":
 		return strings.Contains(script, `TARGET_DB_KEY`) ||
 			!strings.Contains(script, `TARGET_DB_DROP_TABLES_BEFORE_IMPORT`) ||
-			strings.Contains(script, `DROP SCHEMA IF EXISTS public CASCADE`)
+			strings.Contains(script, `DROP SCHEMA IF EXISTS public CASCADE`) ||
+			!strings.Contains(script, `--no-acl`)
 	case "目标服务器导入 PostgreSQL 单表":
-		return !strings.Contains(script, `TARGET_TABLE_DROP_BEFORE_IMPORT`) || !strings.Contains(script, `DROP TABLE IF EXISTS %I.%I`)
+		return !strings.Contains(script, `TARGET_TABLE_DROP_BEFORE_IMPORT`) ||
+			!strings.Contains(script, `DROP TABLE IF EXISTS %I.%I`) ||
+			!strings.Contains(script, `--no-acl`)
 	case "目标服务器导入 MySQL 单表", "本地服务器导入 MySQL 单表":
 		return !strings.Contains(script, `TARGET_TABLE_DROP_BEFORE_IMPORT`) || !strings.Contains(script, "DROP TABLE IF EXISTS `")
 	case defaultClickHouseExportStepName:
@@ -3756,6 +3767,8 @@ case "$SOURCE_DB_TYPE" in
       -p "$SOURCE_DB_PORT" \
       -U "$SOURCE_DB_USER" \
       -Fc \
+      --no-owner \
+      --no-acl \
       "$SOURCE_DB_NAME" > "$DUMP_FILE"
     ;;
   [mM][yY][sS][qQ][lL])
@@ -3912,6 +3925,8 @@ run_configured_cmd_with_env PGPASSWORD "$SOURCE_DB_PASSWORD" SOURCE_PG_DUMP_CMD 
   -p "$SOURCE_DB_PORT" \
   -U "$SOURCE_DB_USER" \
   -Fc \
+  --no-owner \
+  --no-acl \
   "$SOURCE_DB_NAME" > "$REMOTE_DUMP_FILE"
 
 (cd "$(dirname "$REMOTE_DUMP_FILE")" && shasum -a 256 "$(basename "$REMOTE_DUMP_FILE")") > "$REMOTE_DUMP_SHA_FILE"
@@ -4082,6 +4097,7 @@ run_configured_cmd_with_env PGPASSWORD "$SOURCE_DB_PASSWORD" SOURCE_PG_DUMP_CMD 
   -U "$SOURCE_DB_USER" \
   -Fc \
   --no-owner \
+  --no-acl \
   -t "$SOURCE_TABLE_REF" \
   "$SOURCE_DB_NAME" > "$REMOTE_DUMP_FILE"
 
@@ -4435,7 +4451,8 @@ case "$TARGET_DB_TYPE" in
       -d "$TARGET_DB_NAME" \
       --clean \
       --if-exists \
-      --no-owner < "$RESTORE_DUMP"
+      --no-owner \
+      --no-acl < "$RESTORE_DUMP"
     ;;
   [mM][yY][sS][qQ][lL])
     run_configured_cmd_with_env MYSQL_PWD "$TARGET_DB_PASSWORD" TARGET_MYSQL_CMD \
@@ -4528,6 +4545,7 @@ run_configured_cmd_with_env PGPASSWORD "$SOURCE_DB_PASSWORD" SOURCE_PG_DUMP_CMD 
   -U "$SOURCE_DB_USER" \
   -Fc \
   --no-owner \
+  --no-acl \
   -t "$SOURCE_TABLE_REF" \
   "$SOURCE_DB_NAME" > "$DUMP_FILE"
 
@@ -4840,7 +4858,8 @@ run_configured_cmd_with_env PGPASSWORD "$TARGET_DB_PASSWORD" TARGET_PG_RESTORE_C
   -p "$TARGET_DB_PORT" \
   -U "$TARGET_DB_USER" \
   -d "$TARGET_DB_NAME" \
-  --no-owner < "$RESTORE_DUMP"
+  --no-owner \
+  --no-acl < "$RESTORE_DUMP"
 
 echo "PostgreSQL 单表导入完成"
 `
