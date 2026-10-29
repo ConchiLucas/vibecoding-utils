@@ -19,6 +19,8 @@ services:
     build:
       context: ./server
       dockerfile: ./Dockerfile
+    volumes:
+      - ./server/config.docker.local.yaml:/go/src/github.com/flipped-aurora/gin-vue-admin/server/config.docker.yaml:ro
     container_name: easy-deploy-server
     restart: always
     ports:

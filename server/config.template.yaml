@@ -1,3 +1,5 @@
+# Local settings: copy to config.template.local.yaml (gitignored).
+# PostgreSQL also accepts PGHOST, PGPORT, PGDATABASE, PGUSER, PGPASSWORD.
 ai:
     active: aliyun-deepseek
     providers:
@@ -181,12 +183,12 @@ pgsql:
     log-zap: false
     max-idle-conns: 10
     max-open-conns: 100
-    password: conchi123456
+    password: ""
     path: 127.0.0.1
     port: "5432"
     prefix: ""
     singular: false
-    username: conchi
+    username: postgres
 qiniu:
     access-key: ""
     bucket: ""

@@ -4,6 +4,8 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/flipped-aurora/easy-deploy/server/core/internal"
 	"github.com/flipped-aurora/easy-deploy/server/global"
@@ -14,10 +16,22 @@ import (
 // Viper 配置
 func Viper() *viper.Viper {
 	config := getConfigPath()
+	localConfig := strings.TrimSuffix(config, filepath.Ext(config)) + ".local.yaml"
+	if _, err := os.Stat(localConfig); err == nil {
+		config = localConfig
+	}
 
 	v := viper.New()
 	v.SetConfigFile(config)
 	v.SetConfigType("yaml")
+	for key, env := range map[string]string{
+		"pgsql.path": "PGHOST", "pgsql.port": "PGPORT", "pgsql.db-name": "PGDATABASE",
+		"pgsql.username": "PGUSER", "pgsql.password": "PGPASSWORD",
+	} {
+		if err := v.BindEnv(key, env); err != nil {
+			panic(err)
+		}
+	}
 	err := v.ReadInConfig()
 	if err != nil {
 		panic(fmt.Errorf("fatal error config file: %w", err))

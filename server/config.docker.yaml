@@ -1,3 +1,5 @@
+# Local settings: copy to config.docker.local.yaml (gitignored).
+# PostgreSQL also accepts PGHOST, PGPORT, PGDATABASE, PGUSER, PGPASSWORD.
 aliyun-oss:
     endpoint: yourEndpoint
     access-key-id: yourAccessKeyId
@@ -199,9 +201,9 @@ pgsql:
     port: "5432"
     config: sslmode=disable TimeZone=Asia/Shanghai
     db-name: easy_deploy
-    username: conchi
-    password: conchi123456
-    path: host.docker.internal
+    username: postgres
+    password: ""
+    path: 127.0.0.1
     engine: ""
     log-mode: error
     max-idle-conns: 10
